@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.30";
+const APP_VERSION = "0.1.31";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -419,7 +419,6 @@ export default function Alloy() {
         document.activeElement.blur();
       }
       setSearchVisible(false);
-      if (tagPaletteOpen) closeTagPalette();
       setTimeout(() => {
         setSearchOpen(false);
         setSearchQuery("");
@@ -543,16 +542,21 @@ export default function Alloy() {
 
   // 암호화 - Vault 카드의 삼점바에서만 노출된다. 이름 아래 주소(추후 Vaulty 커뮤니티에서
   // 클릭하면 이 Vault를 내려받아 연결하게 될 공개 식별자) / 열쇠(비밀번호, 비워두면 잠금 없음)를
-  // 함께 관리한다. 주소/열쇠 모두 영문 대소문자 혼용 2~10자만 허용한다.
-  const ADDRESS_KEY_RE = /^[A-Za-z]{2,10}$/;
+  // 함께 관리한다. 주소는 영문 대소문자 혼용 2~10자, 열쇠는 영문 대소문자+숫자 혼용 2~10자만 허용한다.
+  const ADDRESS_RE = /^[A-Za-z]{2,10}$/;
+  const KEY_RE = /^[A-Za-z0-9]{2,10}$/;
   const [encryptModalTarget, setEncryptModalTarget] = useState(null); // vault id
   const [encryptModalVisible, setEncryptModalVisible] = useState(false);
   const [addressDraft, setAddressDraft] = useState("");
   const [keyDraft, setKeyDraft] = useState("");
+  // 이미 다른 Vault가 쓰고 있는 주소로 저장을 시도하면 토스트가 아니라 주소 설명란 2열에
+  // 빨간 글씨로 표시하고, 모달이 열려있는 동안(또는 입력을 다시 고칠 때까지) 유지된다.
+  const [addressDuplicateError, setAddressDuplicateError] = useState(false);
   const openEncryptModal = (vault) => {
     setEncryptModalTarget(vault.id);
     setAddressDraft(vault.address || "");
     setKeyDraft(vault.password || "");
+    setAddressDuplicateError(false);
     requestAnimationFrame(() => setEncryptModalVisible(true));
   };
   const closeEncryptModal = () => {
@@ -564,14 +568,23 @@ export default function Alloy() {
     if (!vault) { closeEncryptModal(); return; }
     const trimmedAddress = addressDraft.trim();
     const trimmedKey = keyDraft.trim();
-    if (trimmedKey && !ADDRESS_KEY_RE.test(trimmedKey)) {
+    if (trimmedKey && !KEY_RE.test(trimmedKey)) {
       showToast("열쇠 형식이 올바르지 않습니다");
       return;
     }
     if (trimmedAddress) {
+      if (!ADDRESS_RE.test(trimmedAddress)) {
+        showToast("연결되지 않은 주소입니다");
+        return;
+      }
+      const isDuplicate = vaults.some((v) => v.id !== vault.id && v.address === trimmedAddress);
+      if (isDuplicate) {
+        setAddressDuplicateError(true);
+        return;
+      }
       const retired = vault.retiredAddresses || [];
       const isRetired = trimmedAddress !== vault.address && retired.includes(trimmedAddress);
-      if (!ADDRESS_KEY_RE.test(trimmedAddress) || isRetired) {
+      if (isRetired) {
         showToast("연결되지 않은 주소입니다");
         return;
       }
@@ -1129,9 +1142,9 @@ export default function Alloy() {
   const taggedDocs = taggedFiles.filter((f) => f.kind !== "image");
   const closeTagScreen = () => setTagScreenTags([]);
 
-  // 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류" / 검색창에 "#" 입력, 이 세 가지 진입점
-  // 모두 앱에서 실제로 쓰이고 있는 모든 태그를 3열 그리드로 보여준다. 여기서 하나를 고르면
-  // "분류" 화면(위의 taggedFolders/taggedImages/taggedDocs)이 그 태그로 열린다.
+  // 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류", 두 진입점 모두 앱에서 실제로 쓰이고
+  // 있는 모든 태그를 3열 그리드로 보여준다. 검색창과는 무관한 독립된 플로팅 패널이다.
+  // 여기서 하나를 고르면 "분류" 화면(위의 taggedFolders/taggedImages/taggedDocs)이 그 태그로 열린다.
   const allTags = useMemo(() => Array.from(new Set([
     ...folders.flatMap((f) => f.tags || []),
     ...files.flatMap((f) => f.tags || []),
@@ -1139,17 +1152,6 @@ export default function Alloy() {
   const [tagPaletteOpen, setTagPaletteOpen] = useState(false);
   const [tagPaletteVisible, setTagPaletteVisible] = useState(false);
   const openTagPalette = () => {
-    if (!searchOpen) {
-      setSearchQuery("#");
-      setSearchOpen(true);
-      requestAnimationFrame(() => {
-        setSearchVisible(true);
-        searchInputRef.current && searchInputRef.current.focus();
-      });
-    } else if (!searchQuery.trim().startsWith("#")) {
-      setSearchQuery("#");
-      searchInputRef.current && searchInputRef.current.focus();
-    }
     setTagPaletteOpen(true);
     requestAnimationFrame(() => setTagPaletteVisible(true));
   };
@@ -1160,7 +1162,6 @@ export default function Alloy() {
   const openTagScreen = (tag) => {
     setTagScreenTags([tag]);
     closeTagPalette();
-    if (searchOpen) toggleSearch();
   };
 
   // "분류" 모달 - 마법사 메뉴의 "분류"를 누르면 뜬다(태그 팔레트와는 별개). 존재하는 모든
@@ -2235,11 +2236,11 @@ export default function Alloy() {
                               onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
                               onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                             >
+                              암호화
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <circle cx="8" cy="15" r="4" />
                                 <path d="M11 12l9-9M17 3l3 3M14 6l2 2" />
                               </svg>
-                              암호화
                             </button>
                           )}
                           <button
@@ -2627,7 +2628,7 @@ export default function Alloy() {
               //     폴더/파일/문서/이미지 중 이름에 검색어가 포함된 항목을 리스트로 보여준다.
               //     항목을 누르면 검색을 닫고 해당 항목이 있는 위치로 이동한다. ──
               const trimmedQuery = searchQuery.trim().toLowerCase();
-              if (trimmedQuery && !trimmedQuery.startsWith("#")) {
+              if (trimmedQuery) {
                 const folderMatches = folders.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
                 const fileMatches = files.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
                 if (folderMatches.length === 0 && fileMatches.length === 0) {
@@ -3708,8 +3709,10 @@ export default function Alloy() {
                 <input
                   type="text"
                   value={addressDraft}
-                  onChange={(e) => setAddressDraft(e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 10))}
-                  placeholder="ABCD"
+                  onChange={(e) => {
+                    setAddressDraft(e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 10));
+                    setAddressDuplicateError(false);
+                  }}
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -3722,9 +3725,14 @@ export default function Alloy() {
                   }}
                 />
               </div>
-              <div style={{ marginBottom: 20, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
-                영문 대/소문자 혼용, 2~10자
+              <div style={{ marginBottom: addressDuplicateError ? 4 : 20, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
+                영문 대/소문자 (2~10자)
               </div>
+              {addressDuplicateError && (
+                <div style={{ marginBottom: 20, color: "#EF4444", fontSize: 12 }}>
+                  이미 사용중인 주소입니다
+                </div>
+              )}
 
               {/* 열쇠 */}
               <div style={{ marginBottom: 6, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 13 }}>
@@ -3733,8 +3741,7 @@ export default function Alloy() {
               <input
                 type="text"
                 value={keyDraft}
-                onChange={(e) => setKeyDraft(e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 10))}
-                placeholder="비워두면 암호가 없습니다"
+                onChange={(e) => setKeyDraft(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 10))}
                 style={{
                   width: "100%",
                   padding: 12,
@@ -3749,8 +3756,11 @@ export default function Alloy() {
                   transition: "border-color 0.2s ease",
                 }}
               />
+              <div style={{ marginBottom: 4, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
+                영문 대/소문자, 숫자 (2~10자)
+              </div>
               <div style={{ marginBottom: 24, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
-                영문 대/소문자 혼용, 2~10자 (비워두면 암호 없음)
+                비워두면 암호가 없습니다
               </div>
 
               <button
@@ -3860,7 +3870,7 @@ export default function Alloy() {
                 <input
                   type="text"
                   value={unlockKeyInput}
-                  onChange={(e) => setUnlockKeyInput(e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 10))}
+                  onChange={(e) => setUnlockKeyInput(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 10))}
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleUnlockSubmit();
@@ -4451,16 +4461,15 @@ export default function Alloy() {
         </button>
       </div>
 
-      {/* 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류" / 검색창에 "#" 입력, 세 진입점
-          모두 여기로 온다. 검색 입력창 바로 위에 3열 그리드로 뜨고, "#" 뒤에 글자를 더 치면
-          그 글자가 포함된 태그만 걸러진다. 하나를 고르면 "분류" 화면이 그 태그로 열린다. */}
+      {/* 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류", 두 진입점이 여기로 온다. 검색창과
+          무관하게 탭바 위에 독립적으로 뜨는 3열 그리드. 하나를 고르면 "분류" 화면이 열린다. */}
       {tagPaletteOpen && (
         <>
           <div onClick={closeTagPalette} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 11 }} />
           <div
             style={{
               position: "fixed",
-              bottom: 24 + BAR_HEIGHT + 14 + 68,
+              bottom: 24 + BAR_HEIGHT + 14,
               left: "50%",
               zIndex: 12,
               width: "min(360px, 88vw)",
@@ -4480,9 +4489,7 @@ export default function Alloy() {
             onClick={(e) => e.stopPropagation()}
           >
             {(() => {
-              const q = searchQuery.trim().replace(/^#/, "").toLowerCase();
-              const filteredTags = q ? allTags.filter((t) => t.toLowerCase().includes(q)) : allTags;
-              if (filteredTags.length === 0) {
+              if (allTags.length === 0) {
                 return (
                   <div style={{ padding: "8px 4px", textAlign: "center", fontSize: 13, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)", textShadow: isLight ? "none" : "0 1px 4px rgba(0,0,0,0.6)" }}>
                     아직 태그가 없습니다
@@ -4491,7 +4498,7 @@ export default function Alloy() {
               }
               return (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-                  {filteredTags.map((tag) => (
+                  {allTags.map((tag) => (
                     <span
                       key={tag}
                       onClick={() => openTagScreen(tag)}
@@ -4575,17 +4582,7 @@ export default function Alloy() {
                 ref={searchInputRef}
                 type="text"
                 value={searchQuery}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setSearchQuery(value);
-                  const startsWithHash = value.trim().startsWith("#");
-                  if (startsWithHash && !tagPaletteOpen) {
-                    setTagPaletteOpen(true);
-                    requestAnimationFrame(() => setTagPaletteVisible(true));
-                  } else if (!startsWithHash && tagPaletteOpen) {
-                    closeTagPalette();
-                  }
-                }}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="검색"
                 aria-label="검색"
                 style={{
