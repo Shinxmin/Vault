@@ -7,8 +7,8 @@ const APP_VERSION = "0.2.2";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
-  // 상단 바 제목 - 홈 탭만 "Vaulty" 브랜드를 보여주고, 아직 기능이 없는 나머지 두 탭은 비워둔다.
-  const TAB_TITLES = ["Vaulty", "", ""];
+  // 상단 바 제목 - 홈 탭과 설정 탭에 "Vaulty" 브랜드를 보여준다. 설정 탭에는 + 추가 버튼이 없다.
+  const TAB_TITLES = ["Vaulty", "", "Vaulty"];
   const [active, setActive] = useState(0);
 
   // 탭 전환 시 이전 탭의 스크롤 위치가 유지되어 콘텐츠가 적은 탭에서
@@ -148,11 +148,16 @@ export default function Alloy() {
   // Supabase 단일 행(id='default')에 전체 상태를 그대로 저장한다.
   // 파일의 실제 바이트는 R2에 있고 files[].r2Key로 R2 객체를 가리킨다.
   const [dataLoaded, setDataLoaded] = useState(false);
+  // 휴지통 - 삭제된 Vault/폴더/파일(이미지)은 바로 지워지지 않고 여기 담겨 7일간
+  // 보관된다. trash 컬럼은 이후에 추가된 것이라 아직 마이그레이션을 안 돌린 환경에서는
+  // 없을 수 있으므로, select("*")로 있으면 읽고 없으면 빈 배열로 취급한다.
+  const [trash, setTrash] = useState([]);
+  const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
         .from("vaulty_state")
-        .select("vaults, folders, files, custom_order_active")
+        .select("*")
         .eq("id", "default")
         .maybeSingle();
       if (error) {
@@ -161,22 +166,29 @@ export default function Alloy() {
         const loadedVaults = (data.vaults || []).map(withDates);
         const loadedFolders = (data.folders || []).map(withDates);
         const loadedFiles = (data.files || []).map(withDates);
+        const loadedTrash = data.trash || [];
         setVaults(loadedVaults);
         setFolders(loadedFolders);
         setCustomOrderActive(data.custom_order_active === true);
         // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
-        // 불러올 때마다 r2Key 기준으로 새로 발급받는다.
-        const imageKeys = loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
+        // 불러올 때마다 r2Key 기준으로 새로 발급받는다. 휴지통 안의 이미지도 복구/미리보기를
+        // 위해 함께 새로 발급받는다.
+        const trashImageKeys = loadedTrash.flatMap((t) => t.files || []).filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
+        const imageKeys = [...loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key), ...trashImageKeys];
         if (imageKeys.length) {
           try {
             const { urls } = await r2Presign({ action: "get-batch", keys: imageKeys });
-            setFiles(loadedFiles.map((f) => (f.kind === "image" && f.r2Key ? { ...f, url: urls[f.r2Key] || null } : f)));
+            const withUrl = (f) => (f.kind === "image" && f.r2Key ? { ...f, url: urls[f.r2Key] || null } : f);
+            setFiles(loadedFiles.map(withUrl));
+            setTrash(loadedTrash.map((t) => ({ ...t, files: (t.files || []).map(withUrl) })));
           } catch (e) {
             console.error("이미지 URL 발급 실패:", e);
             setFiles(loadedFiles);
+            setTrash(loadedTrash);
           }
         } else {
           setFiles(loadedFiles);
+          setTrash(loadedTrash);
         }
       }
       setDataLoaded(true);
@@ -210,6 +222,46 @@ export default function Alloy() {
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
   }, [vaults, folders, files, customOrderActive, dataLoaded]);
+
+  // 휴지통은 별도 컬럼(trash)에 저장한다. 위 저장과 분리해 둔 이유는, 이 컬럼이 아직
+  // 없는(마이그레이션 전) 환경에서 이 upsert가 실패하더라도 vaults/folders/files 등
+  // 핵심 데이터 저장에는 영향이 없도록 하기 위해서다.
+  const trashSaveTimerRef = useRef(null);
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (trashSaveTimerRef.current) clearTimeout(trashSaveTimerRef.current);
+    trashSaveTimerRef.current = setTimeout(() => {
+      const trashToSave = trash.map((t) => ({ ...t, files: (t.files || []).map(({ url, ...rest }) => rest) }));
+      supabase
+        .from("vaulty_state")
+        .upsert({ id: "default", trash: trashToSave, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.error("휴지통 저장 실패 (supabase/vaulty_schema.sql의 trash 컬럼 마이그레이션이 필요할 수 있습니다):", error);
+        });
+    }, 800);
+    return () => clearTimeout(trashSaveTimerRef.current);
+  }, [trash, dataLoaded]);
+
+  // 휴지통에 7일 넘게 있던 항목은 자동으로 영구 삭제(R2 객체까지 정리)한다.
+  // 마운트 시 한 번, 이후 1시간마다 다시 확인한다.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const purgeExpired = () => {
+      const now = Date.now();
+      setTrash((prev) => {
+        const expired = prev.filter((t) => now - t.deletedAt > TRASH_RETENTION_MS);
+        expired.forEach((entry) => {
+          (entry.files || []).forEach((f) => {
+            if (f.r2Key) r2Presign({ action: "delete", key: f.r2Key }).catch((e) => console.error("R2 삭제 실패:", e));
+          });
+        });
+        return prev.filter((t) => now - t.deletedAt <= TRASH_RETENTION_MS);
+      });
+    };
+    purgeExpired();
+    const interval = setInterval(purgeExpired, 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [dataLoaded]);
 
   // Vault 생성 모달
   const [vaultModalOpen, setVaultModalOpen] = useState(false);
@@ -251,6 +303,19 @@ export default function Alloy() {
   // 버튼을 한 번 더 누르면 그때 실제로 삭제된다. Vault/폴더/파일(이미지) 전부 공용.
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
+
+  // 설정 탭 > 휴지통 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
+  const [trashScreenOpen, setTrashScreenOpen] = useState(false);
+
+  // 저장 공간 - 지금은 10GB로 고정. 사용량은 files + 휴지통에 남아있는 파일 크기 합.
+  const STORAGE_MAX_BYTES = 10 * 1024 * 1024 * 1024;
+  const usedStorageBytes =
+    files.reduce((s, f) => s + (f.size || 0), 0) +
+    trash.reduce((s, t) => s + (t.files || []).reduce((s2, f) => s2 + (f.size || 0), 0), 0);
+  const formatGBShort = (bytes) => {
+    const gb = bytes / (1024 * 1024 * 1024);
+    return `${gb % 1 === 0 ? gb : gb.toFixed(1)}GB`;
+  };
 
   const toggleSearch = () => {
     if (searchOpen) {
@@ -356,17 +421,25 @@ export default function Alloy() {
     }
     closeVaultModal();
   };
+  // 삭제 = 휴지통으로 이동. Vault를 지우면 그 안의 폴더/파일도 통째로 하나의 휴지통
+  // 항목으로 담아서, "복구"를 누르면 원래 구조 그대로 되돌아온다.
   const deleteVault = (vaultId) => {
     const vault = vaults.find((v) => v.id === vaultId);
-    if (vault) {
-      const filesToRemove = files.filter((f) => f.path[0] === vault.name && f.r2Key);
-      setFolders((prev) => prev.filter((f) => f.path[0] !== vault.name));
-      setFiles((prev) => prev.filter((f) => f.path[0] !== vault.name));
-      filesToRemove.forEach((f) => {
-        r2Presign({ action: "delete", key: f.r2Key }).catch((e) => console.error("R2 삭제 실패:", e));
-      });
-    }
+    if (!vault) { closeItemMenu(); return; }
+    const descFolders = folders.filter((f) => f.path[0] === vault.name);
+    const descFiles = files.filter((f) => f.path[0] === vault.name);
+    setTrash((prev) => [...prev, {
+      id: Date.now(),
+      type: "vault",
+      name: vault.name,
+      deletedAt: Date.now(),
+      vault,
+      folders: descFolders,
+      files: descFiles,
+    }]);
     setVaults((prev) => prev.filter((v) => v.id !== vaultId));
+    setFolders((prev) => prev.filter((f) => f.path[0] !== vault.name));
+    setFiles((prev) => prev.filter((f) => f.path[0] !== vault.name));
     closeItemMenu();
   };
 
@@ -409,8 +482,23 @@ export default function Alloy() {
     closeFolderModal();
   };
 
+  // 폴더를 지우면 그 안의 하위 폴더/파일도 통째로 하나의 휴지통 항목으로 담는다.
   const deleteFolder = (folderId) => {
-    setFolders(folders.filter(f => f.id !== folderId));
+    const folder = folders.find((f) => f.id === folderId);
+    if (!folder) { closeItemMenu(); return; }
+    const descFolders = folders.filter((f) => f.id !== folder.id && pathStartsWith(f.path, folder.path));
+    const descFiles = files.filter((f) => pathStartsWith(f.path, folder.path));
+    setTrash((prev) => [...prev, {
+      id: Date.now(),
+      type: "folder",
+      name: folder.name,
+      deletedAt: Date.now(),
+      folder,
+      folders: descFolders,
+      files: descFiles,
+    }]);
+    setFolders((prev) => prev.filter((f) => f.id !== folder.id && !pathStartsWith(f.path, folder.path)));
+    setFiles((prev) => prev.filter((f) => !pathStartsWith(f.path, folder.path)));
     closeItemMenu();
   };
 
@@ -908,11 +996,37 @@ export default function Alloy() {
 
   const deleteFile = (fileId) => {
     const target = files.find((f) => f.id === fileId);
+    if (!target) { closeItemMenu(); return; }
+    setTrash((prev) => [...prev, {
+      id: Date.now(),
+      type: "file",
+      name: target.name,
+      deletedAt: Date.now(),
+      files: [target],
+    }]);
     setFiles((prev) => prev.filter((f) => f.id !== fileId));
     closeItemMenu();
-    if (target && target.r2Key) {
-      r2Presign({ action: "delete", key: target.r2Key }).catch((e) => console.error("R2 삭제 실패:", e));
-    }
+  };
+
+  // 휴지통 복구 - 원래 있던 자리(vaults/folders/files)로 그대로 되돌려 놓는다.
+  const restoreTrashItem = (trashId) => {
+    const entry = trash.find((t) => t.id === trashId);
+    if (!entry) return;
+    if (entry.vault) setVaults((prev) => [...prev, entry.vault]);
+    const foldersToRestore = entry.folder ? [entry.folder, ...(entry.folders || [])] : (entry.folders || []);
+    if (foldersToRestore.length) setFolders((prev) => [...prev, ...foldersToRestore]);
+    if (entry.files && entry.files.length) setFiles((prev) => [...prev, ...entry.files]);
+    setTrash((prev) => prev.filter((t) => t.id !== trashId));
+  };
+
+  // 휴지통에서 영구 삭제 - 확인 절차 없이 바로 지워지고, R2에 있던 실제 파일도 함께 삭제한다.
+  const permanentlyDeleteTrashItem = (trashId) => {
+    const entry = trash.find((t) => t.id === trashId);
+    if (!entry) return;
+    (entry.files || []).forEach((f) => {
+      if (f.r2Key) r2Presign({ action: "delete", key: f.r2Key }).catch((e) => console.error("R2 삭제 실패:", e));
+    });
+    setTrash((prev) => prev.filter((t) => t.id !== trashId));
   };
 
   const formatFileSize = (bytes) => {
@@ -1079,7 +1193,36 @@ export default function Alloy() {
       >
         {/* 상단 헤더 */}
         <div style={stickyHeaderStyle}>
-          <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {active === 2 && trashScreenOpen && (
+              <button
+                onClick={() => setTrashScreenOpen(false)}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="뒤로가기"
+                style={{
+                  width: 30,
+                  height: 30,
+                  flexShrink: 0,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m15 6-6 6 6 6" />
+                </svg>
+              </button>
+            )}
             <h1
               onClick={() => {
                 if (active === 0) setCurrentPath([]);
@@ -1094,7 +1237,7 @@ export default function Alloy() {
                 cursor: active === 0 ? "pointer" : "default",
               }}
             >
-              {TAB_TITLES[active]}
+              {active === 2 && trashScreenOpen ? "휴지통" : TAB_TITLES[active]}
             </h1>
           </div>
 
@@ -2095,89 +2238,296 @@ export default function Alloy() {
           </>
         )}
 
-        {/* 설정 탭 콘텐츠 - 라이트/다크 테마 전환 스위치 (텍스트 없이 해/달 아이콘으로만 구분) */}
-        {active === 2 && (
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button
-              onClick={toggleLightDark}
-              onMouseDown={pressDown("scale(0.94)")}
-              onMouseUp={pressUp("scale(1)")}
-              aria-label="라이트/다크 테마 전환"
+        {/* 설정 탭 콘텐츠 - "일반" 섹션(테마/저장 공간/휴지통) + 휴지통 화면 */}
+        {active === 2 && !trashScreenOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div
               style={{
-                position: "relative",
-                width: 64,
-                height: 32,
-                borderRadius: 999,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                background: isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.1)",
-                cursor: "pointer",
-                outline: "none",
-                padding: 0,
-                transition: "background 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                fontSize: 13,
+                fontWeight: 600,
+                color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                padding: "0 4px",
               }}
             >
-              {/* 트랙 좌우의 흐린 해/달 아이콘 */}
-              <span
-                style={{
-                  position: "absolute",
-                  left: 8,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  display: "flex",
-                  color: isLight ? "transparent" : "rgba(255,255,255,0.4)",
-                  transition: "color 0.3s ease",
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-                </svg>
-              </span>
-              <span
-                style={{
-                  position: "absolute",
-                  right: 8,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  display: "flex",
-                  color: isLight ? "rgba(20,22,26,0.35)" : "transparent",
-                  transition: "color 0.3s ease",
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
-                </svg>
-              </span>
+              일반
+            </div>
+            <div
+              style={{
+                borderRadius: 14,
+                background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                backdropFilter: "blur(20px) saturate(180%)",
+                WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                overflow: "hidden",
+              }}
+            >
+              {/* 테마 행 - 텍스트 없이 해/달 아이콘으로만 구분되는 라이트/다크 전환 스위치 */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px" }}>
+                <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>테마</span>
+                <button
+                  onClick={toggleLightDark}
+                  onMouseDown={pressDown("scale(0.94)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="라이트/다크 테마 전환"
+                  style={{
+                    position: "relative",
+                    width: 64,
+                    height: 32,
+                    flexShrink: 0,
+                    borderRadius: 999,
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.1)",
+                    cursor: "pointer",
+                    outline: "none",
+                    padding: 0,
+                    transition: "background 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                  }}
+                >
+                  {/* 트랙 좌우의 흐린 해/달 아이콘 */}
+                  <span
+                    style={{
+                      position: "absolute",
+                      left: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      display: "flex",
+                      color: isLight ? "transparent" : "rgba(255,255,255,0.4)",
+                      transition: "color 0.3s ease",
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="4" />
+                      <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                    </svg>
+                  </span>
+                  <span
+                    style={{
+                      position: "absolute",
+                      right: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      display: "flex",
+                      color: isLight ? "rgba(20,22,26,0.35)" : "transparent",
+                      transition: "color 0.3s ease",
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
+                    </svg>
+                  </span>
 
-              {/* 슬라이딩 노브 - 현재 테마의 아이콘을 담고 좌우로 부드럽게 이동한다 */}
-              <span
+                  {/* 슬라이딩 노브 - 현재 테마의 아이콘을 담고 좌우로 부드럽게 이동한다 */}
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: 3,
+                      left: isLight ? 3 : 33,
+                      width: 26,
+                      height: 26,
+                      borderRadius: "50%",
+                      background: isLight ? "#FFFFFF" : "#14161A",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transition: "left 0.3s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s ease",
+                    }}
+                  >
+                    {isLight ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5A623" strokeWidth="2" strokeLinecap="round">
+                        <circle cx="12" cy="12" r="4" />
+                        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                      </svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="#FFFFFF">
+                        <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
+                      </svg>
+                    )}
+                  </span>
+                </button>
+              </div>
+
+              <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)" }} />
+
+              {/* 저장 공간 행 - 사용량만큼 채워지는 프로그레스 바 + 오른쪽에 "3.5GB/10GB" 텍스트 */}
+              <div style={{ padding: "16px 18px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>저장 공간</span>
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)" }}>
+                    {formatGBShort(usedStorageBytes)}/{formatGBShort(STORAGE_MAX_BYTES)}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    height: 8,
+                    borderRadius: 999,
+                    background: isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.min(100, (usedStorageBytes / STORAGE_MAX_BYTES) * 100)}%`,
+                      borderRadius: 999,
+                      background: isLight ? "#14161A" : "#FFFFFF",
+                      transition: "width 0.3s ease",
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)" }} />
+
+              {/* 휴지통 행 - 누르면 휴지통 화면으로 이동 */}
+              <div
+                onClick={() => setTrashScreenOpen(true)}
+                onMouseDown={pressDown("scale(0.98)")}
+                onMouseUp={pressUp("scale(1)")}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.04)" : "rgba(255,255,255,0.04)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 style={{
-                  position: "absolute",
-                  top: 3,
-                  left: isLight ? 3 : 33,
-                  width: 26,
-                  height: 26,
-                  borderRadius: "50%",
-                  background: isLight ? "#FFFFFF" : "#14161A",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "center",
-                  transition: "left 0.3s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s ease",
+                  justifyContent: "space-between",
+                  padding: "16px 18px",
+                  cursor: "pointer",
+                  transition: "background 0.2s ease, transform 0.15s ease",
                 }}
               >
-                {isLight ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F5A623" strokeWidth="2" strokeLinecap="round">
-                    <circle cx="12" cy="12" r="4" />
-                    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>휴지통</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {trash.length > 0 && (
+                    <span style={{ fontSize: 13, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)" }}>
+                      {trash.length}
+                    </span>
+                  )}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m9 6 6 6-6 6" />
                   </svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#FFFFFF">
-                    <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
-                  </svg>
-                )}
-              </span>
-            </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 휴지통 화면 - 삭제된 Vault/폴더/파일이 삭제된 시점으로부터 7일간 여기 담긴다.
+            복구를 누르면 원래 위치로 돌아가고, 삭제를 누르면 확인 절차 없이 바로 영구 삭제된다. */}
+        {active === 2 && trashScreenOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {trash.length === 0 ? (
+              <div
+                style={{
+                  padding: "48px 0",
+                  textAlign: "center",
+                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                  fontSize: 14,
+                }}
+              >
+                휴지통이 비어 있습니다
+              </div>
+            ) : (
+              trash
+                .slice()
+                .sort((a, b) => b.deletedAt - a.deletedAt)
+                .map((entry) => {
+                  const daysLeft = Math.max(0, Math.ceil((entry.deletedAt + TRASH_RETENTION_MS - Date.now()) / (24 * 60 * 60 * 1000)));
+                  return (
+                    <div
+                      key={entry.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: "14px 16px",
+                        borderRadius: 12,
+                        background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                        backdropFilter: "blur(20px) saturate(180%)",
+                        WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                        border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                      }}
+                    >
+                      <div style={{ flexShrink: 0 }}>
+                        {entry.type === "vault" ? (
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="3" width="20" height="20" rx="2.5" />
+                            <circle cx="12" cy="12" r="4.5" />
+                            <circle cx="12" cy="12" r="1" fill={isLight ? "#14161A" : "#FFFFFF"} stroke="none" />
+                            <path d="M12 7.5v1M12 15.5v1M7.5 12h1M15.5 12h1" />
+                          </svg>
+                        ) : entry.type === "folder" ? (
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                          </svg>
+                        ) : (
+                          getFileIcon(entry.files && entry.files[0] ? entry.files[0].mimeType : "")
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 15,
+                            fontWeight: 500,
+                            color: isLight ? "#14161A" : "#FFFFFF",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {entry.name}
+                        </div>
+                        <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                          {daysLeft}일 후 영구 삭제
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => restoreTrashItem(entry.id)}
+                        onMouseDown={pressDown("scale(0.94)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          flexShrink: 0,
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 13,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          transition: "background 0.2s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                      >
+                        복구
+                      </button>
+                      <button
+                        onClick={() => permanentlyDeleteTrashItem(entry.id)}
+                        onMouseDown={pressDown("scale(0.94)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          flexShrink: 0,
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: "1px solid rgba(239,68,68,0.4)",
+                          background: "transparent",
+                          color: "#EF4444",
+                          fontSize: 13,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          transition: "background 0.2s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  );
+                })
+            )}
           </div>
         )}
       </div>
@@ -2829,6 +3179,7 @@ export default function Alloy() {
                 onClick={() => {
                   setActive(i);
                   if (i === 0) setCurrentPath([]);
+                  if (i !== 2) setTrashScreenOpen(false);
                 }}
                 onMouseEnter={() => setHovered(i)}
                 onMouseLeave={(e) => {
