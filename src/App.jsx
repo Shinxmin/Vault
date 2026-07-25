@@ -76,6 +76,8 @@ export default function Alloy() {
   }, [active, isLight]);
 
   const BAR_HEIGHT = 58;
+  // 홈 탭의 추가하기(+) 버튼과 휴지통 화면의 닫기(X) 버튼 크기 - 검색 버튼(BAR_HEIGHT)의 2/3.
+  const TOP_BUTTON_SIZE = Math.round((BAR_HEIGHT * 2) / 3);
 
   // 하단 바의 원형 검색 버튼 - 누르면 탭바 위에 같은 디자인의 검색창 패널이 열린다.
   // 검색어가 있으면 홈 탭 메인 섹션이 현재 위치와 상관없이 이름에 검색어가 포함된
@@ -86,16 +88,17 @@ export default function Alloy() {
   const [searchVisible, setSearchVisible] = useState(false);
   const searchInputRef = useRef(null);
   // 하단 바가 중앙 정렬이라 검색 버튼의 화면상 x좌표가 뷰포트 폭에 따라 달라진다.
-  // 상단 + 버튼을 검색 버튼과 동일한 x좌표에 맞추기 위해 검색 버튼 위치를 측정해서
-  // 기본 20px 인셋보다 더 들어가야 하는 만큼을 marginRight로 보정한다.
+  // 상단 + / X 버튼의 가로 중심을 검색 버튼의 가로 중심에 맞추기 위해 검색 버튼 위치를
+  // 측정해서 필요한 marginRight를 계산한다.
   const searchButtonRef = useRef(null);
   const [addButtonExtraInset, setAddButtonExtraInset] = useState(0);
   useEffect(() => {
     const measure = () => {
       if (searchButtonRef.current) {
         const rect = searchButtonRef.current.getBoundingClientRect();
-        const targetInset = window.innerWidth - rect.right;
-        setAddButtonExtraInset(Math.max(0, targetInset - 20));
+        const searchCenter = rect.left + rect.width / 2;
+        const targetRightEdge = searchCenter + TOP_BUTTON_SIZE / 2;
+        setAddButtonExtraInset(Math.max(0, window.innerWidth - 20 - targetRightEdge));
       }
     };
     measure();
@@ -334,6 +337,20 @@ export default function Alloy() {
       toastShowTimerRef.current = setTimeout(() => setToastMessage(null), 300);
     }, 1700);
   };
+
+  // 화면(탭 전환/폴더 이동/휴지통 진입 등) 전환 시 콘텐츠 영역을 살짝 페이드+슬라이드로
+  // 다시 보여줘서 전체적으로 부드럽게 느껴지도록 한다. currentPath는 배열이라 참조가 매번
+  // 바뀌므로 join한 문자열로 signature를 만들어 실제 값이 바뀔 때만 애니메이션을 건다.
+  const [contentTransitioning, setContentTransitioning] = useState(false);
+  const navSignatureRef = useRef("");
+  useEffect(() => {
+    const signature = `${active}|${currentPath.join("/")}|${trashScreenOpen}`;
+    if (navSignatureRef.current === signature) return;
+    navSignatureRef.current = signature;
+    setContentTransitioning(true);
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setContentTransitioning(false)));
+    return () => cancelAnimationFrame(id);
+  }, [active, currentPath, trashScreenOpen]);
 
   const toggleSearch = () => {
     if (searchOpen) {
@@ -1250,8 +1267,8 @@ export default function Alloy() {
               onTouchStart={pressDown("scale(0.9)")}
               onTouchEnd={pressUp("scale(1)")}
               style={{
-                width: BAR_HEIGHT,
-                height: BAR_HEIGHT,
+                width: TOP_BUTTON_SIZE,
+                height: TOP_BUTTON_SIZE,
                 flexShrink: 0,
                 borderRadius: "50%",
                 border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
@@ -1274,7 +1291,7 @@ export default function Alloy() {
               }}
               aria-label="닫기"
             >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="6" y1="6" x2="18" y2="18" />
                 <line x1="18" y1="6" x2="6" y2="18" />
               </svg>
@@ -1299,8 +1316,8 @@ export default function Alloy() {
                 onTouchStart={pressDown("scale(0.9)")}
                 onTouchEnd={pressUp("scale(1)")}
                 style={{
-                  width: BAR_HEIGHT,
-                  height: BAR_HEIGHT,
+                  width: TOP_BUTTON_SIZE,
+                  height: TOP_BUTTON_SIZE,
                   flexShrink: 0,
                   borderRadius: "50%",
                   border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
@@ -1325,8 +1342,8 @@ export default function Alloy() {
               >
                 {uploadingCount > 0 ? (
                   <svg
-                    width="22"
-                    height="22"
+                    width="15"
+                    height="15"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -1338,8 +1355,8 @@ export default function Alloy() {
                   </svg>
                 ) : (
                   <svg
-                    width="22"
-                    height="22"
+                    width="15"
+                    height="15"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -1452,6 +1469,15 @@ export default function Alloy() {
           )}
         </div>
 
+        {/* 화면 전환 애니메이션 래퍼 - 탭 전환/폴더 이동/휴지통 진입 등 콘텐츠가 바뀔 때마다
+            살짝 페이드 + 위로 슬라이드하며 부드럽게 나타난다. */}
+        <div
+          style={{
+            opacity: contentTransitioning ? 0 : 1,
+            transform: contentTransitioning ? "translateY(8px)" : "translateY(0)",
+            transition: "opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
+          }}
+        >
         {/* 홈 탭 콘텐츠 */}
         {active === 0 && (
           <>
@@ -2571,6 +2597,7 @@ export default function Alloy() {
             )}
           </div>
         )}
+        </div>
       </div>
 
       {/* Vault(프로젝트) 생성 모달 - 제목 "Vault" + 우측 X, 인풋 + 오른쪽 생성 버튼.
