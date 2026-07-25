@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.32";
+const APP_VERSION = "0.1.33";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -358,9 +358,22 @@ export default function Alloy() {
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
 
-  // 설정 탭 > 휴지통/구독 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
+  // 설정 탭 > 휴지통 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
-  const [subscriptionScreenOpen, setSubscriptionScreenOpen] = useState(false);
+  // 요금 안내 - "모든 요금제를 확인하세요"를 누르면 바로 밑에 안내 문구가 펼쳐지고,
+  // 다른 곳을 터치하면(바깥 클릭 감지) 접힌다.
+  const [pricingInfoOpen, setPricingInfoOpen] = useState(false);
+  const pricingInfoRef = useRef(null);
+  useEffect(() => {
+    if (!pricingInfoOpen) return;
+    const handleOutside = (e) => {
+      if (pricingInfoRef.current && !pricingInfoRef.current.contains(e.target)) {
+        setPricingInfoOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handleOutside);
+    return () => document.removeEventListener("pointerdown", handleOutside);
+  }, [pricingInfoOpen]);
   // 휴지통 항목의 복구/삭제 - 다른 항목들과 같은 우측 끝 삼점 메뉴 패턴으로 담는다.
   const [trashItemMenuOpen, setTrashItemMenuOpen] = useState(null); // 휴지통 항목 id
   const [trashItemMenuVisible, setTrashItemMenuVisible] = useState(false);
@@ -1600,16 +1613,16 @@ export default function Alloy() {
                 cursor: active === 0 ? "pointer" : "default",
               }}
             >
-              {tagScreenTags.length ? "분류" : active === 2 && trashScreenOpen ? "휴지통" : active === 2 && subscriptionScreenOpen ? "구독" : TAB_TITLES[active]}
+              {tagScreenTags.length ? "분류" : active === 2 && trashScreenOpen ? "휴지통" : TAB_TITLES[active]}
             </h1>
           </div>
 
-          {/* 휴지통/구독/태그 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게
+          {/* 휴지통/태그 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게
               맞춘 리퀴드 글래스 원형 버튼. 우측 상단에 뜬다. */}
-          {(tagScreenTags.length > 0 || (active === 2 && (trashScreenOpen || subscriptionScreenOpen))) && (
+          {(tagScreenTags.length > 0 || (active === 2 && trashScreenOpen)) && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
             <button
-              onClick={() => { setTrashScreenOpen(false); setSubscriptionScreenOpen(false); closeTagScreen(); }}
+              onClick={() => { setTrashScreenOpen(false); closeTagScreen(); }}
               onMouseEnter={() => setTrashCloseButtonHovered(true)}
               onMouseLeave={(e) => {
                 setTrashCloseButtonHovered(false);
@@ -2861,8 +2874,8 @@ export default function Alloy() {
           </>
         )}
 
-        {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통/구독 화면 */}
-        {active === 2 && !trashScreenOpen && !subscriptionScreenOpen && !tagScreenTags.length && (
+        {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통 화면 */}
+        {active === 2 && !trashScreenOpen && !tagScreenTags.length && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div
               style={{
@@ -3047,26 +3060,39 @@ export default function Alloy() {
                     }}
                   />
                 </div>
-                {/* 저장 공간 2열 - 누르면 구독 화면으로 이동 */}
-                <button
-                  onClick={() => setSubscriptionScreenOpen(true)}
-                  style={{
-                    marginTop: 8,
-                    padding: 0,
-                    border: "none",
-                    background: "transparent",
-                    fontSize: 12,
-                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-                    cursor: "pointer",
-                    outline: "none",
-                    textDecoration: "underline",
-                    textUnderlineOffset: 2,
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"}
-                  onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
-                >
-                  모든 요금제를 확인하세요
-                </button>
+                {/* 저장 공간 2열 - 누르면 바로 밑에 요금 안내 문구가 펼쳐진다. 다른 곳을
+                    터치하면(pricingInfoRef 바깥 클릭) 접힌다. */}
+                <div ref={pricingInfoRef}>
+                  <button
+                    onClick={() => setPricingInfoOpen(true)}
+                    style={{
+                      marginTop: 8,
+                      padding: 0,
+                      border: "none",
+                      background: "transparent",
+                      fontSize: 12,
+                      color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                      cursor: "pointer",
+                      outline: "none",
+                      textDecoration: "underline",
+                      textUnderlineOffset: 2,
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"}
+                    onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
+                  >
+                    모든 요금제를 확인하세요
+                  </button>
+                  {pricingInfoOpen && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                        Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                        기본 저장 공간 10GB를 초과하면 $0.02/GB 가 청구됩니다
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)" }} />
@@ -3318,45 +3344,6 @@ export default function Alloy() {
                   );
                 })
             )}
-          </div>
-        )}
-
-        {/* 구독 화면 - 스탠다드/플러스 두 요금제를 가로 2열, 세로로 긴 카드로 보여준다.
-            휴지통 화면과 같은 헤더(X 닫기 버튼) 패턴을 재사용한다. */}
-        {active === 2 && subscriptionScreenOpen && !tagScreenTags.length && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            {[
-              { title: "스탠다드", price: "₩0/월", storage: "10GB" },
-              { title: "플러스", price: "₩13,000/월", storage: "500GB" },
-            ].map((plan) => (
-              <div
-                key={plan.title}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  textAlign: "center",
-                  minHeight: 240,
-                  justifyContent: "center",
-                  padding: "40px 16px",
-                  borderRadius: 16,
-                  background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                }}
-              >
-                <div style={{ fontSize: 22, fontWeight: 800, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 24 }}>
-                  {plan.title}
-                </div>
-                <div style={{ fontSize: 17, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 10 }}>
-                  {plan.price}
-                </div>
-                <div style={{ fontSize: 14, color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)" }}>
-                  {plan.storage}
-                </div>
-              </div>
-            ))}
           </div>
         )}
 
@@ -4376,7 +4363,7 @@ export default function Alloy() {
                   setActive(i);
                   if (i !== 2) {
                     setTrashScreenOpen(false);
-                    setSubscriptionScreenOpen(false);
+                    setPricingInfoOpen(false);
                   }
                   closeTagScreen();
                 }}
