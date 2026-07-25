@@ -47,12 +47,23 @@ export default function Alloy() {
   const [themeLoaded, setThemeLoaded] = useState(false);
   const isLight = theme === "light";
   // 설정 탭의 라이트/다크 스위치 - sunset/forest 테마는 그대로 두고 light<->dark만 오간다.
-  const toggleLightDark = () => setTheme(isLight ? "dark" : "light");
+  // "시스템 설정"이 켜져 있는 동안은 수동 전환을 막는다.
+  const toggleLightDark = () => {
+    if (useSystemTheme) return;
+    setTheme(isLight ? "dark" : "light");
+  };
+
+  // 시스템 설정 - 켜면 OS/브라우저의 라이트·다크 모드(아이폰/안드로이드/윈도우/맥 등)를
+  // 그대로 따라가고, 위 수동 스위치는 비활성화된다.
+  const [useSystemTheme, setUseSystemTheme] = useState(false);
+  const toggleUseSystemTheme = () => setUseSystemTheme((v) => !v);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem("alloy_theme");
-      if (saved === "light" || saved === "sunset" || saved === "forest") setTheme(saved);
+      const savedUseSystem = localStorage.getItem("alloy_use_system_theme") === "true";
+      setUseSystemTheme(savedUseSystem);
+      if (!savedUseSystem && (saved === "light" || saved === "sunset" || saved === "forest")) setTheme(saved);
     } catch (e) {}
     setThemeLoaded(true);
   }, []);
@@ -63,6 +74,24 @@ export default function Alloy() {
       localStorage.setItem("alloy_theme", theme);
     } catch (e) {}
   }, [theme, themeLoaded]);
+
+  useEffect(() => {
+    if (!themeLoaded) return;
+    try {
+      localStorage.setItem("alloy_use_system_theme", String(useSystemTheme));
+    } catch (e) {}
+  }, [useSystemTheme, themeLoaded]);
+
+  // 시스템 설정이 켜져 있으면 OS 다크모드 여부를 즉시 반영하고, 이후 시스템에서
+  // 라이트/다크가 바뀔 때마다(아이폰 설정, 윈도우 자동 전환 등) 따라간다.
+  useEffect(() => {
+    if (!useSystemTheme || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const applySystemTheme = () => setTheme(mq.matches ? "dark" : "light");
+    applySystemTheme();
+    mq.addEventListener("change", applySystemTheme);
+    return () => mq.removeEventListener("change", applySystemTheme);
+  }, [useSystemTheme]);
 
   const [hovered, setHovered] = useState(null);
   const btnRefs = useRef([]);
@@ -308,8 +337,9 @@ export default function Alloy() {
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
 
-  // 설정 탭 > 휴지통 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
+  // 설정 탭 > 휴지통/구독 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
+  const [subscriptionScreenOpen, setSubscriptionScreenOpen] = useState(false);
 
   // 저장 공간 - 지금은 10GB로 고정. 사용량은 files + 휴지통에 남아있는 파일 크기 합.
   const STORAGE_MAX_BYTES = 10 * 1024 * 1024 * 1024;
@@ -337,20 +367,6 @@ export default function Alloy() {
       toastShowTimerRef.current = setTimeout(() => setToastMessage(null), 300);
     }, 1700);
   };
-
-  // 화면(탭 전환/폴더 이동/휴지통 진입 등) 전환 시 콘텐츠 영역을 살짝 페이드+슬라이드로
-  // 다시 보여줘서 전체적으로 부드럽게 느껴지도록 한다. currentPath는 배열이라 참조가 매번
-  // 바뀌므로 join한 문자열로 signature를 만들어 실제 값이 바뀔 때만 애니메이션을 건다.
-  const [contentTransitioning, setContentTransitioning] = useState(false);
-  const navSignatureRef = useRef("");
-  useEffect(() => {
-    const signature = `${active}|${currentPath.join("/")}|${trashScreenOpen}`;
-    if (navSignatureRef.current === signature) return;
-    navSignatureRef.current = signature;
-    setContentTransitioning(true);
-    const id = requestAnimationFrame(() => requestAnimationFrame(() => setContentTransitioning(false)));
-    return () => cancelAnimationFrame(id);
-  }, [active, currentPath, trashScreenOpen]);
 
   const toggleSearch = () => {
     if (searchOpen) {
@@ -1247,16 +1263,16 @@ export default function Alloy() {
                 cursor: active === 0 ? "pointer" : "default",
               }}
             >
-              {active === 2 && trashScreenOpen ? "휴지통" : TAB_TITLES[active]}
+              {active === 2 && trashScreenOpen ? "휴지통" : active === 2 && subscriptionScreenOpen ? "구독" : TAB_TITLES[active]}
             </h1>
           </div>
 
-          {/* 휴지통 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게 맞춘
+          {/* 휴지통/구독 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게 맞춘
               리퀴드 글래스 원형 버튼. 우측 상단에 뜬다. */}
-          {active === 2 && trashScreenOpen && (
+          {active === 2 && (trashScreenOpen || subscriptionScreenOpen) && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
             <button
-              onClick={() => setTrashScreenOpen(false)}
+              onClick={() => { setTrashScreenOpen(false); setSubscriptionScreenOpen(false); }}
               onMouseEnter={() => setTrashCloseButtonHovered(true)}
               onMouseLeave={(e) => {
                 setTrashCloseButtonHovered(false);
@@ -1469,15 +1485,6 @@ export default function Alloy() {
           )}
         </div>
 
-        {/* 화면 전환 애니메이션 래퍼 - 탭 전환/폴더 이동/휴지통 진입 등 콘텐츠가 바뀔 때마다
-            살짝 페이드 + 위로 슬라이드하며 부드럽게 나타난다. */}
-        <div
-          style={{
-            opacity: contentTransitioning ? 0 : 1,
-            transform: contentTransitioning ? "translateY(8px)" : "translateY(0)",
-            transition: "opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
-          }}
-        >
         {/* 홈 탭 콘텐츠 */}
         {active === 0 && (
           <>
@@ -2305,8 +2312,8 @@ export default function Alloy() {
           </>
         )}
 
-        {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통 화면 */}
-        {active === 2 && !trashScreenOpen && (
+        {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통/구독 화면 */}
+        {active === 2 && !trashScreenOpen && !subscriptionScreenOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div
               style={{
@@ -2328,13 +2335,15 @@ export default function Alloy() {
                 overflow: "hidden",
               }}
             >
-              {/* 테마 행 - 텍스트 없이 해/달 아이콘으로만 구분되는 라이트/다크 전환 스위치 */}
+              {/* 테마 행 - 텍스트 없이 해/달 아이콘으로만 구분되는 라이트/다크 전환 스위치.
+                  "시스템 설정"이 켜져 있으면 이 스위치는 비활성화되고 투명도가 낮아진다. */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px" }}>
                 <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>테마</span>
                 <button
                   onClick={toggleLightDark}
                   onMouseDown={pressDown("scale(0.94)")}
                   onMouseUp={pressUp("scale(1)")}
+                  disabled={useSystemTheme}
                   aria-label="라이트/다크 테마 전환"
                   style={{
                     position: "relative",
@@ -2344,10 +2353,11 @@ export default function Alloy() {
                     borderRadius: 999,
                     border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                     background: isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.1)",
-                    cursor: "pointer",
+                    cursor: useSystemTheme ? "default" : "pointer",
                     outline: "none",
                     padding: 0,
-                    transition: "background 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                    opacity: useSystemTheme ? 0.4 : 1,
+                    transition: "background 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease",
                   }}
                 >
                   {/* 트랙 좌우의 흐린 해/달 아이콘 */}
@@ -2414,6 +2424,52 @@ export default function Alloy() {
                 </button>
               </div>
 
+              {/* 테마 2열 - "시스템 설정" 작은 텍스트 + 체크박스. 켜면 OS(아이폰/안드로이드/
+                  윈도우/맥 등)의 라이트·다크 모드를 그대로 따라간다. */}
+              <div
+                onClick={toggleUseSystemTheme}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "0 18px 14px 18px",
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)" }}>
+                  시스템 설정
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleUseSystemTheme(); }}
+                  onMouseDown={pressDown("scale(0.9)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="시스템 설정 사용"
+                  role="checkbox"
+                  aria-checked={useSystemTheme}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    flexShrink: 0,
+                    borderRadius: 5,
+                    border: `1.5px solid ${useSystemTheme ? "transparent" : (isLight ? "rgba(20,22,26,0.30)" : "rgba(255,255,255,0.30)")}`,
+                    background: useSystemTheme ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
+                    cursor: "pointer",
+                    outline: "none",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s ease, border-color 0.2s ease",
+                  }}
+                >
+                  {useSystemTheme && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#FFFFFF" : "#14161A"} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+
               <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)" }} />
 
               {/* 저장 공간 행 - 사용량만큼 채워지는 프로그레스 바 + 오른쪽에 "3.5GB/10GB" 텍스트 */}
@@ -2442,6 +2498,26 @@ export default function Alloy() {
                     }}
                   />
                 </div>
+                {/* 저장 공간 2열 - 누르면 구독 화면으로 이동 */}
+                <button
+                  onClick={() => setSubscriptionScreenOpen(true)}
+                  style={{
+                    marginTop: 8,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    fontSize: 12,
+                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    cursor: "pointer",
+                    outline: "none",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"}
+                  onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
+                >
+                  모든 요금제를 확인하세요
+                </button>
               </div>
 
               <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)" }} />
@@ -2597,7 +2673,19 @@ export default function Alloy() {
             )}
           </div>
         )}
-        </div>
+
+        {/* 구독 화면 - 아직 내용 없이 빈 화면(추후 요금제 안내 예정). 휴지통 화면과 같은
+            헤더(X 닫기 버튼) 패턴만 재사용한다. */}
+        {active === 2 && subscriptionScreenOpen && (
+          <div
+            style={{
+              padding: "48px 0",
+              textAlign: "center",
+              color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+              fontSize: 14,
+            }}
+          />
+        )}
       </div>
 
       {/* Vault(프로젝트) 생성 모달 - 제목 "Vault" + 우측 X, 인풋 + 오른쪽 생성 버튼.
@@ -3277,7 +3365,10 @@ export default function Alloy() {
                 onClick={() => {
                   setActive(i);
                   if (i === 0) setCurrentPath([]);
-                  if (i !== 2) setTrashScreenOpen(false);
+                  if (i !== 2) {
+                    setTrashScreenOpen(false);
+                    setSubscriptionScreenOpen(false);
+                  }
                 }}
                 onMouseEnter={() => setHovered(i)}
                 onMouseLeave={(e) => {
