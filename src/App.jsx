@@ -123,6 +123,14 @@ export default function Alloy() {
     return data;
   };
 
+  // 예전에 만든 항목은 createdAt/updatedAt 없이 저장돼 있을 수 있는데(이 필드를 넣기 전
+  // 버전에서 생성됨), id 자체가 Date.now() 기반 타임스탬프라 생성 시각의 대체값으로 쓸 수
+  // 있다. "정보" 모달에 빈 값이 뜨지 않도록 불러올 때 항상 유효한 날짜를 채워 넣는다.
+  const withDates = (item) => {
+    const createdAt = item.createdAt || Math.floor(item.id);
+    return { ...item, createdAt, updatedAt: item.updatedAt || createdAt };
+  };
+
   // Vaulty 상태(Vault/폴더/파일 목록) 영구 저장 - 로그인이 없는 개인용 앱이라
   // Supabase 단일 행(id='default')에 전체 상태를 그대로 저장한다.
   // 파일의 실제 바이트는 R2에 있고 files[].r2Key로 R2 객체를 가리킨다.
@@ -137,9 +145,9 @@ export default function Alloy() {
       if (error) {
         console.error("Vaulty 상태를 불러오지 못했습니다:", error);
       } else if (data) {
-        const loadedVaults = data.vaults || [];
-        const loadedFolders = data.folders || [];
-        const loadedFiles = data.files || [];
+        const loadedVaults = (data.vaults || []).map(withDates);
+        const loadedFolders = (data.folders || []).map(withDates);
+        const loadedFiles = (data.files || []).map(withDates);
         setVaults(loadedVaults);
         setFolders(loadedFolders);
         // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
