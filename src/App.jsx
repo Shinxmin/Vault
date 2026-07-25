@@ -233,6 +233,12 @@ export default function Alloy() {
   // 버튼의 화면 좌표를 직접 계산해 고정 위치로 띄운다.
   const uploadButtonRef = useRef(null);
   const [uploadMenuAnchor, setUploadMenuAnchor] = useState({ top: 0, right: 0 });
+  // "마법사" 버튼 - 예전 "ABC" 정렬 버튼 자리를 대체. 누르면 "정렬"(기존 ABC 순환)과
+  // "변환"(일괄 이름 변환) 두 옵션이 드롭다운으로 뜬다. 업로드 메뉴와 동일한 포탈+고정좌표 패턴.
+  const wizardButtonRef = useRef(null);
+  const [wizardMenuOpen, setWizardMenuOpen] = useState(false);
+  const [wizardMenuVisible, setWizardMenuVisible] = useState(false);
+  const [wizardMenuAnchor, setWizardMenuAnchor] = useState({ top: 0, right: 0 });
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderModalVisible, setFolderModalVisible] = useState(false);
   const [folderName, setFolderName] = useState("");
@@ -300,6 +306,23 @@ export default function Alloy() {
   const toggleUploadMenu = () => {
     if (uploadMenuOpen) closeUploadMenu();
     else openUploadMenu();
+  };
+
+  const openWizardMenu = () => {
+    if (wizardButtonRef.current) {
+      const rect = wizardButtonRef.current.getBoundingClientRect();
+      setWizardMenuAnchor({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    }
+    setWizardMenuOpen(true);
+    requestAnimationFrame(() => setWizardMenuVisible(true));
+  };
+  const closeWizardMenu = () => {
+    setWizardMenuVisible(false);
+    setTimeout(() => setWizardMenuOpen(false), 200);
+  };
+  const toggleWizardMenu = () => {
+    if (wizardMenuOpen) closeWizardMenu();
+    else openWizardMenu();
   };
 
   const openFolderModal = () => {
@@ -541,6 +564,104 @@ export default function Alloy() {
     }
     setEditingItem(null);
     setEditingValue("");
+  };
+
+  // 변환(일괄 이름 변경) 모달 - "마법사" 메뉴의 "변환"을 누르면 뜬다. 홈에서는 Vault들을,
+  // 폴더/Vault 안에서는 그 안의 파일·이미지들을 체크해서 한 번에 새 이름으로 바꾼다.
+  const [convertModalOpen, setConvertModalOpen] = useState(false);
+  const [convertModalVisible, setConvertModalVisible] = useState(false);
+  const [convertChecked, setConvertChecked] = useState({}); // { [id]: true }
+  const [convertDrafts, setConvertDrafts] = useState({}); // { [id]: 미리보기용 새 이름 }
+  const [convertInput, setConvertInput] = useState("");
+
+  const convertTargets =
+    currentPath.length === 0
+      ? vaults.map((v) => ({ id: v.id, name: v.name }))
+      : files
+          .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
+          .map((f) => ({ id: f.id, name: f.name }));
+
+  const openConvertModal = () => {
+    setConvertChecked({});
+    setConvertDrafts({});
+    setConvertInput("");
+    setConvertModalOpen(true);
+    requestAnimationFrame(() => setConvertModalVisible(true));
+  };
+  const closeConvertModal = () => {
+    setConvertModalVisible(false);
+    setTimeout(() => setConvertModalOpen(false), 200);
+  };
+  const toggleConvertChecked = (id) => {
+    setConvertChecked((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+  // 지우기 - 체크된 항목들의 미리보기 이름을 비운다.
+  const handleConvertClear = () => {
+    setConvertDrafts((prev) => {
+      const next = { ...prev };
+      convertTargets.forEach((item) => {
+        if (convertChecked[item.id]) next[item.id] = "";
+      });
+      return next;
+    });
+  };
+  // 추가 - 입력창에 쓴 문자/숫자를 체크된 항목들의 미리보기 이름 뒤에 이어붙인다.
+  const handleConvertAppend = () => {
+    if (!convertInput) return;
+    setConvertDrafts((prev) => {
+      const next = { ...prev };
+      convertTargets.forEach((item) => {
+        if (convertChecked[item.id]) {
+          const current = prev[item.id] !== undefined ? prev[item.id] : item.name;
+          next[item.id] = current + convertInput;
+        }
+      });
+      return next;
+    });
+  };
+  // 변환 - 실제로 적용한다. 같은 이름이 여러 개면 뒤에 (1), (2)...를 붙여 구분한다.
+  const handleConvertApply = () => {
+    const checkedItems = convertTargets.filter((item) => convertChecked[item.id]);
+    if (!checkedItems.length) {
+      closeConvertModal();
+      return;
+    }
+    const finalNames = checkedItems.map((item) => ({
+      id: item.id,
+      name: (convertDrafts[item.id] !== undefined ? convertDrafts[item.id] : item.name).trim() || item.name,
+    }));
+    const counts = {};
+    finalNames.forEach((f) => {
+      counts[f.name] = (counts[f.name] || 0) + 1;
+    });
+    const seen = {};
+    const resolved = finalNames.map((f) => {
+      if (counts[f.name] > 1) {
+        seen[f.name] = (seen[f.name] || 0) + 1;
+        return { id: f.id, name: `${f.name}(${seen[f.name]})` };
+      }
+      return f;
+    });
+    const nameById = Object.fromEntries(resolved.map((r) => [r.id, r.name]));
+    const now = Date.now();
+    if (currentPath.length === 0) {
+      const vaultRenames = resolved
+        .map((r) => {
+          const v = vaults.find((vv) => vv.id === r.id);
+          return v && v.name !== r.name ? { oldName: v.name, newName: r.name } : null;
+        })
+        .filter(Boolean);
+      setVaults((prev) => prev.map((v) => (nameById[v.id] ? { ...v, name: nameById[v.id], updatedAt: now } : v)));
+      vaultRenames.forEach(({ oldName, newName }) => {
+        const oldPrefix = [oldName];
+        const newPrefix = [newName];
+        setFolders((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
+        setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
+      });
+    } else {
+      setFiles((prev) => prev.map((f) => (nameById[f.id] ? { ...f, name: nameById[f.id], updatedAt: now } : f)));
+    }
+    closeConvertModal();
   };
 
   // 이미지/움짤 전체화면 뷰어 - 열 당시의 이미지 배열을 그대로 들고 있다가
@@ -1173,18 +1294,19 @@ export default function Alloy() {
                 ))}
               </div>
 
-              {/* 정렬 / 보기 방식 아이콘 */}
+              {/* 마법사 - 예전 ABC 정렬 버튼 자리. 누르면 "정렬"/"변환" 드롭다운이 뜬다 */}
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button
-                  onClick={cycleSortMode}
+                  ref={wizardButtonRef}
+                  onClick={toggleWizardMenu}
                   onMouseDown={pressDown("scale(0.9)")}
                   onMouseUp={pressUp("scale(1)")}
-                  aria-label="정렬"
-                  title="정렬"
+                  aria-label="마법사"
+                  title="마법사"
                   style={{
                     minWidth: 36,
                     height: 30,
-                    padding: "0 8px",
+                    padding: "0 10px",
                     borderRadius: 8,
                     border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                     background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
@@ -1205,8 +1327,88 @@ export default function Alloy() {
                     e.currentTarget.style.transform = "scale(1)";
                   }}
                 >
-                  ABC
+                  마법사
                 </button>
+
+                {wizardMenuOpen && createPortal(
+                  <>
+                    <div onClick={closeWizardMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 19 }} />
+                    <div
+                      style={{
+                        position: "fixed",
+                        top: wizardMenuAnchor.top,
+                        right: wizardMenuAnchor.right,
+                        minWidth: 140,
+                        background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
+                        backdropFilter: "blur(20px) saturate(180%)",
+                        WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                        borderRadius: 12,
+                        border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                        boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+                        zIndex: 20,
+                        overflow: "hidden",
+                        transformOrigin: "top right",
+                        opacity: wizardMenuVisible ? 1 : 0,
+                        transform: wizardMenuVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
+                        transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() => {
+                          closeWizardMenu();
+                          cycleSortMode();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        정렬
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      <button
+                        onClick={() => {
+                          closeWizardMenu();
+                          openConvertModal();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        변환
+                      </button>
+                    </div>
+                  </>,
+                  document.body
+                )}
               </div>
             </div>
 
@@ -1470,7 +1672,18 @@ export default function Alloy() {
                     />
                   );
                 }
-                return <div style={textStyle}>{item.name}</div>;
+                return (
+                  <div
+                    style={{
+                      ...textStyle,
+                      userSelect: "none",
+                      WebkitUserSelect: "none",
+                      WebkitTouchCallout: "none",
+                    }}
+                  >
+                    {item.name}
+                  </div>
+                );
               };
 
               // 폴더/문서 공용 행 렌더러 - 검색 결과 목록과 폴더 안 목록에서 함께 쓴다.
@@ -1511,6 +1724,9 @@ export default function Alloy() {
                     }`,
                     cursor: type === "folder" ? "pointer" : "default",
                     touchAction: "manipulation",
+                    userSelect: "none",
+                    WebkitUserSelect: "none",
+                    WebkitTouchCallout: "none",
                     transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease",
                   }}
                 >
@@ -1618,6 +1834,9 @@ export default function Alloy() {
                           }`,
                           cursor: "pointer",
                           touchAction: "manipulation",
+                          userSelect: "none",
+                          WebkitUserSelect: "none",
+                          WebkitTouchCallout: "none",
                           transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease",
                         }}
                       >
@@ -1754,6 +1973,9 @@ export default function Alloy() {
                             background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
                             cursor: img.url ? "pointer" : "default",
                             touchAction: "manipulation",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
+                            WebkitTouchCallout: "none",
                             transition: "border-color 0.15s ease, transform 0.15s ease",
                           }}
                         >
@@ -2707,6 +2929,246 @@ export default function Alloy() {
                 }}
               />
             </div>
+          </div>
+        </>
+      )}
+
+      {/* 변환(일괄 이름 변경) 모달 - 체크한 항목들의 이름을 한 번에 바꾼다.
+          목록은 300px 넘으면 스크롤, 지우기/추가로 미리보기 이름을 만들고 변환으로 확정한다. */}
+      {convertModalOpen && (
+        <>
+          <div
+            onClick={closeConvertModal}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.45)",
+              zIndex: 39,
+              opacity: convertModalVisible ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: convertModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: convertModalVisible ? 1 : 0,
+              background: isLight ? "#FFFFFF" : "#1a1918",
+              borderRadius: 20,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              padding: "32px 30px",
+              width: "84vw",
+              boxSizing: "border-box",
+              zIndex: 40,
+              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                }}
+              >
+                변환
+              </h2>
+              <button
+                onClick={closeConvertModal}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            <div
+              style={{
+                maxHeight: 300,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginBottom: 16,
+              }}
+            >
+              {convertTargets.length === 0 && (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "20px 0",
+                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                    fontSize: 14,
+                  }}
+                >
+                  변환할 항목이 없습니다
+                </div>
+              )}
+              {convertTargets.map((item) => {
+                const displayName = convertDrafts[item.id] !== undefined ? convertDrafts[item.id] : item.name;
+                return (
+                  <label
+                    key={item.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "8px 4px",
+                      cursor: "pointer",
+                      borderRadius: 8,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!convertChecked[item.id]}
+                      onChange={() => toggleConvertChecked(item.id)}
+                      style={{ width: 18, height: 18, flexShrink: 0, cursor: "pointer" }}
+                    />
+                    <span
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: 15,
+                        color: displayName
+                          ? (isLight ? "#14161A" : "#FFFFFF")
+                          : (isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"),
+                        fontStyle: displayName ? "normal" : "italic",
+                      }}
+                    >
+                      {displayName || "(빈 이름)"}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <input
+              type="text"
+              value={convertInput}
+              onChange={(e) => setConvertInput(e.target.value)}
+              placeholder="추가할 문자/숫자"
+              style={{
+                width: "100%",
+                padding: 12,
+                marginBottom: 12,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                borderRadius: 8,
+                background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                color: isLight ? "#14161A" : "#FFFFFF",
+                fontSize: 15,
+                outline: "none",
+                boxSizing: "border-box",
+                transition: "border-color 0.2s ease",
+              }}
+            />
+
+            <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+              <button
+                onClick={handleConvertClear}
+                onMouseDown={pressDown("scale(0.95)")}
+                onMouseUp={pressUp("scale(1)")}
+                style={{
+                  flex: 1,
+                  padding: 10,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  outline: "none",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                지우기
+              </button>
+              <button
+                onClick={handleConvertAppend}
+                onMouseDown={pressDown("scale(0.95)")}
+                onMouseUp={pressUp("scale(1)")}
+                style={{
+                  flex: 1,
+                  padding: 10,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  outline: "none",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                추가
+              </button>
+            </div>
+
+            <button
+              onClick={handleConvertApply}
+              onMouseDown={pressDown("scale(0.95)")}
+              onMouseUp={pressUp("scale(1)")}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: "pointer",
+                outline: "none",
+                transition: "transform 0.15s ease",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              변환
+            </button>
           </div>
         </>
       )}
