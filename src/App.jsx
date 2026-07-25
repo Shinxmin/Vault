@@ -445,6 +445,7 @@ export default function Alloy() {
   const longPressTimerRef = useRef(null);
   const longPressStartRef = useRef(null);
   const justDraggedRef = useRef(false);
+  const dragScrollLockRef = useRef(null); // 드래그 시작 시점의 스크롤 위치 - 드래그 중 스크롤 밀림 방지용
 
   useEffect(() => {
     draggingItemRef.current = draggingItem;
@@ -466,6 +467,12 @@ export default function Alloy() {
   const handleDragPointerMove = (e) => {
     const current = draggingItemRef.current;
     if (!current) return;
+    // 드래그 중에는 화면이 같이 스크롤되면 목표 위치가 계속 움직여서 정렬하기 어려우므로,
+    // 스크롤이 밀리기 전에 막는다(터치 스크롤 기본 동작 억제 + 스크롤 위치 고정 둘 다).
+    e.preventDefault();
+    if (dragScrollLockRef.current !== null) {
+      if (window.scrollY !== dragScrollLockRef.current) window.scrollTo(0, dragScrollLockRef.current);
+    }
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const targetEl = el && el.closest("[data-drag-type]");
     if (!targetEl) return;
@@ -481,6 +488,9 @@ export default function Alloy() {
     setDragOverKey(null);
     setCustomOrderActive(true);
     justDraggedRef.current = true;
+    dragScrollLockRef.current = null;
+    document.body.style.overflow = "";
+    document.documentElement.style.overflow = "";
     setTimeout(() => {
       justDraggedRef.current = false;
     }, 80);
@@ -490,7 +500,11 @@ export default function Alloy() {
 
   const beginDrag = (type, id) => {
     setDraggingItem({ type, id });
-    window.addEventListener("pointermove", handleDragPointerMove);
+    dragScrollLockRef.current = window.scrollY;
+    // body/html에 overflow:hidden을 주면 대부분의 브라우저에서 드래그 중 스크롤이 막힌다.
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    window.addEventListener("pointermove", handleDragPointerMove, { passive: false });
     window.addEventListener("pointerup", handleDragPointerUp);
   };
 
@@ -1687,16 +1701,19 @@ export default function Alloy() {
               };
 
               // 폴더/문서 공용 행 렌더러 - 검색 결과 목록과 폴더 안 목록에서 함께 쓴다.
-              const renderRow = (type, item, iconNode, subText) => (
+              const renderRow = (type, item, iconNode, subText) => {
+                const rowDragType = type === "folder" ? "folder" : "file";
+                const isPickedUp = draggingItem && draggingItem.type === rowDragType && draggingItem.id === item.id;
+                return (
                 <div
                   key={`${type}-${item.id}`}
-                  data-drag-type={type === "folder" ? "folder" : "file"}
+                  data-drag-type={rowDragType}
                   data-drag-id={item.id}
                   onClick={() => {
                     if (justDraggedRef.current) return;
                     if (type === "folder") setCurrentPath([...currentPath, item.name]);
                   }}
-                  onPointerDown={rowPointerDown(type === "folder" ? "folder" : "file", item.id)}
+                  onPointerDown={rowPointerDown(rowDragType, item.id)}
                   onPointerMove={rowPointerMove}
                   onPointerUp={rowPointerUp}
                   onMouseDown={pressDown("scale(0.98)")}
@@ -1704,7 +1721,7 @@ export default function Alloy() {
                   onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)";
-                    e.currentTarget.style.transform = "none";
+                    e.currentTarget.style.transform = isPickedUp ? e.currentTarget.style.transform : "none";
                   }}
                   style={{
                     display: "flex",
@@ -1717,8 +1734,7 @@ export default function Alloy() {
                     backdropFilter: "blur(20px) saturate(180%)",
                     WebkitBackdropFilter: "blur(20px) saturate(180%)",
                     border: `1px solid ${
-                      dragOverKey === `${type === "folder" ? "folder" : "file"}-${item.id}` ||
-                      (draggingItem && draggingItem.id === item.id)
+                      dragOverKey === `${rowDragType}-${item.id}` || isPickedUp
                         ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
                         : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                     }`,
@@ -1727,7 +1743,10 @@ export default function Alloy() {
                     userSelect: "none",
                     WebkitUserSelect: "none",
                     WebkitTouchCallout: "none",
-                    transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease",
+                    transform: isPickedUp ? "scale(1.03)" : "none",
+                    boxShadow: isPickedUp ? "0 12px 28px rgba(0,0,0,0.3)" : "none",
+                    zIndex: isPickedUp ? 5 : "auto",
+                    transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease",
                   }}
                 >
                   <div style={{ flexShrink: 0 }}>{iconNode}</div>
@@ -1748,7 +1767,8 @@ export default function Alloy() {
                   </div>
                   {renderItemMenu(type === "folder" ? "folder" : "file", item)}
                 </div>
-              );
+                );
+              };
 
               // ── 검색 결과: 검색어가 있으면 지금 어느 위치를 보고 있든 상관없이 전체
               //     파일/문서/이미지 중 이름에 검색어가 포함된 항목을 리스트로 보여준다. ──
@@ -1798,7 +1818,9 @@ export default function Alloy() {
                 }
                 return (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {visibleVaults.map((vault) => (
+                    {visibleVaults.map((vault) => {
+                      const isPickedUp = draggingItem && draggingItem.type === "vault" && draggingItem.id === vault.id;
+                      return (
                       <div
                         key={vault.id}
                         data-drag-type="vault"
@@ -1815,7 +1837,7 @@ export default function Alloy() {
                         onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)";
-                          e.currentTarget.style.transform = "none";
+                          e.currentTarget.style.transform = isPickedUp ? e.currentTarget.style.transform : "none";
                         }}
                         style={{
                           position: "relative",
@@ -1828,7 +1850,7 @@ export default function Alloy() {
                           backdropFilter: "blur(20px) saturate(180%)",
                           WebkitBackdropFilter: "blur(20px) saturate(180%)",
                           border: `1px solid ${
-                            dragOverKey === `vault-${vault.id}` || (draggingItem && draggingItem.type === "vault" && draggingItem.id === vault.id)
+                            dragOverKey === `vault-${vault.id}` || isPickedUp
                               ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
                               : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                           }`,
@@ -1837,7 +1859,10 @@ export default function Alloy() {
                           userSelect: "none",
                           WebkitUserSelect: "none",
                           WebkitTouchCallout: "none",
-                          transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease",
+                          transform: isPickedUp ? "scale(1.04)" : "none",
+                          boxShadow: isPickedUp ? "0 16px 36px rgba(0,0,0,0.35)" : "none",
+                          zIndex: isPickedUp ? 5 : "auto",
+                          transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease",
                         }}
                       >
                         {/* 좌측 중앙정렬 금고(safe) 아이콘 */}
@@ -1885,7 +1910,8 @@ export default function Alloy() {
                         {/* 우측 중앙정렬 삼점 메뉴 */}
                         {renderItemMenu("vault", vault)}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               }
@@ -1944,7 +1970,9 @@ export default function Alloy() {
                   {/* 이미지/움짤 콜라주 - 비율 유지한 2열 메이슨리 */}
                   {visibleImages.length > 0 && (
                     <div style={{ columnCount: 2, columnGap: 8, marginTop: visibleFolders.length || visibleDocs.length ? 8 : 0 }}>
-                      {visibleImages.map((img) => (
+                      {visibleImages.map((img) => {
+                        const isPickedUp = draggingItem && draggingItem.type === "file" && draggingItem.id === img.id;
+                        return (
                         <div
                           key={img.id}
                           data-drag-type="file"
@@ -1966,7 +1994,7 @@ export default function Alloy() {
                             borderRadius: 10,
                             overflow: "hidden",
                             border: `1px solid ${
-                              dragOverKey === `file-${img.id}` || (draggingItem && draggingItem.type === "file" && draggingItem.id === img.id)
+                              dragOverKey === `file-${img.id}` || isPickedUp
                                 ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
                                 : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                             }`,
@@ -1976,7 +2004,10 @@ export default function Alloy() {
                             userSelect: "none",
                             WebkitUserSelect: "none",
                             WebkitTouchCallout: "none",
-                            transition: "border-color 0.15s ease, transform 0.15s ease",
+                            transform: isPickedUp ? "scale(1.04)" : "none",
+                            boxShadow: isPickedUp ? "0 12px 28px rgba(0,0,0,0.3)" : "none",
+                            zIndex: isPickedUp ? 5 : "auto",
+                            transition: "border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease",
                           }}
                         >
                           {img.url ? (
@@ -2009,7 +2040,8 @@ export default function Alloy() {
                             {renderItemMenu("file", img)}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </>
