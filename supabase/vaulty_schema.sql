@@ -8,11 +8,14 @@ create table if not exists public.vaulty_state (
   folders jsonb not null default '[]'::jsonb,
   files jsonb not null default '[]'::jsonb,
   custom_order_active boolean not null default false,
+  trash jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 
--- 기존에 테이블이 이미 있는 환경에서는 아래 한 줄만 실행해도 됩니다.
+-- 기존에 테이블이 이미 있는 환경에서는 아래 두 줄만 실행해도 됩니다.
 alter table public.vaulty_state add column if not exists custom_order_active boolean not null default false;
+-- 휴지통(삭제 후 7일간 보관되는 Vault/폴더/파일) 저장용 컬럼.
+alter table public.vaulty_state add column if not exists trash jsonb not null default '[]'::jsonb;
 
 alter table public.vaulty_state enable row level security;
 
