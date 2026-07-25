@@ -1714,7 +1714,7 @@ export default function Alloy() {
               };
 
               // 폴더/문서 공용 행 렌더러 - 검색 결과 목록과 폴더 안 목록에서 함께 쓴다.
-              const renderRow = (type, item, iconNode, subText) => {
+              const renderRow = (type, item, iconNode, subText, onNavigate) => {
                 const rowDragType = type === "folder" ? "folder" : "file";
                 const isPickedUp = draggingItem && draggingItem.type === rowDragType && draggingItem.id === item.id;
                 return (
@@ -1724,6 +1724,10 @@ export default function Alloy() {
                   data-drag-id={item.id}
                   onClick={() => {
                     if (justDraggedRef.current) return;
+                    if (onNavigate) {
+                      onNavigate();
+                      return;
+                    }
                     if (type === "folder") setCurrentPath([...currentPath, item.name]);
                   }}
                   onPointerDown={rowPointerDown(rowDragType, item.id)}
@@ -1751,7 +1755,7 @@ export default function Alloy() {
                         ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
                         : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                     }`,
-                    cursor: type === "folder" ? "pointer" : "default",
+                    cursor: type === "folder" || onNavigate ? "pointer" : "default",
                     touchAction: "manipulation",
                     userSelect: "none",
                     WebkitUserSelect: "none",
@@ -1784,11 +1788,13 @@ export default function Alloy() {
               };
 
               // ── 검색 결과: 검색어가 있으면 지금 어느 위치를 보고 있든 상관없이 전체
-              //     파일/문서/이미지 중 이름에 검색어가 포함된 항목을 리스트로 보여준다. ──
+              //     폴더/파일/문서/이미지 중 이름에 검색어가 포함된 항목을 리스트로 보여준다.
+              //     항목을 누르면 검색을 닫고 해당 항목이 있는 위치로 이동한다. ──
               const trimmedQuery = searchQuery.trim().toLowerCase();
               if (trimmedQuery) {
-                const matches = files.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
-                if (matches.length === 0) {
+                const folderMatches = folders.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
+                const fileMatches = files.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
+                if (folderMatches.length === 0 && fileMatches.length === 0) {
                   return (
                     <div
                       style={{
@@ -1803,11 +1809,37 @@ export default function Alloy() {
                   );
                 }
                 return (
-                  <>
-                    {matches.map((item) =>
-                      renderRow("file", item, getFileIcon(item.mimeType), item.path.join(" / "))
+                  // 검색 패널이 열려 있는 동안 화면 전체를 덮는 백드롭(zIndex 9, 바깥을 누르면
+                  // 검색을 닫는 용도)이 결과 목록 위를 가로막지 않도록, 결과 목록은 그보다
+                  // 높은 zIndex를 가진 별도 쌓임 맥락으로 렌더링한다.
+                  <div style={{ position: "relative", zIndex: 11 }}>
+                    {folderMatches.map((item) =>
+                      renderRow(
+                        "folder",
+                        item,
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>,
+                        item.path.slice(0, -1).join(" / ") || "홈",
+                        () => {
+                          setCurrentPath(item.path);
+                          toggleSearch();
+                        }
+                      )
                     )}
-                  </>
+                    {fileMatches.map((item) =>
+                      renderRow(
+                        "file",
+                        item,
+                        getFileIcon(item.mimeType),
+                        item.path.join(" / ") || "홈",
+                        () => {
+                          setCurrentPath(item.path);
+                          toggleSearch();
+                        }
+                      )
+                    )}
+                  </div>
                 );
               }
 
