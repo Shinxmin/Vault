@@ -316,7 +316,7 @@ export default function Alloy() {
   }, [draggingItem]);
 
   const reorderItem = (type, draggedId, targetId) => {
-    const setter = type === "folder" ? setFolders : setFiles;
+    const setter = type === "folder" ? setFolders : type === "file" ? setFiles : setVaults;
     setter((prev) => {
       const list = [...prev];
       const fromIndex = list.findIndex((it) => it.id === draggedId);
@@ -382,46 +382,36 @@ export default function Alloy() {
   };
   const rowPointerUp = () => clearLongPressTimer();
 
-  // 이름 수정 모달 - prompt() 대신 폴더 생성 모달과 동일한 애니메이션의 모달을 사용.
-  // 제목에 대상 폴더/파일의 현재 이름을 보여주고, 빈 배경을 눌러도 취소된다.
-  const [renameModalOpen, setRenameModalOpen] = useState(false);
-  const [renameModalVisible, setRenameModalVisible] = useState(false);
-  const [renameTarget, setRenameTarget] = useState(null); // { type: 'folder' | 'file', id, name }
-  const [renameValue, setRenameValue] = useState("");
+  // 이름 바꾸기 - 별도 모달 없이, 현재 화면에서 해당 항목의 제목 텍스트를 인라인 입력창으로
+  // 바꿔서 바로 수정한다. 입력 후 포커스를 벗어나면(blur) 자동으로 저장된다.
+  const [editingItem, setEditingItem] = useState(null); // { type: 'vault' | 'folder' | 'file', id }
+  const [editingValue, setEditingValue] = useState("");
 
-  const openRenameModal = (type, id, currentName) => {
-    setRenameTarget({ type, id, name: currentName });
-    setRenameValue(currentName);
-    setRenameModalOpen(true);
-    requestAnimationFrame(() => setRenameModalVisible(true));
+  const startInlineEdit = (type, id, currentName) => {
+    setEditingItem({ type, id });
+    setEditingValue(currentName);
   };
-  const closeRenameModal = () => {
-    setRenameModalVisible(false);
-    setTimeout(() => {
-      setRenameModalOpen(false);
-      setRenameTarget(null);
-      setRenameValue("");
-    }, 200);
-  };
-  const confirmRename = () => {
-    if (renameTarget && renameValue.trim()) {
-      const newName = renameValue.trim();
-      if (renameTarget.type === "vault") {
-        const vault = vaults.find((v) => v.id === renameTarget.id);
+  const commitInlineEdit = () => {
+    if (!editingItem) return;
+    const newName = editingValue.trim();
+    if (newName) {
+      if (editingItem.type === "vault") {
+        const vault = vaults.find((v) => v.id === editingItem.id);
         const oldName = vault ? vault.name : null;
-        setVaults((prev) => prev.map((v) => (v.id === renameTarget.id ? { ...v, name: newName, updatedAt: Date.now() } : v)));
+        setVaults((prev) => prev.map((v) => (v.id === editingItem.id ? { ...v, name: newName, updatedAt: Date.now() } : v)));
         // Vault 이름이 바뀌면 그 하위 폴더/파일들의 path[0]도 함께 갱신한다.
         if (oldName && oldName !== newName) {
           setFolders((prev) => prev.map((f) => (f.path[0] === oldName ? { ...f, path: [newName, ...f.path.slice(1)] } : f)));
           setFiles((prev) => prev.map((f) => (f.path[0] === oldName ? { ...f, path: [newName, ...f.path.slice(1)] } : f)));
         }
-      } else if (renameTarget.type === "folder") {
-        setFolders((prev) => prev.map((f) => (f.id === renameTarget.id ? { ...f, name: newName } : f)));
+      } else if (editingItem.type === "folder") {
+        setFolders((prev) => prev.map((f) => (f.id === editingItem.id ? { ...f, name: newName } : f)));
       } else {
-        setFiles((prev) => prev.map((f) => (f.id === renameTarget.id ? { ...f, name: newName } : f)));
+        setFiles((prev) => prev.map((f) => (f.id === editingItem.id ? { ...f, name: newName } : f)));
       }
     }
-    closeRenameModal();
+    setEditingItem(null);
+    setEditingValue("");
   };
 
   // 이동 모달 - 삼점 메뉴의 "이동"을 누르면 최상위 홈부터 폴더를 탐색하며
@@ -680,7 +670,7 @@ export default function Alloy() {
             <h1
               style={{
                 margin: 0,
-                fontSize: 24,
+                fontSize: 26,
                 fontWeight: 700,
                 color: isLight ? "#14161A" : "#FFFFFF",
                 letterSpacing: 0.2,
@@ -1116,7 +1106,7 @@ export default function Alloy() {
                             onClick={(e) => {
                               e.stopPropagation();
                               closeItemMenu();
-                              openRenameModal(type, item.id, item.name);
+                              startInlineEdit(type, item.id, item.name);
                             }}
                             style={{
                               width: "100%",
@@ -1254,6 +1244,51 @@ export default function Alloy() {
                 );
               };
 
+              // 항목 제목 텍스트 - 클릭하면(또는 "이름 바꾸기" 메뉴를 누르면) 그 자리에서
+              // 인라인 입력창으로 바뀌고, 포커스를 벗어나면 자동 저장된다. 모달 없음.
+              const renderEditableName = (type, item, textStyle) => {
+                const isEditing = editingItem && editingItem.type === type && editingItem.id === item.id;
+                if (isEditing) {
+                  return (
+                    <input
+                      type="text"
+                      value={editingValue}
+                      onChange={(e) => setEditingValue(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onBlur={commitInlineEdit}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                      }}
+                      autoFocus
+                      style={{
+                        ...textStyle,
+                        display: "block",
+                        width: "100%",
+                        boxSizing: "border-box",
+                        background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.1)",
+                        border: `1px solid ${isLight ? "rgba(20,22,26,0.3)" : "rgba(255,255,255,0.3)"}`,
+                        borderRadius: 6,
+                        padding: "1px 5px",
+                        margin: "-1px -5px",
+                        outline: "none",
+                      }}
+                    />
+                  );
+                }
+                return (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startInlineEdit(type, item.id, item.name);
+                    }}
+                    style={{ ...textStyle, cursor: "text" }}
+                  >
+                    {item.name}
+                  </div>
+                );
+              };
+
               // ── 홈: Vault(프로젝트) 카드 목록 (2열, 세로 여백 넉넉히) ──
               if (currentPath.length === 0) {
                 const visibleVaults = sortItems(vaults);
@@ -1269,8 +1304,6 @@ export default function Alloy() {
                       }}
                     >
                       아직 프로젝트가 없습니다
-                      <br />
-                      우측 상단 + 버튼으로 Vault를 만들어 보세요
                     </div>
                   );
                 }
@@ -1279,7 +1312,15 @@ export default function Alloy() {
                     {visibleVaults.map((vault) => (
                       <div
                         key={vault.id}
-                        onClick={() => setCurrentPath([vault.name])}
+                        data-drag-type="vault"
+                        data-drag-id={vault.id}
+                        onClick={() => {
+                          if (justDraggedRef.current) return;
+                          setCurrentPath([vault.name]);
+                        }}
+                        onPointerDown={rowPointerDown("vault", vault.id)}
+                        onPointerMove={rowPointerMove}
+                        onPointerUp={rowPointerUp}
                         onMouseDown={pressDown("scale(0.98)")}
                         onMouseUp={pressUp("none")}
                         onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
@@ -1297,10 +1338,14 @@ export default function Alloy() {
                           background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
                           backdropFilter: "blur(20px) saturate(180%)",
                           WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                          border: `1px solid ${isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)"}`,
+                          border: `1px solid ${
+                            dragOverKey === `vault-${vault.id}` || (draggingItem && draggingItem.type === "vault" && draggingItem.id === vault.id)
+                              ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
+                              : (isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)")
+                          }`,
                           cursor: "pointer",
                           touchAction: "manipulation",
-                          transition: "background 0.2s ease, transform 0.15s ease",
+                          transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease",
                         }}
                       >
                         {/* 좌측 중앙정렬 금고(safe) 아이콘 */}
@@ -1323,18 +1368,14 @@ export default function Alloy() {
 
                         {/* 중앙: 제목(볼드) + 밑에 통계 */}
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div
-                            style={{
-                              color: isLight ? "#14161A" : "#FFFFFF",
-                              fontSize: 17,
-                              fontWeight: 700,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {vault.name}
-                          </div>
+                          {renderEditableName("vault", vault, {
+                            color: isLight ? "#14161A" : "#FFFFFF",
+                            fontSize: 17,
+                            fontWeight: 700,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          })}
                           <div
                             style={{
                               marginTop: 5,
@@ -1431,18 +1472,14 @@ export default function Alloy() {
                 >
                   <div style={{ flexShrink: 0 }}>{iconNode}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {item.name}
-                    </div>
+                    {renderEditableName(type === "folder" ? "folder" : "file", item, {
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 15,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    })}
                     {subText && (
                       <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, marginTop: 2 }}>
                         {subText}
@@ -1478,6 +1515,11 @@ export default function Alloy() {
                       {visibleImages.map((img) => (
                         <div
                           key={img.id}
+                          data-drag-type="file"
+                          data-drag-id={img.id}
+                          onPointerDown={rowPointerDown("file", img.id)}
+                          onPointerMove={rowPointerMove}
+                          onPointerUp={rowPointerUp}
                           style={{
                             position: "relative",
                             breakInside: "avoid",
@@ -1485,14 +1527,21 @@ export default function Alloy() {
                             marginBottom: 8,
                             borderRadius: 10,
                             overflow: "hidden",
-                            border: `1px solid ${isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)"}`,
+                            border: `1px solid ${
+                              dragOverKey === `file-${img.id}` || (draggingItem && draggingItem.type === "file" && draggingItem.id === img.id)
+                                ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
+                                : (isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)")
+                            }`,
                             background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                            touchAction: "manipulation",
+                            transition: "border-color 0.15s ease",
                           }}
                         >
                           {img.url ? (
                             <img
                               src={img.url}
                               alt={img.name}
+                              draggable={false}
                               style={{ width: "100%", display: "block" }}
                             />
                           ) : (
@@ -1514,6 +1563,17 @@ export default function Alloy() {
                             }}
                           >
                             {renderItemMenu("file", img)}
+                          </div>
+                          {/* 이미지 제목 - 눌러서 인라인 수정 가능 */}
+                          <div style={{ padding: "6px 8px" }} onClick={(e) => e.stopPropagation()}>
+                            {renderEditableName("file", img, {
+                              color: isLight ? "#14161A" : "#FFFFFF",
+                              fontSize: 12,
+                              fontWeight: 500,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            })}
                           </div>
                         </div>
                       ))}
@@ -1754,7 +1814,7 @@ export default function Alloy() {
       )}
 
       {/* Vault 정보 모달 - 이름/생성 일자/수정 일자/크기를 보여주는 단순 정보 모달.
-          취소 버튼 없이 상단 제목열 오른쪽 X로 닫고, 하단에는 확인 버튼만 있다. */}
+          별도 확인 버튼 없이 상단 제목열 오른쪽 X로만 닫는다. */}
       {vaultInfoModalOpen && (
         <>
           <div
@@ -1858,29 +1918,6 @@ export default function Alloy() {
                 </div>
               ))}
             </div>
-
-            <button
-              onClick={closeVaultInfoModal}
-              onMouseDown={pressDown("scale(0.95)")}
-              onMouseUp={pressUp("scale(1)")}
-              style={{
-                width: "100%",
-                padding: 10,
-                border: "none",
-                borderRadius: 8,
-                background: isLight ? "#14161A" : "#FFFFFF",
-                color: isLight ? "#FFFFFF" : "#14161A",
-                fontSize: 15,
-                fontWeight: 600,
-                cursor: "pointer",
-                outline: "none",
-                transition: "transform 0.15s ease",
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-            >
-              확인
-            </button>
           </div>
         </>
       )}
@@ -2004,131 +2041,6 @@ export default function Alloy() {
                 확인
               </button>
             </div>
-          </div>
-        </>
-      )}
-
-      {/* 이름 수정 모달 - 폴더 생성 모달과 동일한 페이드+스케일 애니메이션, 빈 배경 클릭 시 취소 */}
-      {renameModalOpen && (
-        <>
-          <div
-            onClick={closeRenameModal}
-            style={{
-              position: "fixed",
-              top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-              background: "rgba(0,0,0,0.4)",
-              zIndex: 39,
-              opacity: renameModalVisible ? 1 : 0,
-              transition: "opacity 0.2s ease",
-            }}
-          />
-          <div
-            style={{
-              position: "fixed",
-              top: "50%",
-              left: "50%",
-              transform: renameModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-              opacity: renameModalVisible ? 1 : 0,
-              background: isLight ? "#FFFFFF" : "#1a1918",
-              borderRadius: 16,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
-              padding: "24px 30px",
-              width: "84vw",
-              boxSizing: "border-box",
-              zIndex: 40,
-              boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
-              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 19,
-                  fontWeight: 700,
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                }}
-              >
-                이름 바꾸기
-              </h2>
-              <button
-                onClick={closeRenameModal}
-                onMouseDown={pressDown("scale(0.85)")}
-                onMouseUp={pressUp("scale(1)")}
-                aria-label="닫기"
-                style={{
-                  flexShrink: 0,
-                  width: 30,
-                  height: 30,
-                  borderRadius: 7,
-                  border: "none",
-                  background: "transparent",
-                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                  cursor: "pointer",
-                  outline: "none",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <input
-              type="text"
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") confirmRename();
-                if (e.key === "Escape") closeRenameModal();
-              }}
-              style={{
-                width: "100%",
-                padding: 12,
-                marginBottom: 20,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
-                borderRadius: 8,
-                background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                color: isLight ? "#14161A" : "#FFFFFF",
-                fontSize: 15,
-                outline: "none",
-                boxSizing: "border-box",
-                transition: "border-color 0.2s ease",
-              }}
-            />
-            <button
-              onClick={confirmRename}
-              onMouseDown={pressDown("scale(0.95)")}
-              onMouseUp={pressUp("scale(1)")}
-              style={{
-                width: "100%",
-                padding: 10,
-                border: "none",
-                borderRadius: 8,
-                background: isLight ? "#14161A" : "#FFFFFF",
-                color: isLight ? "#FFFFFF" : "#14161A",
-                fontSize: 15,
-                fontWeight: 600,
-                cursor: "pointer",
-                outline: "none",
-                transition: "transform 0.15s ease",
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-            >
-              확인
-            </button>
           </div>
         </>
       )}
@@ -2349,13 +2261,13 @@ export default function Alloy() {
         </>
       )}
 
-      {/* 하단 컨트롤 영역 */}
+      {/* 하단 컨트롤 영역 - 검색 버튼의 오른쪽 끝이 상단 + 버튼과 동일하게 화면 우측에서 20px
+          지점에 오도록 오른쪽 정렬한다(상단 헤더도 좌우 20px 인셋을 쓴다). */}
       <div
         style={{
           position: "fixed",
           bottom: 24,
-          left: "50%",
-          transform: "translateX(-50%)",
+          right: 20,
           display: "flex",
           alignItems: "center",
           gap: 14,
