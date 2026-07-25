@@ -7,8 +7,12 @@ create table if not exists public.vaulty_state (
   vaults jsonb not null default '[]'::jsonb,
   folders jsonb not null default '[]'::jsonb,
   files jsonb not null default '[]'::jsonb,
+  custom_order_active boolean not null default false,
   updated_at timestamptz not null default now()
 );
+
+-- 기존에 테이블이 이미 있는 환경에서는 아래 한 줄만 실행해도 됩니다.
+alter table public.vaulty_state add column if not exists custom_order_active boolean not null default false;
 
 alter table public.vaulty_state enable row level security;
 
