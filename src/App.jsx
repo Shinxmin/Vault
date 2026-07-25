@@ -581,7 +581,7 @@ export default function Alloy() {
   };
 
   // 변환(일괄 이름 변경) 모달 - "마법사" 메뉴의 "변환"을 누르면 뜬다. 홈에서는 Vault들을,
-  // 폴더/Vault 안에서는 그 안의 파일·이미지들을 체크해서 한 번에 새 이름으로 바꾼다.
+  // 폴더/Vault 안에서는 그 안의 하위 폴더·파일·이미지들을 체크해서 한 번에 새 이름으로 바꾼다.
   const [convertModalOpen, setConvertModalOpen] = useState(false);
   const [convertModalVisible, setConvertModalVisible] = useState(false);
   const [convertChecked, setConvertChecked] = useState({}); // { [id]: true }
@@ -590,10 +590,15 @@ export default function Alloy() {
 
   const convertTargets =
     currentPath.length === 0
-      ? vaults.map((v) => ({ id: v.id, name: v.name }))
-      : files
-          .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
-          .map((f) => ({ id: f.id, name: f.name }));
+      ? vaults.map((v) => ({ id: v.id, name: v.name, type: "vault" }))
+      : [
+          ...folders
+            .filter((f) => f.path.length === currentPath.length + 1 && f.path.slice(0, currentPath.length).every((p, i) => p === currentPath[i]))
+            .map((f) => ({ id: f.id, name: f.name, type: "folder" })),
+          ...files
+            .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
+            .map((f) => ({ id: f.id, name: f.name, type: "file" })),
+        ];
 
   const openConvertModal = () => {
     setConvertChecked({});
@@ -673,7 +678,35 @@ export default function Alloy() {
         setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
       });
     } else {
-      setFiles((prev) => prev.map((f) => (nameById[f.id] ? { ...f, name: nameById[f.id], updatedAt: now } : f)));
+      const checkedFolders = checkedItems.filter((item) => item.type === "folder");
+      const checkedFiles = checkedItems.filter((item) => item.type === "file");
+
+      // 폴더 이름이 바뀌면 그 하위 폴더/파일들의 path도 같이 rebase해야 한다(단일 이름 바꾸기와 동일 로직).
+      const folderRenames = checkedFolders
+        .map((item) => {
+          const folder = folders.find((f) => f.id === item.id);
+          const newName = nameById[item.id];
+          return folder && newName && folder.name !== newName ? { folder, newName } : null;
+        })
+        .filter(Boolean);
+
+      if (checkedFolders.length) {
+        setFolders((prev) => prev.map((f) => {
+          if (!nameById[f.id] || !checkedFolders.some((c) => c.id === f.id)) return f;
+          const newName = nameById[f.id];
+          return { ...f, name: newName, path: [...f.path.slice(0, -1), newName], updatedAt: now };
+        }));
+      }
+      folderRenames.forEach(({ folder, newName }) => {
+        const oldPrefix = folder.path;
+        const newPrefix = [...oldPrefix.slice(0, -1), newName];
+        setFolders((prev) => prev.map((f) => (f.id !== folder.id && pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
+        setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
+      });
+
+      if (checkedFiles.length) {
+        setFiles((prev) => prev.map((f) => (nameById[f.id] && checkedFiles.some((c) => c.id === f.id) ? { ...f, name: nameById[f.id], updatedAt: now } : f)));
+      }
     }
     closeConvertModal();
   };
