@@ -3096,7 +3096,6 @@ export default function Alloy() {
                         color: displayName
                           ? (isLight ? "#14161A" : "#FFFFFF")
                           : (isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"),
-                        fontStyle: displayName ? "normal" : "italic",
                       }}
                     >
                       {displayName || "(빈 이름)"}
@@ -3110,7 +3109,7 @@ export default function Alloy() {
               type="text"
               value={convertInput}
               onChange={(e) => setConvertInput(e.target.value)}
-              placeholder="추가할 문자/숫자"
+              placeholder="여기에 입력하세요"
               style={{
                 width: "100%",
                 padding: 12,
@@ -3150,7 +3149,7 @@ export default function Alloy() {
                   e.currentTarget.style.transform = "scale(1)";
                 }}
               >
-                지우기
+                삭제
               </button>
               <button
                 onClick={handleConvertAppend}
