@@ -951,7 +951,7 @@ export default function Alloy() {
                   height: BAR_HEIGHT,
                   flexShrink: 0,
                   borderRadius: "50%",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                   background: uploadMenuOpen || uploadButtonHovered
                     ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
                     : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
@@ -1030,7 +1030,7 @@ export default function Alloy() {
                       backdropFilter: "blur(20px) saturate(180%)",
                       WebkitBackdropFilter: "blur(20px) saturate(180%)",
                       borderRadius: 12,
-                      border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                       boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
                       zIndex: 20,
                       overflow: "hidden",
@@ -1066,7 +1066,7 @@ export default function Alloy() {
                     >
                       업로드
                     </button>
-                    <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)" }} />
+                    <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
                     <button
                       onClick={() => {
                         closeUploadMenu();
@@ -1111,7 +1111,7 @@ export default function Alloy() {
                 justifyContent: "space-between",
                 paddingBottom: 12,
                 marginBottom: 16,
-                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)"}`,
+                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
               }}
             >
               {/* 경로 표기 */}
@@ -1186,7 +1186,7 @@ export default function Alloy() {
                     height: 30,
                     padding: "0 8px",
                     borderRadius: 8,
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                     background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
                     color: isLight ? "#14161A" : "#FFFFFF",
                     fontSize: 12,
@@ -1287,7 +1287,7 @@ export default function Alloy() {
                             backdropFilter: "blur(20px) saturate(180%)",
                             WebkitBackdropFilter: "blur(20px) saturate(180%)",
                             borderRadius: 12,
-                            border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                            border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                             boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
                             zIndex: 30,
                             overflow: "hidden",
@@ -1372,7 +1372,7 @@ export default function Alloy() {
                               이동
                             </button>
                           )}
-                          <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)" }} />
+                          <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
                           {type === "vault" ? (
                             <button
                               onClick={(e) => {
@@ -1507,7 +1507,7 @@ export default function Alloy() {
                       dragOverKey === `${type === "folder" ? "folder" : "file"}-${item.id}` ||
                       (draggingItem && draggingItem.id === item.id)
                         ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
-                        : (isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)")
+                        : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                     }`,
                     cursor: type === "folder" ? "pointer" : "default",
                     touchAction: "manipulation",
@@ -1614,7 +1614,7 @@ export default function Alloy() {
                           border: `1px solid ${
                             dragOverKey === `vault-${vault.id}` || (draggingItem && draggingItem.type === "vault" && draggingItem.id === vault.id)
                               ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
-                              : (isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)")
+                              : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                           }`,
                           cursor: "pointer",
                           touchAction: "manipulation",
@@ -1749,7 +1749,7 @@ export default function Alloy() {
                             border: `1px solid ${
                               dragOverKey === `file-${img.id}` || (draggingItem && draggingItem.type === "file" && draggingItem.id === img.id)
                                 ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
-                                : (isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)")
+                                : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                             }`,
                             background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
                             cursor: img.url ? "pointer" : "default",
@@ -1809,7 +1809,7 @@ export default function Alloy() {
                 width: 64,
                 height: 32,
                 borderRadius: 999,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                 background: isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.1)",
                 cursor: "pointer",
                 outline: "none",
@@ -1910,7 +1910,7 @@ export default function Alloy() {
               opacity: vaultModalVisible ? 1 : 0,
               background: isLight ? "#FFFFFF" : "#1a1918",
               borderRadius: 16,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
               padding: "24px 30px",
               width: "84vw",
               boxSizing: "border-box",
@@ -1987,7 +1987,7 @@ export default function Alloy() {
                   flex: 1,
                   minWidth: 0,
                   padding: 12,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                   borderRadius: 8,
                   background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
                   color: isLight ? "#14161A" : "#FFFFFF",
@@ -2051,7 +2051,7 @@ export default function Alloy() {
               opacity: infoModalVisible ? 1 : 0,
               background: isLight ? "#FFFFFF" : "#1a1918",
               borderRadius: 20,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
               padding: "32px 30px",
               width: "84vw",
               boxSizing: "border-box",
@@ -2159,7 +2159,7 @@ export default function Alloy() {
               opacity: folderModalVisible ? 1 : 0,
               background: isLight ? "#FFFFFF" : "#1a1918",
               borderRadius: 16,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
               padding: "24px 30px",
               width: "84vw",
               boxSizing: "border-box",
@@ -2193,7 +2193,7 @@ export default function Alloy() {
                 width: "100%",
                 padding: 12,
                 marginBottom: 20,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                 borderRadius: 8,
                 background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
                 color: isLight ? "#14161A" : "#FFFFFF",
@@ -2211,7 +2211,7 @@ export default function Alloy() {
                 style={{
                   flex: 1,
                   padding: 10,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                   borderRadius: 8,
                   background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
                   color: isLight ? "#14161A" : "#FFFFFF",
@@ -2283,7 +2283,7 @@ export default function Alloy() {
               opacity: moveModalVisible ? 1 : 0,
               background: isLight ? "#FFFFFF" : "#1a1918",
               borderRadius: 16,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
               padding: "24px 30px",
               width: "84vw",
               boxSizing: "border-box",
@@ -2317,7 +2317,7 @@ export default function Alloy() {
                 gap: 4,
                 margin: "12px 0",
                 paddingBottom: 12,
-                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)"}`,
+                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
               }}
             >
               <button
@@ -2425,7 +2425,7 @@ export default function Alloy() {
                 style={{
                   flex: 1,
                   padding: 10,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                   borderRadius: 8,
                   background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
                   color: isLight ? "#14161A" : "#FFFFFF",
@@ -2499,7 +2499,7 @@ export default function Alloy() {
             background: isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)",
             backdropFilter: "blur(20px) saturate(180%)",
             WebkitBackdropFilter: "blur(20px) saturate(180%)",
-            border: `1px solid ${isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)"}`,
+            border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
             boxShadow:
               "0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
           }}
@@ -2611,7 +2611,7 @@ export default function Alloy() {
             height: BAR_HEIGHT,
             flexShrink: 0,
             borderRadius: "50%",
-            border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+            border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
             background: searchButtonHovered
               ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
               : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
@@ -2669,7 +2669,7 @@ export default function Alloy() {
                 background: isLight ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.08)",
                 backdropFilter: "blur(28px) saturate(180%)",
                 WebkitBackdropFilter: "blur(28px) saturate(180%)",
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                 boxShadow:
                   "0 20px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.12)",
               }}
