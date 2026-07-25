@@ -569,6 +569,71 @@ export default function Alloy() {
     closeFolderModal();
   };
 
+  // 마크다운 문서 - 업로드 메뉴의 "마크다운"으로 즉시 빈 문서를 만들고 바로 전체화면
+  // 에디터를 연다. 실제 파일 업로드가 아니라 파일 객체의 content 필드에 텍스트를 직접
+  // 저장하므로(R2 불필요) 기존 vaults/folders/files 저장 경로에 그대로 얹혀 저장된다.
+  const [markdownEditorFile, setMarkdownEditorFile] = useState(null); // 편집 중인 file id
+  const [markdownEditorVisible, setMarkdownEditorVisible] = useState(false);
+  const [mdTitleDraft, setMdTitleDraft] = useState("");
+  const [mdContentDraft, setMdContentDraft] = useState("");
+
+  const openMarkdownEditor = (file) => {
+    setMarkdownEditorFile(file.id);
+    setMdTitleDraft(file.name);
+    setMdContentDraft(file.content || "");
+    requestAnimationFrame(() => setMarkdownEditorVisible(true));
+  };
+  const closeMarkdownEditor = () => {
+    // 닫기 직전 마지막 입력까지 확실히 반영한다(디바운스 저장을 기다리지 않고 즉시 커밋).
+    setFiles((prev) => prev.map((f) => (
+      f.id === markdownEditorFile
+        ? { ...f, name: mdTitleDraft.trim() || f.name, content: mdContentDraft, size: new Blob([mdContentDraft]).size, updatedAt: Date.now() }
+        : f
+    )));
+    setMarkdownEditorVisible(false);
+    setTimeout(() => setMarkdownEditorFile(null), 200);
+  };
+  const createMarkdownFile = () => {
+    const now = Date.now();
+    const siblingNames = files
+      .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
+      .map((f) => f.name);
+    let name = "새 문서.md";
+    let n = 1;
+    while (siblingNames.includes(name)) {
+      name = `새 문서(${n}).md`;
+      n++;
+    }
+    const newFile = {
+      id: now,
+      name,
+      size: 0,
+      mimeType: "text/markdown",
+      kind: "markdown",
+      content: "",
+      tags: [],
+      path: currentPath,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setFiles((prev) => [...prev, newFile]);
+    openMarkdownEditor(newFile);
+  };
+
+  // 에디터가 열려 있는 동안 타이핑을 멈추면 잠시 뒤 자동 저장 - 닫을 때의 즉시 커밋과 별개로,
+  // 오래 켜 두거나 새로고침 등에 대비한 백그라운드 저장.
+  useEffect(() => {
+    if (!markdownEditorFile) return;
+    const t = setTimeout(() => {
+      setFiles((prev) => prev.map((f) => (
+        f.id === markdownEditorFile
+          ? { ...f, name: mdTitleDraft.trim() || f.name, content: mdContentDraft, size: new Blob([mdContentDraft]).size, updatedAt: Date.now() }
+          : f
+      )));
+    }, 600);
+    return () => clearTimeout(t);
+  }, [mdTitleDraft, mdContentDraft, markdownEditorFile]);
+
   // 폴더를 지우면 그 안의 하위 폴더/파일도 통째로 하나의 휴지통 항목으로 담는다.
   const deleteFolder = (folderId) => {
     const folder = folders.find((f) => f.id === folderId);
@@ -977,7 +1042,7 @@ export default function Alloy() {
   const taggedFolders = tagScreenTags.length ? folders.filter((f) => (f.tags || []).some((t) => tagScreenTags.includes(t))) : [];
   const taggedFiles = tagScreenTags.length ? files.filter((f) => (f.tags || []).some((t) => tagScreenTags.includes(t))) : [];
   const taggedImages = taggedFiles.filter((f) => f.kind === "image");
-  const taggedDocs = taggedFiles.filter((f) => f.kind === "doc");
+  const taggedDocs = taggedFiles.filter((f) => f.kind === "doc" || f.kind === "markdown");
   const closeTagScreen = () => setTagScreenTags([]);
 
   // 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류" / 검색창에 "#" 입력, 이 세 가지 진입점
@@ -1130,7 +1195,7 @@ export default function Alloy() {
 
   const movingFolder = moveTarget && moveTarget.type === "folder" ? folders.find((f) => f.id === moveTarget.id) : null;
   const movingFile = moveTarget && moveTarget.type === "file" ? files.find((f) => f.id === moveTarget.id) : null;
-  const movingIsDoc = movingFile && movingFile.kind === "doc";
+  const movingIsDoc = movingFile && (movingFile.kind === "doc" || movingFile.kind === "markdown");
   const isBlockedMoveFolder = (folder) => {
     if (!movingFolder) return false;
     if (folder.id === movingFolder.id) return true;
@@ -1662,6 +1727,32 @@ export default function Alloy() {
                       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                     >
                       폴더
+                    </button>
+                    <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                    <button
+                      onClick={() => {
+                        closeUploadMenu();
+                        createMarkdownFile();
+                      }}
+                      onMouseDown={pressDown("scale(0.97)")}
+                      onMouseUp={pressUp("scale(1)")}
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        border: "none",
+                        background: "transparent",
+                        color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 15,
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        outline: "none",
+                        textAlign: "left",
+                        transition: "background 0.2s, transform 0.15s ease",
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                    >
+                      마크다운
                     </button>
                   </div>
                 </>,
@@ -2217,6 +2308,7 @@ export default function Alloy() {
                       return;
                     }
                     if (type === "folder") setCurrentPath([...currentPath, item.name]);
+                    else if (item.kind === "markdown") openMarkdownEditor(item);
                   }}
                   onPointerDown={rowPointerDown(rowDragType, item.id)}
                   onPointerMove={rowPointerMove}
@@ -2243,7 +2335,7 @@ export default function Alloy() {
                         ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
                         : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                     }`,
-                    cursor: type === "folder" || onNavigate ? "pointer" : "default",
+                    cursor: type === "folder" || onNavigate || item.kind === "markdown" ? "pointer" : "default",
                     touchAction: "manipulation",
                     userSelect: "none",
                     WebkitUserSelect: "none",
@@ -2598,7 +2690,7 @@ export default function Alloy() {
                   f.path.length === currentPath.length &&
                   f.path.every((p, i) => p === currentPath[i])
               );
-              const visibleDocs = sortItems(filesHere.filter((f) => f.kind === "doc"));
+              const visibleDocs = sortItems(filesHere.filter((f) => f.kind === "doc" || f.kind === "markdown"));
               const visibleImages = sortItems(filesHere.filter((f) => f.kind === "image"));
 
               if (visibleFolders.length === 0 && visibleDocs.length === 0 && visibleImages.length === 0) {
@@ -4784,6 +4876,104 @@ export default function Alloy() {
               alignItems: "center",
               justifyContent: "center",
               opacity: viewerVisible ? 1 : 0,
+              transition: "opacity 0.25s ease, transform 0.15s ease",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" />
+            </svg>
+          </button>
+        </>
+      )}
+
+      {/* 마크다운 에디터 - 전체화면으로 열리며(뷰어와 동일한 우측 상단 리퀴드 글래스 X 버튼
+          디자인을 그대로 차용), 좌측 상단은 제목(파일 이름)을 바로 고칠 수 있는 입력창이고
+          그 아래는 본문을 그대로 편집하는 텍스트 영역이다. */}
+      {markdownEditorFile && (
+        <>
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: isLight ? "#FFFFFF" : "#141413",
+              zIndex: 49,
+              display: "flex",
+              flexDirection: "column",
+              opacity: markdownEditorVisible ? 1 : 0,
+              transition: "opacity 0.25s ease",
+            }}
+          >
+            <div
+              style={{
+                flexShrink: 0,
+                padding: "20px 76px 12px 20px",
+                paddingTop: "max(20px, env(safe-area-inset-top))",
+              }}
+            >
+              <input
+                type="text"
+                value={mdTitleDraft}
+                onChange={(e) => setMdTitleDraft(e.target.value)}
+                placeholder="제목 없음"
+                style={{
+                  width: "100%",
+                  border: "none",
+                  outline: "none",
+                  background: "transparent",
+                  fontSize: 22,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                }}
+              />
+            </div>
+            <textarea
+              value={mdContentDraft}
+              onChange={(e) => setMdContentDraft(e.target.value)}
+              placeholder="마크다운으로 작성하세요..."
+              style={{
+                flex: 1,
+                minHeight: 0,
+                border: "none",
+                outline: "none",
+                resize: "none",
+                background: "transparent",
+                padding: "0 20px 24px 20px",
+                fontSize: 15,
+                lineHeight: 1.7,
+                color: isLight ? "#14161A" : "#FFFFFF",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              }}
+            />
+          </div>
+          <button
+            onClick={closeMarkdownEditor}
+            onMouseDown={pressDown("scale(0.9)")}
+            onMouseUp={pressUp("scale(1)")}
+            aria-label="닫기"
+            style={{
+              position: "fixed",
+              top: 20,
+              right: 20,
+              zIndex: 50,
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+              background: isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.12)",
+              backdropFilter: "blur(20px) saturate(180%)",
+              WebkitBackdropFilter: "blur(20px) saturate(180%)",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.15)",
+              color: isLight ? "#14161A" : "#FFFFFF",
+              cursor: "pointer",
+              outline: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              opacity: markdownEditorVisible ? 1 : 0,
               transition: "opacity 0.25s ease, transform 0.15s ease",
             }}
           >
