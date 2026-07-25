@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.31";
+const APP_VERSION = "0.1.32";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -3321,17 +3321,43 @@ export default function Alloy() {
           </div>
         )}
 
-        {/* 구독 화면 - 아직 내용 없이 빈 화면(추후 요금제 안내 예정). 휴지통 화면과 같은
-            헤더(X 닫기 버튼) 패턴만 재사용한다. */}
+        {/* 구독 화면 - 스탠다드/플러스 두 요금제를 가로 2열, 세로로 긴 카드로 보여준다.
+            휴지통 화면과 같은 헤더(X 닫기 버튼) 패턴을 재사용한다. */}
         {active === 2 && subscriptionScreenOpen && !tagScreenTags.length && (
-          <div
-            style={{
-              padding: "48px 0",
-              textAlign: "center",
-              color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
-              fontSize: 14,
-            }}
-          />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {[
+              { title: "스탠다드", price: "₩0/월", storage: "10GB" },
+              { title: "플러스", price: "₩13,000/월", storage: "500GB" },
+            ].map((plan) => (
+              <div
+                key={plan.title}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  textAlign: "center",
+                  minHeight: 240,
+                  justifyContent: "center",
+                  padding: "40px 16px",
+                  borderRadius: 16,
+                  background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                }}
+              >
+                <div style={{ fontSize: 22, fontWeight: 800, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 24 }}>
+                  {plan.title}
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 10 }}>
+                  {plan.price}
+                </div>
+                <div style={{ fontSize: 14, color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)" }}>
+                  {plan.storage}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
       </div>
