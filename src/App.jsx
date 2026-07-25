@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.29";
+const APP_VERSION = "0.1.30";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -539,6 +539,75 @@ export default function Alloy() {
     setFiles((prev) => prev.filter((f) => f.path[0] !== vault.name));
     closeItemMenu();
     showToast("데이터를 삭제했습니다");
+  };
+
+  // 암호화 - Vault 카드의 삼점바에서만 노출된다. 이름 아래 주소(추후 Vaulty 커뮤니티에서
+  // 클릭하면 이 Vault를 내려받아 연결하게 될 공개 식별자) / 열쇠(비밀번호, 비워두면 잠금 없음)를
+  // 함께 관리한다. 주소/열쇠 모두 영문 대소문자 혼용 2~10자만 허용한다.
+  const ADDRESS_KEY_RE = /^[A-Za-z]{2,10}$/;
+  const [encryptModalTarget, setEncryptModalTarget] = useState(null); // vault id
+  const [encryptModalVisible, setEncryptModalVisible] = useState(false);
+  const [addressDraft, setAddressDraft] = useState("");
+  const [keyDraft, setKeyDraft] = useState("");
+  const openEncryptModal = (vault) => {
+    setEncryptModalTarget(vault.id);
+    setAddressDraft(vault.address || "");
+    setKeyDraft(vault.password || "");
+    requestAnimationFrame(() => setEncryptModalVisible(true));
+  };
+  const closeEncryptModal = () => {
+    setEncryptModalVisible(false);
+    setTimeout(() => setEncryptModalTarget(null), 200);
+  };
+  const handleEncryptSave = () => {
+    const vault = vaults.find((v) => v.id === encryptModalTarget);
+    if (!vault) { closeEncryptModal(); return; }
+    const trimmedAddress = addressDraft.trim();
+    const trimmedKey = keyDraft.trim();
+    if (trimmedKey && !ADDRESS_KEY_RE.test(trimmedKey)) {
+      showToast("열쇠 형식이 올바르지 않습니다");
+      return;
+    }
+    if (trimmedAddress) {
+      const retired = vault.retiredAddresses || [];
+      const isRetired = trimmedAddress !== vault.address && retired.includes(trimmedAddress);
+      if (!ADDRESS_KEY_RE.test(trimmedAddress) || isRetired) {
+        showToast("연결되지 않은 주소입니다");
+        return;
+      }
+    }
+    setVaults((prev) => prev.map((v) => {
+      if (v.id !== vault.id) return v;
+      const nextRetired = v.address && v.address !== trimmedAddress
+        ? [...(v.retiredAddresses || []), v.address]
+        : (v.retiredAddresses || []);
+      return { ...v, address: trimmedAddress, password: trimmedKey, retiredAddresses: nextRetired, updatedAt: Date.now() };
+    }));
+    closeEncryptModal();
+  };
+
+  // Vault 잠금 해제 - 암호(열쇠)가 설정된 Vault를 열려면 먼저 열쇠를 맞게 입력해야 한다.
+  const [unlockVaultId, setUnlockVaultId] = useState(null);
+  const [unlockModalVisible, setUnlockModalVisible] = useState(false);
+  const [unlockKeyInput, setUnlockKeyInput] = useState("");
+  const openUnlockModal = (vault) => {
+    setUnlockVaultId(vault.id);
+    setUnlockKeyInput("");
+    requestAnimationFrame(() => setUnlockModalVisible(true));
+  };
+  const closeUnlockModal = () => {
+    setUnlockModalVisible(false);
+    setTimeout(() => setUnlockVaultId(null), 200);
+  };
+  const handleUnlockSubmit = () => {
+    const vault = vaults.find((v) => v.id === unlockVaultId);
+    if (!vault) { closeUnlockModal(); return; }
+    if (unlockKeyInput === vault.password) {
+      setCurrentPath([vault.name]);
+      closeUnlockModal();
+    } else {
+      showToast("열쇠가 올바르지 않습니다");
+    }
   };
 
   // 홈에서는 + 가 Vault 생성 모달을, Vault/폴더 안에서는 업로드 메뉴를 연다.
@@ -2140,6 +2209,39 @@ export default function Alloy() {
                           >
                             이름 바꾸기
                           </button>
+                          {type === "vault" && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                closeItemMenu();
+                                openEncryptModal(item);
+                              }}
+                              style={{
+                                width: "100%",
+                                padding: "10px 12px",
+                                border: "none",
+                                background: "transparent",
+                                color: isLight ? "#14161A" : "#FFFFFF",
+                                fontSize: 15,
+                                fontWeight: 500,
+                                cursor: "pointer",
+                                outline: "none",
+                                textAlign: "left",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                transition: "background 0.2s",
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                            >
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="8" cy="15" r="4" />
+                                <path d="M11 12l9-9M17 3l3 3M14 6l2 2" />
+                              </svg>
+                              암호화
+                            </button>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2606,7 +2708,8 @@ export default function Alloy() {
                         data-drag-id={vault.id}
                         onClick={() => {
                           if (justDraggedRef.current) return;
-                          setCurrentPath([vault.name]);
+                          if (vault.password) openUnlockModal(vault);
+                          else setCurrentPath([vault.name]);
                         }}
                         onPointerDown={rowPointerDown("vault", vault.id)}
                         onPointerMove={rowPointerMove}
@@ -3492,6 +3595,319 @@ export default function Alloy() {
         </>
       )}
 
+      {/* 암호화 모달 - Vault 카드의 삼점바 "암호화"를 누르면 뜬다. 이름(읽기전용) 아래 주소,
+          그 아래 열쇠(비밀번호) 순으로 배치. 취소 버튼은 없고 우상단 X로 대체, 하단에 저장 버튼만 있다. */}
+      {encryptModalTarget !== null && (() => {
+        const vault = vaults.find((v) => v.id === encryptModalTarget);
+        if (!vault) return null;
+        return (
+          <>
+            <div
+              onClick={closeEncryptModal}
+              style={{
+                position: "fixed",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: "rgba(0,0,0,0.45)",
+                zIndex: 39,
+                opacity: encryptModalVisible ? 1 : 0,
+                transition: "opacity 0.2s ease",
+              }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: encryptModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+                opacity: encryptModalVisible ? 1 : 0,
+                background: isLight ? "#FFFFFF" : "#1a1918",
+                borderRadius: 20,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                padding: "32px 30px",
+                width: "84vw",
+                boxSizing: "border-box",
+                zIndex: 40,
+                boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
+                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                  암호화
+                </h2>
+                <button
+                  onClick={closeEncryptModal}
+                  onMouseDown={pressDown("scale(0.85)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="닫기"
+                  style={{
+                    flexShrink: 0,
+                    width: 30,
+                    height: 30,
+                    borderRadius: 7,
+                    border: "none",
+                    background: "transparent",
+                    color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                    cursor: "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s ease, transform 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* 이름 (읽기 전용) */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+                <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>이름</span>
+                <span
+                  style={{
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    maxWidth: "70%",
+                  }}
+                >
+                  {vault.name}
+                </span>
+              </div>
+
+              {/* 주소 */}
+              <div style={{ marginBottom: 6, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 13 }}>
+                주소
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  padding: "0 12px",
+                  marginBottom: 6,
+                }}
+              >
+                <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 15, flexShrink: 0 }}>
+                  Vaulty@
+                </span>
+                <input
+                  type="text"
+                  value={addressDraft}
+                  onChange={(e) => setAddressDraft(e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 10))}
+                  placeholder="ABCD"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    border: "none",
+                    outline: "none",
+                    background: "transparent",
+                    padding: "12px 0",
+                    fontSize: 15,
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                  }}
+                />
+              </div>
+              <div style={{ marginBottom: 20, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
+                영문 대/소문자 혼용, 2~10자
+              </div>
+
+              {/* 열쇠 */}
+              <div style={{ marginBottom: 6, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 13 }}>
+                열쇠
+              </div>
+              <input
+                type="text"
+                value={keyDraft}
+                onChange={(e) => setKeyDraft(e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 10))}
+                placeholder="비워두면 암호가 없습니다"
+                style={{
+                  width: "100%",
+                  padding: 12,
+                  marginBottom: 6,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 15,
+                  outline: "none",
+                  boxSizing: "border-box",
+                  transition: "border-color 0.2s ease",
+                }}
+              />
+              <div style={{ marginBottom: 24, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
+                영문 대/소문자 혼용, 2~10자 (비워두면 암호 없음)
+              </div>
+
+              <button
+                onClick={handleEncryptSave}
+                onMouseDown={pressDown("scale(0.95)")}
+                onMouseUp={pressUp("scale(1)")}
+                style={{
+                  width: "100%",
+                  padding: 10,
+                  border: "none",
+                  borderRadius: 8,
+                  background: isLight ? "#14161A" : "#FFFFFF",
+                  color: isLight ? "#FFFFFF" : "#14161A",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  outline: "none",
+                  transition: "transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+              >
+                저장
+              </button>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* Vault 잠금 해제 모달 - 암호(열쇠)가 설정된 Vault 카드를 누르면 뜬다. */}
+      {unlockVaultId !== null && (() => {
+        const vault = vaults.find((v) => v.id === unlockVaultId);
+        if (!vault) return null;
+        return (
+          <>
+            <div
+              onClick={closeUnlockModal}
+              style={{
+                position: "fixed",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: "rgba(0,0,0,0.45)",
+                zIndex: 39,
+                opacity: unlockModalVisible ? 1 : 0,
+                transition: "opacity 0.2s ease",
+              }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: unlockModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+                opacity: unlockModalVisible ? 1 : 0,
+                background: isLight ? "#FFFFFF" : "#1a1918",
+                borderRadius: 16,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                padding: "24px 30px",
+                width: "84vw",
+                boxSizing: "border-box",
+                zIndex: 40,
+                boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
+                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                  {vault.name}
+                </h2>
+                <button
+                  onClick={closeUnlockModal}
+                  onMouseDown={pressDown("scale(0.85)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="닫기"
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 6,
+                    border: "none",
+                    background: "transparent",
+                    color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                    cursor: "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s ease, transform 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                  </svg>
+                </button>
+              </div>
+
+              <div style={{ marginBottom: 8, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 14 }}>
+                암호화된 Vault입니다. 열쇠를 입력하세요
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <input
+                  type="text"
+                  value={unlockKeyInput}
+                  onChange={(e) => setUnlockKeyInput(e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 10))}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleUnlockSubmit();
+                    if (e.key === "Escape") closeUnlockModal();
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    padding: 12,
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    borderRadius: 8,
+                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    fontSize: 17,
+                    outline: "none",
+                    boxSizing: "border-box",
+                    transition: "border-color 0.2s ease",
+                  }}
+                />
+                <button
+                  onClick={handleUnlockSubmit}
+                  onMouseDown={pressDown("scale(0.95)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  style={{
+                    flexShrink: 0,
+                    padding: "0 16px",
+                    border: "none",
+                    borderRadius: 8,
+                    background: isLight ? "#14161A" : "#FFFFFF",
+                    color: isLight ? "#FFFFFF" : "#14161A",
+                    fontSize: 15,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    outline: "none",
+                    transition: "transform 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+                >
+                  열기
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
       {/* 폴더 생성 모달 - 배경 페이드 + 카드 스케일 인/아웃 애니메이션 */}
       {folderModalOpen && (
         <>
@@ -3917,8 +4333,11 @@ export default function Alloy() {
                 key={tab}
                 ref={(el) => (btnRefs.current[i] = el)}
                 onClick={() => {
+                  // 다른 탭에 있다가 홈 탭으로 "넘어올" 때는 currentPath를 그대로 둬서 최근에
+                  // 열어본 위치(Vault/폴더)가 보이게 한다. 이미 홈 탭에 있는데 홈 아이콘을 다시
+                  // 누르면(흔한 모바일 탭바 관례대로) 그때는 루트로 초기화한다.
+                  if (i === 0 && active === 0) setCurrentPath([]);
                   setActive(i);
-                  if (i === 0) setCurrentPath([]);
                   if (i !== 2) {
                     setTrashScreenOpen(false);
                     setSubscriptionScreenOpen(false);
@@ -4050,7 +4469,13 @@ export default function Alloy() {
               opacity: tagPaletteVisible ? 1 : 0,
               transform: tagPaletteVisible ? "translate(-50%, 0)" : "translate(-50%, 16px)",
               transition: "opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
-              padding: 6,
+              padding: 10,
+              borderRadius: 20,
+              background: isLight ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.08)",
+              backdropFilter: "blur(28px) saturate(180%)",
+              WebkitBackdropFilter: "blur(28px) saturate(180%)",
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              boxShadow: "0 20px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.12)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
