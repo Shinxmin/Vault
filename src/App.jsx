@@ -78,7 +78,8 @@ export default function Alloy() {
   const BAR_HEIGHT = 58;
 
   // 하단 바의 원형 검색 버튼 - 누르면 탭바 위에 같은 디자인의 검색창 패널이 열린다.
-  // Cloudflare R2 연동 전이라 아직 실제 검색은 수행하지 않고 입력값만 로컬 상태로 들고 있는다.
+  // 검색어가 있으면 홈 탭 메인 섹션이 현재 위치와 상관없이 이름에 검색어가 포함된
+  // 전체 파일/문서/이미지 리스트로 바뀐다(아래 홈 탭 렌더링 부분 참고).
   const [searchQuery, setSearchQuery] = useState("");
   const [searchButtonHovered, setSearchButtonHovered] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -183,7 +184,6 @@ export default function Alloy() {
   const [vaultModalOpen, setVaultModalOpen] = useState(false);
   const [vaultModalVisible, setVaultModalVisible] = useState(false);
   const [vaultNameInput, setVaultNameInput] = useState("");
-  const docInputRef = useRef(null);
 
   const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "apng"];
   const getKindFromName = (name) => {
@@ -214,7 +214,6 @@ export default function Alloy() {
   // 버튼을 한 번 더 누르면 그때 실제로 삭제된다.
   const [vaultDeleteArmedId, setVaultDeleteArmedId] = useState(null);
   const galleryInputRef = useRef(null);
-  const fileInputRef = useRef(null);
 
   const toggleSearch = () => {
     if (searchOpen) {
@@ -343,10 +342,13 @@ export default function Alloy() {
 
   const createFolder = () => {
     if (folderName.trim()) {
+      const now = Date.now();
       const newFolder = {
-        id: Date.now(),
+        id: now,
         name: folderName,
         path: [...currentPath, folderName],
+        createdAt: now,
+        updatedAt: now,
       };
       setFolders([...folders, newFolder]);
     }
@@ -479,23 +481,40 @@ export default function Alloy() {
     setEditingItem({ type, id });
     setEditingValue(currentName);
   };
+  // path가 prefix로 시작하는지, 그리고 그 prefix를 다른 prefix로 바꿔치기하는 헬퍼.
+  // Vault나 폴더 이름을 바꿀 때 그 하위의 모든 폴더/파일 path를 갱신하는 데 공용으로 쓴다
+  // (깊이에 상관없이 동작 - 예전에는 폴더 이름을 바꾸면 하위 이미지의 path가 갱신되지 않아
+  // 화면에서 사라지는 버그가 있었다).
+  const pathStartsWith = (path, prefix) =>
+    path.length >= prefix.length && prefix.every((seg, i) => path[i] === seg);
+  const rebasePath = (path, oldPrefix, newPrefix) => [...newPrefix, ...path.slice(oldPrefix.length)];
+
   const commitInlineEdit = () => {
     if (!editingItem) return;
     const newName = editingValue.trim();
     if (newName) {
       if (editingItem.type === "vault") {
         const vault = vaults.find((v) => v.id === editingItem.id);
-        const oldName = vault ? vault.name : null;
         setVaults((prev) => prev.map((v) => (v.id === editingItem.id ? { ...v, name: newName, updatedAt: Date.now() } : v)));
-        // Vault 이름이 바뀌면 그 하위 폴더/파일들의 path[0]도 함께 갱신한다.
-        if (oldName && oldName !== newName) {
-          setFolders((prev) => prev.map((f) => (f.path[0] === oldName ? { ...f, path: [newName, ...f.path.slice(1)] } : f)));
-          setFiles((prev) => prev.map((f) => (f.path[0] === oldName ? { ...f, path: [newName, ...f.path.slice(1)] } : f)));
+        if (vault && vault.name !== newName) {
+          const oldPrefix = [vault.name];
+          const newPrefix = [newName];
+          setFolders((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
+          setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
         }
       } else if (editingItem.type === "folder") {
-        setFolders((prev) => prev.map((f) => (f.id === editingItem.id ? { ...f, name: newName } : f)));
+        const folder = folders.find((f) => f.id === editingItem.id);
+        if (folder) {
+          const oldPrefix = folder.path;
+          const newPrefix = [...oldPrefix.slice(0, -1), newName];
+          setFolders((prev) => prev.map((f) => {
+            if (f.id === editingItem.id) return { ...f, name: newName, path: newPrefix, updatedAt: Date.now() };
+            return pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f;
+          }));
+          setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
+        }
       } else {
-        setFiles((prev) => prev.map((f) => (f.id === editingItem.id ? { ...f, name: newName } : f)));
+        setFiles((prev) => prev.map((f) => (f.id === editingItem.id ? { ...f, name: newName, updatedAt: Date.now() } : f)));
       }
     }
     setEditingItem(null);
@@ -503,16 +522,21 @@ export default function Alloy() {
   };
 
   // 이미지/움짤 전체화면 뷰어 - 열 당시의 이미지 배열을 그대로 들고 있다가
-  // 좌우 스와이프(포인터 드래그)로 이전/다음 사진을 넘긴다.
+  // 좌우 스와이프(포인터 드래그)로 이전/다음 사진을 넘긴다. 드래그 중엔 손가락을 그대로
+  // 따라가고, 손을 떼면 완전히 밀려나가며 다음/이전 사진이 반대편에서 슬라이드로 들어온다.
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerImages, setViewerImages] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const [viewerDragX, setViewerDragX] = useState(0);
+  const [viewerAnimating, setViewerAnimating] = useState(false);
   const viewerDragRef = useRef(null);
 
   const openViewer = (images, index) => {
     setViewerImages(images);
     setViewerIndex(index);
+    setViewerDragX(0);
+    setViewerAnimating(false);
     setViewerOpen(true);
     requestAnimationFrame(() => setViewerVisible(true));
   };
@@ -525,6 +549,11 @@ export default function Alloy() {
   };
   const viewerPointerDown = (e) => {
     viewerDragRef.current = { x: e.clientX };
+    setViewerAnimating(false);
+  };
+  const viewerPointerMove = (e) => {
+    if (!viewerDragRef.current) return;
+    setViewerDragX(e.clientX - viewerDragRef.current.x);
   };
   // 배경(오버레이) 위에서 mousedown+mouseup은 드래그로 스와이프했더라도 같은 엘리먼트에서
   // 끝나면 브라우저가 click 이벤트도 함께 발생시키므로, onClick으로 따로 닫지 않고
@@ -535,10 +564,28 @@ export default function Alloy() {
     viewerDragRef.current = null;
     if (Math.abs(dx) < 10) {
       closeViewer();
-    } else if (Math.abs(dx) >= 50) {
-      setViewerIndex((i) =>
-        dx < 0 ? Math.min(i + 1, viewerImages.length - 1) : Math.max(i - 1, 0)
-      );
+      return;
+    }
+    const dir = dx < 0 ? 1 : -1; // 1 = 다음, -1 = 이전
+    const canMove = dir === 1 ? viewerIndex < viewerImages.length - 1 : viewerIndex > 0;
+    if (Math.abs(dx) >= 50 && canMove) {
+      const vw = typeof window !== "undefined" ? window.innerWidth : 400;
+      setViewerAnimating(true);
+      setViewerDragX(-dir * vw); // 현재 사진을 스와이프 방향으로 완전히 밀어낸다
+      setTimeout(() => {
+        setViewerAnimating(false);
+        setViewerIndex((i) => i + dir);
+        setViewerDragX(dir * vw); // 다음 사진을 반대편 바깥에 배치
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setViewerAnimating(true);
+            setViewerDragX(0); // 제자리로 슬라이드
+          });
+        });
+      }, 220);
+    } else {
+      setViewerAnimating(true);
+      setViewerDragX(0); // 임계값 미달 - 원위치로 스냅백
     }
   };
 
@@ -655,7 +702,8 @@ export default function Alloy() {
             const presigned = await r2Presign({ action: "get", key: r2Key });
             url = presigned.url;
           }
-          return { id, name: file.name, size: file.size, mimeType: file.type, kind, r2Key, url, path: currentPath };
+          const now = Date.now();
+          return { id, name: file.name, size: file.size, mimeType: file.type, kind, r2Key, url, path: currentPath, createdAt: now, updatedAt: now };
         } catch (err) {
           console.error("파일 업로드 실패:", file.name, err);
           return null;
@@ -698,24 +746,39 @@ export default function Alloy() {
   const formatDate = (ts) =>
     ts ? new Date(ts).toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" }) : "-";
 
-  // Vault 정보 모달 - 삼점 메뉴의 "정보"를 누르면 대형 모달로 생성/수정 일자와 크기를 보여준다.
-  const [vaultInfoModalOpen, setVaultInfoModalOpen] = useState(false);
-  const [vaultInfoModalVisible, setVaultInfoModalVisible] = useState(false);
-  const [vaultInfoTargetId, setVaultInfoTargetId] = useState(null);
+  // 정보 모달 - 삼점 메뉴의 "정보"를 누르면 대형 모달로 이름/생성 일자/수정 일자/크기를
+  // 보여준다. Vault/폴더/파일(이미지 포함) 공용.
+  const [infoModalOpen, setInfoModalOpen] = useState(false);
+  const [infoModalVisible, setInfoModalVisible] = useState(false);
+  const [infoTarget, setInfoTarget] = useState(null); // { type: 'vault' | 'folder' | 'file', id }
 
-  const openVaultInfoModal = (vaultId) => {
-    setVaultInfoTargetId(vaultId);
-    setVaultInfoModalOpen(true);
-    requestAnimationFrame(() => setVaultInfoModalVisible(true));
+  const openInfoModal = (type, id) => {
+    setInfoTarget({ type, id });
+    setInfoModalOpen(true);
+    requestAnimationFrame(() => setInfoModalVisible(true));
   };
-  const closeVaultInfoModal = () => {
-    setVaultInfoModalVisible(false);
+  const closeInfoModal = () => {
+    setInfoModalVisible(false);
     setTimeout(() => {
-      setVaultInfoModalOpen(false);
-      setVaultInfoTargetId(null);
+      setInfoModalOpen(false);
+      setInfoTarget(null);
     }, 200);
   };
-  const vaultInfoTarget = vaultInfoTargetId ? vaults.find((v) => v.id === vaultInfoTargetId) : null;
+  const infoItem = !infoTarget
+    ? null
+    : infoTarget.type === "vault"
+    ? vaults.find((v) => v.id === infoTarget.id)
+    : infoTarget.type === "folder"
+    ? folders.find((f) => f.id === infoTarget.id)
+    : files.find((f) => f.id === infoTarget.id);
+  const infoItemSize =
+    !infoTarget || !infoItem
+      ? 0
+      : infoTarget.type === "vault"
+      ? vaultTotalBytes(infoItem.name)
+      : infoTarget.type === "folder"
+      ? files.filter((f) => pathStartsWith(f.path, infoItem.path)).reduce((s, f) => s + (f.size || 0), 0)
+      : infoItem.size || 0;
 
   const getFileIcon = (mimeType) => {
     const color = isLight ? "#14161A" : "#FFFFFF";
@@ -821,6 +884,9 @@ export default function Alloy() {
         <div style={stickyHeaderStyle}>
           <div>
             <h1
+              onClick={() => {
+                if (active === 0) setCurrentPath([]);
+              }}
               style={{
                 margin: 0,
                 fontSize: 26,
@@ -828,6 +894,7 @@ export default function Alloy() {
                 color: isLight ? "#14161A" : "#FFFFFF",
                 letterSpacing: 0.2,
                 minHeight: "1em",
+                cursor: active === 0 ? "pointer" : "default",
               }}
             >
               {TAB_TITLES[active]}
@@ -908,27 +975,11 @@ export default function Alloy() {
                 )}
               </button>
 
-              {/* 숨겨진 파일 입력 - 갤러리/파일은 이미지·움짤만, 문서는 텍스트(TXT)만 받는다 */}
+              {/* 숨겨진 파일 입력 - 이미지·움짤만 받는다 */}
               <input
                 ref={galleryInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/gif,image/apng,.jpg,.jpeg,.png,.gif,.apng"
-                multiple
-                onChange={handleFilesPicked}
-                style={{ display: "none" }}
-              />
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/gif,image/apng,.jpg,.jpeg,.png,.gif,.apng"
-                multiple
-                onChange={handleFilesPicked}
-                style={{ display: "none" }}
-              />
-              <input
-                ref={docInputRef}
-                type="file"
-                accept="text/plain,.txt"
                 multiple
                 onChange={handleFilesPicked}
                 style={{ display: "none" }}
@@ -984,32 +1035,7 @@ export default function Alloy() {
                       onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
                       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                     >
-                      갤러리
-                    </button>
-                    <button
-                      onClick={() => {
-                        closeUploadMenu();
-                        fileInputRef.current && fileInputRef.current.click();
-                      }}
-                      onMouseDown={pressDown("scale(0.97)")}
-                      onMouseUp={pressUp("scale(1)")}
-                      style={{
-                        width: "100%",
-                        padding: "10px 12px",
-                        border: "none",
-                        background: "transparent",
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        outline: "none",
-                        textAlign: "left",
-                        transition: "background 0.2s, transform 0.15s ease",
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                    >
-                      파일
+                      업로드
                     </button>
                     <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)" }} />
                     <button
@@ -1037,34 +1063,6 @@ export default function Alloy() {
                     >
                       폴더
                     </button>
-                    {/* 문서는 Vault 바로 아래(currentPath.length === 1)에서만 생성 가능 */}
-                    {currentPath.length === 1 && (
-                      <button
-                        onClick={() => {
-                          closeUploadMenu();
-                          docInputRef.current && docInputRef.current.click();
-                        }}
-                        onMouseDown={pressDown("scale(0.97)")}
-                        onMouseUp={pressUp("scale(1)")}
-                        style={{
-                          width: "100%",
-                          padding: "10px 12px",
-                          border: "none",
-                          background: "transparent",
-                          color: isLight ? "#14161A" : "#FFFFFF",
-                          fontSize: 15,
-                          fontWeight: 500,
-                          cursor: "pointer",
-                          outline: "none",
-                          textAlign: "left",
-                          transition: "background 0.2s, transform 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                      >
-                        문서
-                      </button>
-                    )}
                   </div>
                 </>,
                 document.body
@@ -1295,32 +1293,30 @@ export default function Alloy() {
                           >
                             이름 바꾸기
                           </button>
-                          {type === "vault" && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                closeItemMenu();
-                                openVaultInfoModal(item.id);
-                              }}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                border: "none",
-                                background: "transparent",
-                                color: isLight ? "#14161A" : "#FFFFFF",
-                                fontSize: 15,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                outline: "none",
-                                textAlign: "left",
-                                transition: "background 0.2s",
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                            >
-                              정보
-                            </button>
-                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeItemMenu();
+                              openInfoModal(type, item.id);
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "10px 12px",
+                              border: "none",
+                              background: "transparent",
+                              color: isLight ? "#14161A" : "#FFFFFF",
+                              fontSize: 15,
+                              fontWeight: 500,
+                              cursor: "pointer",
+                              outline: "none",
+                              textAlign: "left",
+                              transition: "background 0.2s",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                          >
+                            정보
+                          </button>
                           {type !== "vault" && (
                             <button
                               onClick={(e) => {
@@ -1447,6 +1443,95 @@ export default function Alloy() {
                 }
                 return <div style={textStyle}>{item.name}</div>;
               };
+
+              // 폴더/문서 공용 행 렌더러 - 검색 결과 목록과 폴더 안 목록에서 함께 쓴다.
+              const renderRow = (type, item, iconNode, subText) => (
+                <div
+                  key={`${type}-${item.id}`}
+                  data-drag-type={type === "folder" ? "folder" : "file"}
+                  data-drag-id={item.id}
+                  onClick={() => {
+                    if (justDraggedRef.current) return;
+                    if (type === "folder") setCurrentPath([...currentPath, item.name]);
+                  }}
+                  onPointerDown={rowPointerDown(type === "folder" ? "folder" : "file", item.id)}
+                  onPointerMove={rowPointerMove}
+                  onPointerUp={rowPointerUp}
+                  onMouseDown={pressDown("scale(0.98)")}
+                  onMouseUp={pressUp("none")}
+                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)";
+                    e.currentTarget.style.transform = "none";
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "18px 18px",
+                    marginBottom: 8,
+                    borderRadius: 10,
+                    background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                    backdropFilter: "blur(20px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                    border: `1px solid ${
+                      dragOverKey === `${type === "folder" ? "folder" : "file"}-${item.id}` ||
+                      (draggingItem && draggingItem.id === item.id)
+                        ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
+                        : (isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)")
+                    }`,
+                    cursor: type === "folder" ? "pointer" : "default",
+                    touchAction: "manipulation",
+                    transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease",
+                  }}
+                >
+                  <div style={{ flexShrink: 0 }}>{iconNode}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {renderEditableName(type === "folder" ? "folder" : "file", item, {
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 15,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    })}
+                    {subText && (
+                      <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, marginTop: 2 }}>
+                        {subText}
+                      </div>
+                    )}
+                  </div>
+                  {renderItemMenu(type === "folder" ? "folder" : "file", item)}
+                </div>
+              );
+
+              // ── 검색 결과: 검색어가 있으면 지금 어느 위치를 보고 있든 상관없이 전체
+              //     파일/문서/이미지 중 이름에 검색어가 포함된 항목을 리스트로 보여준다. ──
+              const trimmedQuery = searchQuery.trim().toLowerCase();
+              if (trimmedQuery) {
+                const matches = files.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
+                if (matches.length === 0) {
+                  return (
+                    <div
+                      style={{
+                        padding: "48px 0",
+                        textAlign: "center",
+                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                        fontSize: 14,
+                      }}
+                    >
+                      검색 결과가 없습니다
+                    </div>
+                  );
+                }
+                return (
+                  <>
+                    {matches.map((item) =>
+                      renderRow("file", item, getFileIcon(item.mimeType), item.path.join(" / "))
+                    )}
+                  </>
+                );
+              }
 
               // ── 홈: Vault(프로젝트) 카드 목록 (2열, 세로 여백 넉넉히) ──
               if (currentPath.length === 0) {
@@ -1589,66 +1674,6 @@ export default function Alloy() {
               }
 
               // 폴더/문서 공용 행 렌더러
-              const renderRow = (type, item, iconNode, subText) => (
-                <div
-                  key={`${type}-${item.id}`}
-                  data-drag-type={type === "folder" ? "folder" : "file"}
-                  data-drag-id={item.id}
-                  onClick={() => {
-                    if (justDraggedRef.current) return;
-                    if (type === "folder") setCurrentPath([...currentPath, item.name]);
-                  }}
-                  onPointerDown={rowPointerDown(type === "folder" ? "folder" : "file", item.id)}
-                  onPointerMove={rowPointerMove}
-                  onPointerUp={rowPointerUp}
-                  onMouseDown={pressDown("scale(0.98)")}
-                  onMouseUp={pressUp("none")}
-                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)";
-                    e.currentTarget.style.transform = "none";
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "18px 18px",
-                    marginBottom: 8,
-                    borderRadius: 10,
-                    background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                    backdropFilter: "blur(20px) saturate(180%)",
-                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                    border: `1px solid ${
-                      dragOverKey === `${type === "folder" ? "folder" : "file"}-${item.id}` ||
-                      (draggingItem && draggingItem.id === item.id)
-                        ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
-                        : (isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)")
-                    }`,
-                    cursor: type === "folder" ? "pointer" : "default",
-                    touchAction: "manipulation",
-                    transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease",
-                  }}
-                >
-                  <div style={{ flexShrink: 0 }}>{iconNode}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {renderEditableName(type === "folder" ? "folder" : "file", item, {
-                      color: isLight ? "#14161A" : "#FFFFFF",
-                      fontSize: 15,
-                      fontWeight: 500,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    })}
-                    {subText && (
-                      <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, marginTop: 2 }}>
-                        {subText}
-                      </div>
-                    )}
-                  </div>
-                  {renderItemMenu(type === "folder" ? "folder" : "file", item)}
-                </div>
-              );
-
               return (
                 <>
                   {/* 폴더 행 */}
@@ -1683,6 +1708,8 @@ export default function Alloy() {
                           onPointerDown={rowPointerDown("file", img.id)}
                           onPointerMove={rowPointerMove}
                           onPointerUp={rowPointerUp}
+                          onMouseDown={pressDown("scale(0.97)")}
+                          onMouseUp={pressUp("none")}
                           style={{
                             position: "relative",
                             breakInside: "avoid",
@@ -1698,7 +1725,7 @@ export default function Alloy() {
                             background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
                             cursor: img.url ? "pointer" : "default",
                             touchAction: "manipulation",
-                            transition: "border-color 0.15s ease",
+                            transition: "border-color 0.15s ease, transform 0.15s ease",
                           }}
                         >
                           {img.url ? (
@@ -1968,12 +1995,12 @@ export default function Alloy() {
         </>
       )}
 
-      {/* Vault 정보 모달 - 이름/생성 일자/수정 일자/크기를 보여주는 단순 정보 모달.
-          별도 확인 버튼 없이 상단 제목열 오른쪽 X로만 닫는다. */}
-      {vaultInfoModalOpen && (
+      {/* 정보 모달 - 이름/생성 일자/수정 일자/크기를 보여주는 단순 정보 모달.
+          Vault/폴더/파일 공용. 별도 확인 버튼 없이 상단 제목열 오른쪽 X로만 닫는다. */}
+      {infoModalOpen && (
         <>
           <div
-            onClick={closeVaultInfoModal}
+            onClick={closeInfoModal}
             style={{
               position: "fixed",
               top: 0,
@@ -1982,7 +2009,7 @@ export default function Alloy() {
               bottom: 0,
               background: "rgba(0,0,0,0.45)",
               zIndex: 39,
-              opacity: vaultInfoModalVisible ? 1 : 0,
+              opacity: infoModalVisible ? 1 : 0,
               transition: "opacity 0.2s ease",
             }}
           />
@@ -1991,8 +2018,8 @@ export default function Alloy() {
               position: "fixed",
               top: "50%",
               left: "50%",
-              transform: vaultInfoModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-              opacity: vaultInfoModalVisible ? 1 : 0,
+              transform: infoModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: infoModalVisible ? 1 : 0,
               background: isLight ? "#FFFFFF" : "#1a1918",
               borderRadius: 20,
               border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
@@ -2017,7 +2044,7 @@ export default function Alloy() {
                 정보
               </h2>
               <button
-                onClick={closeVaultInfoModal}
+                onClick={closeInfoModal}
                 onMouseDown={pressDown("scale(0.85)")}
                 onMouseUp={pressUp("scale(1)")}
                 aria-label="닫기"
@@ -2048,10 +2075,10 @@ export default function Alloy() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }}>
               {[
-                { label: "이름", value: vaultInfoTarget ? vaultInfoTarget.name : "-" },
-                { label: "생성 일자", value: vaultInfoTarget ? formatDate(vaultInfoTarget.createdAt) : "-" },
-                { label: "수정 일자", value: vaultInfoTarget ? formatDate(vaultInfoTarget.updatedAt) : "-" },
-                { label: "크기", value: vaultInfoTarget ? formatFileSize(vaultTotalBytes(vaultInfoTarget.name)) : "-" },
+                { label: "이름", value: infoItem ? infoItem.name : "-" },
+                { label: "생성 일자", value: infoItem ? formatDate(infoItem.createdAt) : "-" },
+                { label: "수정 일자", value: infoItem ? formatDate(infoItem.updatedAt) : "-" },
+                { label: "크기", value: infoItem ? formatFileSize(infoItemSize) : "-" },
               ].map((row) => (
                 <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>
@@ -2471,7 +2498,10 @@ export default function Alloy() {
               <button
                 key={tab}
                 ref={(el) => (btnRefs.current[i] = el)}
-                onClick={() => setActive(i)}
+                onClick={() => {
+                  setActive(i);
+                  if (i === 0) setCurrentPath([]);
+                }}
                 onMouseEnter={() => setHovered(i)}
                 onMouseLeave={(e) => {
                   setHovered(null);
@@ -2481,6 +2511,7 @@ export default function Alloy() {
                 onMouseUp={pressUp(isHovered && !isActive ? "translateY(-1px) scale(1)" : "translateY(0) scale(1)")}
                 onTouchStart={(e) => e.currentTarget.style.transform = "translateY(0) scale(0.93)"}
                 onTouchEnd={pressUp("translateY(0) scale(1)")}
+                aria-label={i === 0 ? "홈" : i === 1 ? "커뮤니티" : "설정"}
                 style={{
                   position: "relative",
                   zIndex: 1,
@@ -2657,6 +2688,7 @@ export default function Alloy() {
         <>
           <div
             onPointerDown={viewerPointerDown}
+            onPointerMove={viewerPointerMove}
             onPointerUp={viewerPointerUp}
             style={{
               position: "fixed",
@@ -2669,6 +2701,7 @@ export default function Alloy() {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
+              overflow: "hidden",
               opacity: viewerVisible ? 1 : 0,
               transition: "opacity 0.25s ease",
               touchAction: "none",
@@ -2686,6 +2719,8 @@ export default function Alloy() {
                   maxHeight: "85vh",
                   objectFit: "contain",
                   borderRadius: 12,
+                  transform: `translateX(${viewerDragX}px)`,
+                  transition: viewerAnimating ? "transform 0.22s cubic-bezier(0.22, 1, 0.36, 1)" : "none",
                 }}
               />
             )}
