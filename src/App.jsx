@@ -83,6 +83,23 @@ export default function Alloy() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
   const searchInputRef = useRef(null);
+  // 하단 바가 중앙 정렬이라 검색 버튼의 화면상 x좌표가 뷰포트 폭에 따라 달라진다.
+  // 상단 + 버튼을 검색 버튼과 동일한 x좌표에 맞추기 위해 검색 버튼 위치를 측정해서
+  // 기본 20px 인셋보다 더 들어가야 하는 만큼을 marginRight로 보정한다.
+  const searchButtonRef = useRef(null);
+  const [addButtonExtraInset, setAddButtonExtraInset] = useState(0);
+  useEffect(() => {
+    const measure = () => {
+      if (searchButtonRef.current) {
+        const rect = searchButtonRef.current.getBoundingClientRect();
+        const targetInset = window.innerWidth - rect.right;
+        setAddButtonExtraInset(Math.max(0, targetInset - 20));
+      }
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
 
   // Vaulty 데이터 모델: Vault(프로젝트) > Folder(폴더) > Data(이미지/문서)
   //  - vaults: 홈 화면에 카드로 보이는 최상위 프로젝트 [{id, name}]
@@ -681,9 +698,10 @@ export default function Alloy() {
             </h1>
           </div>
 
-          {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션 */}
+          {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션.
+              하단 바가 중앙 정렬이라 marginRight로 검색 버튼과 같은 x좌표까지 밀어 넣는다. */}
           {active === 0 && (
-            <div style={{ position: "relative" }}>
+            <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
               <button
                 ref={uploadButtonRef}
                 onClick={handleAddButton}
@@ -2261,13 +2279,14 @@ export default function Alloy() {
         </>
       )}
 
-      {/* 하단 컨트롤 영역 - 검색 버튼의 오른쪽 끝이 상단 + 버튼과 동일하게 화면 우측에서 20px
-          지점에 오도록 오른쪽 정렬한다(상단 헤더도 좌우 20px 인셋을 쓴다). */}
+      {/* 하단 컨트롤 영역 - 탭바 + 검색 버튼을 화면 중앙에 정렬한다.
+          상단 + 버튼은 위쪽 useEffect에서 측정한 marginRight로 이 검색 버튼과 x좌표를 맞춘다. */}
       <div
         style={{
           position: "fixed",
           bottom: 24,
-          right: 20,
+          left: "50%",
+          transform: "translateX(-50%)",
           display: "flex",
           alignItems: "center",
           gap: 14,
@@ -2378,6 +2397,7 @@ export default function Alloy() {
 
         {/* 검색 버튼 (리퀴드 글래스, 탭바와 동일한 높이의 원형) - 누르면 탭바 위에 검색창 패널이 열린다 */}
         <button
+          ref={searchButtonRef}
           onClick={toggleSearch}
           onMouseEnter={() => setSearchButtonHovered(true)}
           onMouseLeave={(e) => {
