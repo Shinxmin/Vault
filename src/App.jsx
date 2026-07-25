@@ -123,6 +123,19 @@ export default function Alloy() {
     return data;
   };
 
+  // 정렬 - 단일 "ABC" 버튼 하나로 가나다순 -> 숫자순 -> 알파벳순을 순환한다.
+  // 사용자 지정(꾹 눌러서 드래그) 정렬을 사용하면 배열 자체의 순서를 그대로 쓴다.
+  // customOrderActive는 아래 load/save 이펙트의 의존성 배열에서 참조하므로 그보다 먼저
+  // 선언해야 한다(안 그러면 TDZ로 "Cannot access before initialization" 런타임 에러가 난다).
+  const SORT_MODES = ["ko", "num", "en"];
+  const [sortModeIndex, setSortModeIndex] = useState(0);
+  const [customOrderActive, setCustomOrderActive] = useState(false);
+  const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
+  const cycleSortMode = () => {
+    setCustomOrderActive(false);
+    setSortModeIndex((i) => (i + 1) % SORT_MODES.length);
+  };
+
   // 예전에 만든 항목은 createdAt/updatedAt 없이 저장돼 있을 수 있는데(이 필드를 넣기 전
   // 버전에서 생성됨), id 자체가 Date.now() 기반 타임스탬프라 생성 시각의 대체값으로 쓸 수
   // 있다. "정보" 모달에 빈 값이 뜨지 않도록 불러올 때 항상 유효한 날짜를 채워 넣는다.
@@ -139,7 +152,7 @@ export default function Alloy() {
     (async () => {
       const { data, error } = await supabase
         .from("vaulty_state")
-        .select("vaults, folders, files")
+        .select("vaults, folders, files, custom_order_active")
         .eq("id", "default")
         .maybeSingle();
       if (error) {
@@ -150,6 +163,7 @@ export default function Alloy() {
         const loadedFiles = (data.files || []).map(withDates);
         setVaults(loadedVaults);
         setFolders(loadedFolders);
+        setCustomOrderActive(data.custom_order_active === true);
         // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
         // 불러올 때마다 r2Key 기준으로 새로 발급받는다.
         const imageKeys = loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
@@ -169,8 +183,10 @@ export default function Alloy() {
     })();
   }, []);
 
-  // 초기 로드가 끝난 뒤부터 vaults/folders/files가 바뀔 때마다 살짝 지연을 두고
-  // (짧은 시간 내 연속 변경을 한 번으로 묶어) Supabase에 전체 상태를 저장한다.
+  // 초기 로드가 끝난 뒤부터 vaults/folders/files/customOrderActive가 바뀔 때마다 살짝
+  // 지연을 두고(짧은 시간 내 연속 변경을 한 번으로 묶어) Supabase에 전체 상태를 저장한다.
+  // customOrderActive를 저장하지 않으면 꾹 눌러 바꾼 순서(배열 자체는 저장됨)가 새로고침 시
+  // 다시 ABC 정렬로 보여서 마치 순서가 저장 안 된 것처럼 보이는 문제가 있었다.
   const saveTimerRef = useRef(null);
   useEffect(() => {
     if (!dataLoaded) return;
@@ -180,13 +196,20 @@ export default function Alloy() {
       const filesToSave = files.map(({ url, ...rest }) => rest);
       supabase
         .from("vaulty_state")
-        .upsert({ id: "default", vaults, folders, files: filesToSave, updated_at: new Date().toISOString() })
+        .upsert({
+          id: "default",
+          vaults,
+          folders,
+          files: filesToSave,
+          custom_order_active: customOrderActive,
+          updated_at: new Date().toISOString(),
+        })
         .then(({ error }) => {
           if (error) console.error("Vaulty 상태 저장 실패:", error);
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, dataLoaded]);
+  }, [vaults, folders, files, customOrderActive, dataLoaded]);
 
   // Vault 생성 모달
   const [vaultModalOpen, setVaultModalOpen] = useState(false);
@@ -370,15 +393,6 @@ export default function Alloy() {
 
   // 정렬 - 단일 "ABC" 버튼 하나로 가나다순 -> 숫자순 -> 알파벳순을 순환한다.
   // 사용자 지정(꾹 눌러서 드래그) 정렬을 사용하면 배열 자체의 순서를 그대로 쓴다.
-  const SORT_MODES = ["ko", "num", "en"];
-  const [sortModeIndex, setSortModeIndex] = useState(0);
-  const [customOrderActive, setCustomOrderActive] = useState(false);
-  const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
-  const cycleSortMode = () => {
-    setCustomOrderActive(false);
-    setSortModeIndex((i) => (i + 1) % SORT_MODES.length);
-  };
-
   const sortItems = (items) => {
     if (sortMode === "custom") return items;
     const sorted = [...items];
@@ -751,8 +765,15 @@ export default function Alloy() {
   const vaultTotalBytes = (vaultName) =>
     files.filter((f) => f.path[0] === vaultName).reduce((s, f) => s + (f.size || 0), 0);
 
-  const formatDate = (ts) =>
-    ts ? new Date(ts).toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" }) : "-";
+  const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
+  const formatDate = (ts) => {
+    if (!ts) return "-";
+    const d = new Date(ts);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}년 ${m}월 ${day}일 (${WEEKDAY_KO[d.getDay()]})`;
+  };
 
   // 정보 모달 - 삼점 메뉴의 "정보"를 누르면 대형 모달로 이름/생성 일자/수정 일자/크기를
   // 보여준다. Vault/폴더/파일(이미지 포함) 공용.
