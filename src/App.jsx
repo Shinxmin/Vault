@@ -866,6 +866,99 @@ export default function Alloy() {
     closeConvertModal();
   };
 
+  // 태그 모달 - "마법사" 메뉴의 "태그"를 누르면 뜬다. 레이아웃/동작은 변환 모달과 동일하되
+  // 이름 대신 각 항목의 태그 배열(item.tags)을 다룬다. 폴더/파일(이미지) 제목 아래에
+  // "#태그" 형태로 여러 개 붙을 수 있다.
+  const [tagModalOpen, setTagModalOpen] = useState(false);
+  const [tagModalVisible, setTagModalVisible] = useState(false);
+  const [tagChecked, setTagChecked] = useState({}); // { [id]: true }
+  const [tagDrafts, setTagDrafts] = useState({}); // { [id]: 미리보기용 태그 배열 }
+  const [tagInput, setTagInput] = useState("");
+  // 태그가 달린 항목을 모아 보여주는 화면에서 지금 보고 있는 태그. null이면 닫힌 상태.
+  const [tagScreenTag, setTagScreenTag] = useState(null);
+
+  const tagTargets = convertTargets.map((t) => {
+    const source =
+      t.type === "vault" ? vaults.find((v) => v.id === t.id) :
+      t.type === "folder" ? folders.find((f) => f.id === t.id) :
+      files.find((f) => f.id === t.id);
+    return { ...t, tags: (source && source.tags) || [] };
+  });
+
+  const openTagModal = () => {
+    setTagChecked({});
+    setTagDrafts(Object.fromEntries(tagTargets.map((t) => [t.id, t.tags])));
+    setTagInput("");
+    setTagModalOpen(true);
+    requestAnimationFrame(() => setTagModalVisible(true));
+  };
+  const closeTagModal = () => {
+    setTagModalVisible(false);
+    setTimeout(() => setTagModalOpen(false), 200);
+  };
+  const toggleTagChecked = (id) => {
+    setTagChecked((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+  // 삭제 - 체크된 항목들의 기존 보유 태그를 전부 비운다.
+  const handleTagClear = () => {
+    setTagDrafts((prev) => {
+      const next = { ...prev };
+      tagTargets.forEach((item) => {
+        if (tagChecked[item.id]) next[item.id] = [];
+      });
+      return next;
+    });
+  };
+  // 추가 - 입력창의 문자를 "#태그" 형태로 만들어 체크된 항목들에 새로 추가한다(중복 태그는 무시).
+  const handleTagAppend = () => {
+    const raw = tagInput.trim();
+    if (!raw) return;
+    const tag = raw.startsWith("#") ? raw : `#${raw}`;
+    setTagDrafts((prev) => {
+      const next = { ...prev };
+      tagTargets.forEach((item) => {
+        if (tagChecked[item.id]) {
+          const current = prev[item.id] !== undefined ? prev[item.id] : item.tags;
+          if (!current.includes(tag)) next[item.id] = [...current, tag];
+        }
+      });
+      return next;
+    });
+    setTagInput("");
+  };
+  // 적용 - 실제로 vaults/folders/files에 태그 배열을 반영한다.
+  const handleTagApply = () => {
+    const checkedItems = tagTargets.filter((item) => tagChecked[item.id]);
+    if (!checkedItems.length) {
+      closeTagModal();
+      return;
+    }
+    const now = Date.now();
+    const tagsById = {};
+    checkedItems.forEach((item) => {
+      tagsById[item.id] = tagDrafts[item.id] !== undefined ? tagDrafts[item.id] : item.tags;
+    });
+    if (currentPath.length === 0) {
+      setVaults((prev) => prev.map((v) => (tagsById[v.id] !== undefined ? { ...v, tags: tagsById[v.id], updatedAt: now } : v)));
+    } else {
+      const checkedFolderIds = checkedItems.filter((i) => i.type === "folder").map((i) => i.id);
+      const checkedFileIds = checkedItems.filter((i) => i.type === "file").map((i) => i.id);
+      if (checkedFolderIds.length) setFolders((prev) => prev.map((f) => (checkedFolderIds.includes(f.id) ? { ...f, tags: tagsById[f.id], updatedAt: now } : f)));
+      if (checkedFileIds.length) setFiles((prev) => prev.map((f) => (checkedFileIds.includes(f.id) ? { ...f, tags: tagsById[f.id], updatedAt: now } : f)));
+    }
+    closeTagModal();
+  };
+
+  // 태그 화면에서 보여줄, 해당 태그가 달린 모든 폴더/파일(이미지·문서) 목록.
+  const tagScreenResults = tagScreenTag
+    ? [
+        ...folders.filter((f) => (f.tags || []).includes(tagScreenTag)).map((f) => ({ ...f, __type: "folder" })),
+        ...files.filter((f) => (f.tags || []).includes(tagScreenTag)).map((f) => ({ ...f, __type: "file" })),
+      ]
+    : [];
+  const openTagScreen = (tag) => setTagScreenTag(tag);
+  const closeTagScreen = () => setTagScreenTag(null);
+
   // 이미지/움짤 전체화면 뷰어 - 열 당시의 이미지 배열을 그대로 들고 있다가
   // 좌우 스와이프(포인터 드래그)로 이전/다음 사진을 넘긴다. 드래그 중엔 손가락을 그대로
   // 따라가고, 손을 떼면 완전히 밀려나가며 다음/이전 사진이 반대편에서 슬라이드로 들어온다.
@@ -1277,16 +1370,16 @@ export default function Alloy() {
                 cursor: active === 0 ? "pointer" : "default",
               }}
             >
-              {active === 2 && trashScreenOpen ? "휴지통" : active === 2 && subscriptionScreenOpen ? "구독" : TAB_TITLES[active]}
+              {tagScreenTag ? tagScreenTag : active === 2 && trashScreenOpen ? "휴지통" : active === 2 && subscriptionScreenOpen ? "구독" : TAB_TITLES[active]}
             </h1>
           </div>
 
-          {/* 휴지통/구독 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게 맞춘
-              리퀴드 글래스 원형 버튼. 우측 상단에 뜬다. */}
-          {active === 2 && (trashScreenOpen || subscriptionScreenOpen) && (
+          {/* 휴지통/구독/태그 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게
+              맞춘 리퀴드 글래스 원형 버튼. 우측 상단에 뜬다. */}
+          {(tagScreenTag || (active === 2 && (trashScreenOpen || subscriptionScreenOpen))) && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
             <button
-              onClick={() => { setTrashScreenOpen(false); setSubscriptionScreenOpen(false); }}
+              onClick={() => { setTrashScreenOpen(false); setSubscriptionScreenOpen(false); closeTagScreen(); }}
               onMouseEnter={() => setTrashCloseButtonHovered(true)}
               onMouseLeave={(e) => {
                 setTrashCloseButtonHovered(false);
@@ -1331,7 +1424,7 @@ export default function Alloy() {
 
           {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션.
               하단 바가 중앙 정렬이라 marginRight로 검색 버튼과 같은 x좌표까지 밀어 넣는다. */}
-          {active === 0 && (
+          {active === 0 && !tagScreenTag && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
               <button
                 ref={uploadButtonRef}
@@ -1500,7 +1593,7 @@ export default function Alloy() {
         </div>
 
         {/* 홈 탭 콘텐츠 */}
-        {active === 0 && (
+        {active === 0 && !tagScreenTag && (
           <>
             {/* 경로 표기 및 정렬/보기 방식 아이콘 영역 */}
             <div
@@ -1682,6 +1775,32 @@ export default function Alloy() {
                         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                       >
                         변환
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      <button
+                        onClick={() => {
+                          closeWizardMenu();
+                          openTagModal();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        태그
                       </button>
                     </div>
                   </>,
@@ -1944,6 +2063,34 @@ export default function Alloy() {
                 );
               };
 
+              // 폴더/이미지/문서 제목 아래에 "#태그"를 작은 글씨로 나열한다. 누르면(클릭 전파를
+              // 막아 상위 행의 이동 동작을 가로채지 않고) 그 태그의 전체 목록 화면을 연다.
+              const renderTagPills = (item) => {
+                if (!item.tags || item.tags.length === 0) return null;
+                return (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 3 }}>
+                    {item.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openTagScreen(tag);
+                        }}
+                        style={{
+                          fontSize: 12,
+                          color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)",
+                          cursor: "pointer",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.textDecoration = "underline"}
+                        onMouseLeave={(e) => e.currentTarget.style.textDecoration = "none"}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                );
+              };
+
               // 폴더/문서 공용 행 렌더러 - 검색 결과 목록과 폴더 안 목록에서 함께 쓴다.
               const renderRow = (type, item, iconNode, subText, onNavigate) => {
                 const rowDragType = type === "folder" ? "folder" : "file";
@@ -2007,6 +2154,7 @@ export default function Alloy() {
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                     })}
+                    {renderTagPills(item)}
                     {subText && (
                       <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, marginTop: 2 }}>
                         {subText}
@@ -2300,7 +2448,7 @@ export default function Alloy() {
                           )}
                           {/* 이미지 제목(좌) + 삼점 메뉴(우) - 하단 제목열에 나란히 정렬 */}
                           <div
-                            style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 4px 6px 8px" }}
+                            style={{ display: "flex", alignItems: "flex-start", gap: 4, padding: "6px 4px 6px 8px" }}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <div style={{ flex: 1, minWidth: 0 }}>
@@ -2312,6 +2460,7 @@ export default function Alloy() {
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
                               })}
+                              {renderTagPills(img)}
                             </div>
                             {renderItemMenu("file", img)}
                           </div>
@@ -2327,7 +2476,7 @@ export default function Alloy() {
         )}
 
         {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통/구독 화면 */}
-        {active === 2 && !trashScreenOpen && !subscriptionScreenOpen && (
+        {active === 2 && !trashScreenOpen && !subscriptionScreenOpen && !tagScreenTag && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div
               style={{
@@ -2566,7 +2715,8 @@ export default function Alloy() {
               </div>
             </div>
 
-            {/* 앱 버전 표기 - 테마/저장 공간/휴지통 카드 바로 아래에 별도 테두리로 구분. */}
+            {/* 앱 버전 표기 - 테마/저장 공간/휴지통 카드 바로 아래에 별도 테두리로 구분.
+                제목 "버전" 아래에 좌측 정렬로 버전 텍스트를 보여준다. */}
             <div
               style={{
                 borderRadius: 14,
@@ -2574,20 +2724,24 @@ export default function Alloy() {
                 backdropFilter: "blur(20px) saturate(180%)",
                 WebkitBackdropFilter: "blur(20px) saturate(180%)",
                 border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                padding: "12px 18px",
-                textAlign: "center",
+                padding: "14px 18px",
               }}
             >
-              <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
-                Vaulty v{APP_VERSION}
-              </span>
+              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
+                버전
+              </div>
+              <div style={{ textAlign: "left" }}>
+                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
+                  Vaulty v{APP_VERSION}
+                </span>
+              </div>
             </div>
           </div>
         )}
 
         {/* 휴지통 화면 - 삭제된 Vault/폴더/파일이 삭제된 시점으로부터 7일간 여기 담긴다.
             복구를 누르면 원래 위치로 돌아가고, 삭제를 누르면 확인 절차 없이 바로 영구 삭제된다. */}
-        {active === 2 && trashScreenOpen && (
+        {active === 2 && trashScreenOpen && !tagScreenTag && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {trash.length === 0 ? (
               <div
@@ -2707,7 +2861,7 @@ export default function Alloy() {
 
         {/* 구독 화면 - 아직 내용 없이 빈 화면(추후 요금제 안내 예정). 휴지통 화면과 같은
             헤더(X 닫기 버튼) 패턴만 재사용한다. */}
-        {active === 2 && subscriptionScreenOpen && (
+        {active === 2 && subscriptionScreenOpen && !tagScreenTag && (
           <div
             style={{
               padding: "48px 0",
@@ -2716,6 +2870,86 @@ export default function Alloy() {
               fontSize: 14,
             }}
           />
+        )}
+
+        {/* 태그 화면 - 태그(#태그)를 누르면 열리며, 그 태그가 달린 모든 폴더/파일(이미지·문서)를
+            현재 어느 탭/화면에 있었든 상관없이 리스트로 보여준다. 항목을 누르면 화면을 닫고
+            그 위치로 이동한다(검색 결과와 동일한 패턴). */}
+        {tagScreenTag && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {tagScreenResults.length === 0 ? (
+              <div
+                style={{
+                  padding: "48px 0",
+                  textAlign: "center",
+                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                  fontSize: 14,
+                }}
+              >
+                이 태그가 달린 항목이 없습니다
+              </div>
+            ) : (
+              tagScreenResults.map((item) => {
+                const isFolder = item.__type === "folder";
+                const locationText = (isFolder ? item.path.slice(0, -1) : item.path).join(" / ") || "홈";
+                return (
+                  <div
+                    key={`${item.__type}-${item.id}`}
+                    onClick={() => {
+                      setCurrentPath(item.path);
+                      closeTagScreen();
+                      setActive(0);
+                    }}
+                    onMouseDown={pressDown("scale(0.98)")}
+                    onMouseUp={pressUp("none")}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)"}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "18px 18px",
+                      marginBottom: 8,
+                      borderRadius: 10,
+                      background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                      backdropFilter: "blur(20px) saturate(180%)",
+                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                      border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                      cursor: "pointer",
+                      transition: "background 0.2s ease",
+                    }}
+                  >
+                    <div style={{ flexShrink: 0 }}>
+                      {isFolder ? (
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>
+                      ) : (
+                        getFileIcon(item.mimeType)
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {item.name}
+                      </div>
+                      <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, marginTop: 2 }}>
+                        {locationText}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
         )}
       </div>
 
@@ -3400,6 +3634,7 @@ export default function Alloy() {
                     setTrashScreenOpen(false);
                     setSubscriptionScreenOpen(false);
                   }
+                  closeTagScreen();
                 }}
                 onMouseEnter={() => setHovered(i)}
                 onMouseLeave={(e) => {
@@ -3815,6 +4050,254 @@ export default function Alloy() {
               onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
             >
               변환
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* 태그 모달 - 변환 모달과 동일한 레이아웃. 체크한 항목들에 "#태그"를 붙이거나 뗀다. */}
+      {tagModalOpen && (
+        <>
+          <div
+            onClick={closeTagModal}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.45)",
+              zIndex: 39,
+              opacity: tagModalVisible ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: tagModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: tagModalVisible ? 1 : 0,
+              background: isLight ? "#FFFFFF" : "#1a1918",
+              borderRadius: 20,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              padding: "32px 30px",
+              width: "84vw",
+              boxSizing: "border-box",
+              zIndex: 40,
+              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                }}
+              >
+                태그
+              </h2>
+              <button
+                onClick={closeTagModal}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* 지정할 데이터 - 체크한 항목에 태그가 적용된다. 각 항목의 현재 미리보기 태그도 함께 보여준다. */}
+            <div
+              style={{
+                maxHeight: 300,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginBottom: 16,
+              }}
+            >
+              {tagTargets.length === 0 && (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "20px 0",
+                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                    fontSize: 14,
+                  }}
+                >
+                  태그를 지정할 항목이 없습니다
+                </div>
+              )}
+              {tagTargets.map((item) => {
+                const draftTags = tagDrafts[item.id] !== undefined ? tagDrafts[item.id] : item.tags;
+                return (
+                  <label
+                    key={item.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      padding: "8px 4px",
+                      cursor: "pointer",
+                      borderRadius: 8,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!tagChecked[item.id]}
+                      onChange={() => toggleTagChecked(item.id)}
+                      style={{ width: 18, height: 18, flexShrink: 0, cursor: "pointer", marginTop: 1 }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          fontSize: 15,
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                        }}
+                      >
+                        {item.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          marginTop: 2,
+                          color: draftTags.length
+                            ? (isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)")
+                            : (isLight ? "rgba(20,22,26,0.3)" : "rgba(255,255,255,0.3)"),
+                        }}
+                      >
+                        {draftTags.length ? draftTags.join(" ") : "(태그 없음)"}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            <input
+              type="text"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              placeholder="여기에 입력하세요"
+              style={{
+                width: "100%",
+                padding: 12,
+                marginBottom: 12,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                borderRadius: 8,
+                background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                color: isLight ? "#14161A" : "#FFFFFF",
+                fontSize: 15,
+                outline: "none",
+                boxSizing: "border-box",
+                transition: "border-color 0.2s ease",
+              }}
+            />
+
+            <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+              <button
+                onClick={handleTagClear}
+                onMouseDown={pressDown("scale(0.95)")}
+                onMouseUp={pressUp("scale(1)")}
+                style={{
+                  flex: 1,
+                  padding: 10,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  outline: "none",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                삭제
+              </button>
+              <button
+                onClick={handleTagAppend}
+                onMouseDown={pressDown("scale(0.95)")}
+                onMouseUp={pressUp("scale(1)")}
+                style={{
+                  flex: 1,
+                  padding: 10,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  outline: "none",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                추가
+              </button>
+            </div>
+
+            <button
+              onClick={handleTagApply}
+              onMouseDown={pressDown("scale(0.95)")}
+              onMouseUp={pressUp("scale(1)")}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: "pointer",
+                outline: "none",
+                transition: "transform 0.15s ease",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              적용
             </button>
           </div>
         </>
