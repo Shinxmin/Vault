@@ -126,6 +126,9 @@ export default function Alloy() {
   const [itemMenuOpen, setItemMenuOpen] = useState(null); // { type: 'folder' | 'file', id }
   const [itemMenuVisibleKey, setItemMenuVisibleKey] = useState(null);
   const [itemMenuAnchor, setItemMenuAnchor] = useState({ top: 0, right: 0 });
+  // Vault 삭제 - 확인 문구 없이, 삭제 버튼을 한 번 누르면 배경이 붉게 변하고(armed) 같은
+  // 버튼을 한 번 더 누르면 그때 실제로 삭제된다.
+  const [vaultDeleteArmedId, setVaultDeleteArmedId] = useState(null);
   const galleryInputRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -242,6 +245,7 @@ export default function Alloy() {
   };
   const closeItemMenu = () => {
     setItemMenuVisibleKey(null);
+    setVaultDeleteArmedId(null);
     setTimeout(() => setItemMenuOpen(null), 200);
   };
   const toggleItemMenu = (type, id, anchorEl) => {
@@ -1154,40 +1158,7 @@ export default function Alloy() {
                               onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
                               onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                             >
-                              설정
-                            </button>
-                          )}
-                          {type === "vault" && (
-                            <button
-                              onClick={(e) => {
-                                // 암호화 기능은 추후 추가 예정 - 지금은 메뉴만 노출하고 동작은 비워둔다.
-                                e.stopPropagation();
-                                closeItemMenu();
-                              }}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                border: "none",
-                                background: "transparent",
-                                color: isLight ? "#14161A" : "#FFFFFF",
-                                fontSize: 15,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                outline: "none",
-                                textAlign: "left",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                transition: "background 0.2s",
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                                <circle cx="8" cy="15" r="4.5" />
-                                <path d="M11.5 11.5 20 3M16.5 6l2 2M19 3.5l1.5 1.5" />
-                              </svg>
-                              암호화
+                              정보
                             </button>
                           )}
                           {type !== "vault" && (
@@ -1217,29 +1188,63 @@ export default function Alloy() {
                             </button>
                           )}
                           <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)" }} />
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDelete(item.id);
-                            }}
-                            style={{
-                              width: "100%",
-                              padding: "10px 12px",
-                              border: "none",
-                              background: "transparent",
-                              color: "#EF4444",
-                              fontSize: 15,
-                              fontWeight: 500,
-                              cursor: "pointer",
-                              outline: "none",
-                              textAlign: "left",
-                              transition: "background 0.2s",
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)"}
-                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                          >
-                            삭제
-                          </button>
+                          {type === "vault" ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (vaultDeleteArmedId === item.id) {
+                                  onDelete(item.id);
+                                } else {
+                                  setVaultDeleteArmedId(item.id);
+                                }
+                              }}
+                              style={{
+                                width: "100%",
+                                padding: "10px 12px",
+                                border: "none",
+                                background: vaultDeleteArmedId === item.id ? "#EF4444" : "transparent",
+                                color: vaultDeleteArmedId === item.id ? "#FFFFFF" : "#EF4444",
+                                fontSize: 15,
+                                fontWeight: 500,
+                                cursor: "pointer",
+                                outline: "none",
+                                textAlign: "left",
+                                transition: "background 0.15s ease, color 0.15s ease",
+                              }}
+                              onMouseEnter={(e) => {
+                                if (vaultDeleteArmedId !== item.id) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
+                              }}
+                              onMouseLeave={(e) => {
+                                if (vaultDeleteArmedId !== item.id) e.currentTarget.style.background = "transparent";
+                              }}
+                            >
+                              삭제
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDelete(item.id);
+                              }}
+                              style={{
+                                width: "100%",
+                                padding: "10px 12px",
+                                border: "none",
+                                background: "transparent",
+                                color: "#EF4444",
+                                fontSize: 15,
+                                fontWeight: 500,
+                                cursor: "pointer",
+                                outline: "none",
+                                textAlign: "left",
+                                transition: "background 0.2s",
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)"}
+                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                            >
+                              삭제
+                            </button>
+                          )}
                         </div>
                       </>,
                       document.body
@@ -1635,7 +1640,7 @@ export default function Alloy() {
               borderRadius: 16,
               border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
               padding: "24px 30px",
-              width: "80vw",
+              width: "84vw",
               boxSizing: "border-box",
               zIndex: 40,
               boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
@@ -1684,13 +1689,23 @@ export default function Alloy() {
               </button>
             </div>
 
+            {/* 설명 글씨 */}
+            <div
+              style={{
+                marginBottom: 8,
+                color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)",
+                fontSize: 14,
+              }}
+            >
+              새 프로젝트 만들기
+            </div>
+
             {/* 인풋 + 오른쪽 생성 버튼 */}
             <div style={{ display: "flex", gap: 10 }}>
               <input
                 type="text"
                 value={vaultNameInput}
                 onChange={(e) => setVaultNameInput(e.target.value)}
-                placeholder="새 프로젝트 제목을 입력하세요"
                 autoFocus
                 onKeyDown={(e) => {
                   if (e.key === "Enter") createVault();
@@ -1737,8 +1752,8 @@ export default function Alloy() {
         </>
       )}
 
-      {/* Vault 설정 모달 - 다른 모달보다 큼직하지만 가로 여백은 이름 바꾸기 모달과 동일(24px)하게 맞춘다.
-          일반(이름/생성 일자/수정 일자/크기) + 보안(주소/키) 두 섹션, 하단에 취소/확인. */}
+      {/* Vault 정보 모달 - 이름/생성 일자/수정 일자/크기를 보여주는 단순 정보 모달.
+          취소 버튼 없이 상단 제목열 오른쪽 X로 닫고, 하단에는 확인 버튼만 있다. */}
       {vaultInfoModalOpen && (
         <>
           <div
@@ -1766,7 +1781,7 @@ export default function Alloy() {
               borderRadius: 20,
               border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
               padding: "32px 30px",
-              width: "80vw",
+              width: "84vw",
               boxSizing: "border-box",
               zIndex: 40,
               boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
@@ -1783,7 +1798,7 @@ export default function Alloy() {
                   color: isLight ? "#14161A" : "#FFFFFF",
                 }}
               >
-                설정
+                정보
               </h2>
               <button
                 onClick={closeVaultInfoModal}
@@ -1815,77 +1830,12 @@ export default function Alloy() {
               </button>
             </div>
 
-            {/* 일반 섹션 */}
-            <div
-              style={{
-                color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: 0.4,
-                marginBottom: 12,
-              }}
-            >
-              일반
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {/* 이름 - 클릭하면 이름 바꾸기 모달을 연다 */}
-              <div
-                onClick={() => {
-                  if (!vaultInfoTarget) return;
-                  const target = vaultInfoTarget;
-                  closeVaultInfoModal();
-                  openRenameModal("vault", target.id, target.name);
-                }}
-                onMouseDown={pressDown("scale(0.98)")}
-                onMouseUp={pressUp("none")}
-                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", transition: "transform 0.15s ease" }}
-              >
-                <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>
-                  이름
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 6, color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 600 }}>
-                  {vaultInfoTarget ? vaultInfoTarget.name : ""}
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5, flexShrink: 0 }}>
-                    <path d="M12 20h9" />
-                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                  </svg>
-                </span>
-              </div>
-
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }}>
               {[
+                { label: "이름", value: vaultInfoTarget ? vaultInfoTarget.name : "-" },
                 { label: "생성 일자", value: vaultInfoTarget ? formatDate(vaultInfoTarget.createdAt) : "-" },
                 { label: "수정 일자", value: vaultInfoTarget ? formatDate(vaultInfoTarget.updatedAt) : "-" },
                 { label: "크기", value: vaultInfoTarget ? formatFileSize(vaultTotalBytes(vaultInfoTarget.name)) : "-" },
-              ].map((row) => (
-                <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>
-                    {row.label}
-                  </span>
-                  <span style={{ color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 600 }}>
-                    {row.value}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)", margin: "24px 0" }} />
-
-            {/* 보안 섹션 */}
-            <div
-              style={{
-                color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: 0.4,
-                marginBottom: 12,
-              }}
-            >
-              보안
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {[
-                { label: "주소", value: vaultInfoTarget ? `vaulty://vault/${vaultInfoTarget.id}` : "-" },
-                { label: "키", value: "미설정" },
               ].map((row) => (
                 <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>
@@ -1908,56 +1858,28 @@ export default function Alloy() {
               ))}
             </div>
 
-            <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)", margin: "24px 0" }} />
-
-            {/* 취소 / 확인 - 우측 정렬 */}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button
-                onClick={closeVaultInfoModal}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  padding: "9px 18px",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
-                  borderRadius: 8,
-                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  outline: "none",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-              >
-                취소
-              </button>
-              <button
-                onClick={closeVaultInfoModal}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  padding: "9px 18px",
-                  border: "none",
-                  borderRadius: 8,
-                  background: isLight ? "#14161A" : "#FFFFFF",
-                  color: isLight ? "#FFFFFF" : "#14161A",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  outline: "none",
-                  transition: "transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-              >
-                확인
-              </button>
-            </div>
+            <button
+              onClick={closeVaultInfoModal}
+              onMouseDown={pressDown("scale(0.95)")}
+              onMouseUp={pressUp("scale(1)")}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: "pointer",
+                outline: "none",
+                transition: "transform 0.15s ease",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              확인
+            </button>
           </div>
         </>
       )}
@@ -1990,7 +1912,7 @@ export default function Alloy() {
               borderRadius: 16,
               border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
               padding: "24px 30px",
-              width: "80vw",
+              width: "84vw",
               boxSizing: "border-box",
               zIndex: 40,
               boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
@@ -2113,7 +2035,7 @@ export default function Alloy() {
               borderRadius: 16,
               border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
               padding: "24px 30px",
-              width: "80vw",
+              width: "84vw",
               boxSizing: "border-box",
               zIndex: 40,
               boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
@@ -2121,24 +2043,50 @@ export default function Alloy() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2
-              style={{
-                margin: "0 0 16px 0",
-                fontSize: 19,
-                fontWeight: 700,
-                color: isLight ? "#14161A" : "#FFFFFF",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {renameTarget ? renameTarget.name : ""}
-            </h2>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 19,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                }}
+              >
+                이름 바꾸기
+              </h2>
+              <button
+                onClick={closeRenameModal}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
             <input
               type="text"
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
-              placeholder="이름"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === "Enter") confirmRename();
@@ -2158,55 +2106,28 @@ export default function Alloy() {
                 transition: "border-color 0.2s ease",
               }}
             />
-            <div style={{ display: "flex", gap: 12 }}>
-              <button
-                onClick={closeRenameModal}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  flex: 1,
-                  padding: 10,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
-                  borderRadius: 8,
-                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  outline: "none",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-              >
-                취소
-              </button>
-              <button
-                onClick={confirmRename}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  flex: 1,
-                  padding: 10,
-                  border: "none",
-                  borderRadius: 8,
-                  background: isLight ? "#14161A" : "#FFFFFF",
-                  color: isLight ? "#FFFFFF" : "#14161A",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  outline: "none",
-                  transition: "transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-              >
-                확인
-              </button>
-            </div>
+            <button
+              onClick={confirmRename}
+              onMouseDown={pressDown("scale(0.95)")}
+              onMouseUp={pressUp("scale(1)")}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: "pointer",
+                outline: "none",
+                transition: "transform 0.15s ease",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              확인
+            </button>
           </div>
         </>
       )}
@@ -2240,7 +2161,7 @@ export default function Alloy() {
               borderRadius: 16,
               border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
               padding: "24px 30px",
-              width: "80vw",
+              width: "84vw",
               boxSizing: "border-box",
               maxHeight: "70vh",
               display: "flex",
