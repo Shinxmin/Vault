@@ -691,7 +691,7 @@ export default function Alloy() {
             </h1>
           </div>
 
-          {/* 업로드 버튼 - 홈 탭 제목 열 오른쪽에 배치, 리퀴드 글래스 원형 + 애니메이션 */}
+          {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션 */}
           {active === 0 && (
             <div style={{ position: "relative" }}>
               <button
@@ -702,13 +702,14 @@ export default function Alloy() {
                   setUploadButtonHovered(false);
                   e.currentTarget.style.transform = "scale(1)";
                 }}
-                onMouseDown={pressDown("scale(0.92)")}
+                onMouseDown={pressDown("scale(0.9)")}
                 onMouseUp={pressUp(uploadButtonHovered ? "scale(1.08)" : "scale(1)")}
-                onTouchStart={pressDown("scale(0.92)")}
+                onTouchStart={pressDown("scale(0.9)")}
                 onTouchEnd={pressUp("scale(1)")}
                 style={{
-                  width: 36,
-                  height: 36,
+                  width: BAR_HEIGHT,
+                  height: BAR_HEIGHT,
+                  flexShrink: 0,
                   borderRadius: "50%",
                   border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
                   background: uploadMenuOpen || uploadButtonHovered
@@ -717,22 +718,22 @@ export default function Alloy() {
                   backdropFilter: "blur(20px) saturate(180%)",
                   WebkitBackdropFilter: "blur(20px) saturate(180%)",
                   boxShadow: uploadButtonHovered
-                    ? "0 10px 28px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.3)"
-                    : "0 6px 20px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08)",
+                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   cursor: "pointer",
                   color: isLight ? "#14161A" : "#FFFFFF",
                   outline: "none",
-                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.25s cubic-bezier(0.22, 1, 0.36, 1)",
+                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
                   transform: uploadButtonHovered ? "scale(1.08)" : "scale(1)",
                 }}
                 aria-label="추가하기"
               >
                 <svg
-                  width="18"
-                  height="18"
+                  width="22"
+                  height="22"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
