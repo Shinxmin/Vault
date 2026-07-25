@@ -502,6 +502,46 @@ export default function Alloy() {
     setEditingValue("");
   };
 
+  // 이미지/움짤 전체화면 뷰어 - 열 당시의 이미지 배열을 그대로 들고 있다가
+  // 좌우 스와이프(포인터 드래그)로 이전/다음 사진을 넘긴다.
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerImages, setViewerImages] = useState([]);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const viewerDragRef = useRef(null);
+
+  const openViewer = (images, index) => {
+    setViewerImages(images);
+    setViewerIndex(index);
+    setViewerOpen(true);
+    requestAnimationFrame(() => setViewerVisible(true));
+  };
+  const closeViewer = () => {
+    setViewerVisible(false);
+    setTimeout(() => {
+      setViewerOpen(false);
+      setViewerImages([]);
+    }, 200);
+  };
+  const viewerPointerDown = (e) => {
+    viewerDragRef.current = { x: e.clientX };
+  };
+  // 배경(오버레이) 위에서 mousedown+mouseup은 드래그로 스와이프했더라도 같은 엘리먼트에서
+  // 끝나면 브라우저가 click 이벤트도 함께 발생시키므로, onClick으로 따로 닫지 않고
+  // 여기서 이동 거리를 직접 재서 살짝 누르면 닫고(탭) 충분히 끌면 넘긴다(스와이프).
+  const viewerPointerUp = (e) => {
+    if (!viewerDragRef.current) return;
+    const dx = e.clientX - viewerDragRef.current.x;
+    viewerDragRef.current = null;
+    if (Math.abs(dx) < 10) {
+      closeViewer();
+    } else if (Math.abs(dx) >= 50) {
+      setViewerIndex((i) =>
+        dx < 0 ? Math.min(i + 1, viewerImages.length - 1) : Math.max(i - 1, 0)
+      );
+    }
+  };
+
   // 이동 모달 - 삼점 메뉴의 "이동"을 누르면 최상위 홈부터 폴더를 탐색하며
   // 옮길 위치를 고를 수 있다. 폴더 자기 자신이나 그 하위 폴더로는 옮길 수 없다.
   const [moveModalOpen, setMoveModalOpen] = useState(false);
@@ -1572,7 +1612,7 @@ export default function Alloy() {
                     display: "flex",
                     alignItems: "center",
                     gap: 12,
-                    padding: "12px 18px",
+                    padding: "18px 18px",
                     marginBottom: 8,
                     borderRadius: 10,
                     background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
@@ -1636,6 +1676,10 @@ export default function Alloy() {
                           key={img.id}
                           data-drag-type="file"
                           data-drag-id={img.id}
+                          onClick={() => {
+                            if (justDraggedRef.current) return;
+                            if (img.url) openViewer(visibleImages, visibleImages.findIndex((x) => x.id === img.id));
+                          }}
                           onPointerDown={rowPointerDown("file", img.id)}
                           onPointerMove={rowPointerMove}
                           onPointerUp={rowPointerUp}
@@ -1652,6 +1696,7 @@ export default function Alloy() {
                                 : (isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)")
                             }`,
                             background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                            cursor: img.url ? "pointer" : "default",
                             touchAction: "manipulation",
                             transition: "border-color 0.15s ease",
                           }}
@@ -1668,31 +1713,22 @@ export default function Alloy() {
                               {getFileIcon(img.mimeType)}
                             </div>
                           )}
-                          {/* 이미지 위 삼점 메뉴 (어두운 스크림 알약 위에) */}
+                          {/* 이미지 제목(좌) + 삼점 메뉴(우) - 하단 제목열에 나란히 정렬 */}
                           <div
-                            style={{
-                              position: "absolute",
-                              top: 4,
-                              right: 4,
-                              borderRadius: 8,
-                              background: "rgba(0,0,0,0.35)",
-                              backdropFilter: "blur(6px)",
-                              WebkitBackdropFilter: "blur(6px)",
-                              color: "#FFFFFF",
-                            }}
+                            style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 4px 6px 8px" }}
+                            onClick={(e) => e.stopPropagation()}
                           >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              {renderEditableName("file", img, {
+                                color: isLight ? "#14161A" : "#FFFFFF",
+                                fontSize: 12,
+                                fontWeight: 500,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              })}
+                            </div>
                             {renderItemMenu("file", img)}
-                          </div>
-                          {/* 이미지 제목 - 눌러서 인라인 수정 가능 */}
-                          <div style={{ padding: "6px 8px" }} onClick={(e) => e.stopPropagation()}>
-                            {renderEditableName("file", img, {
-                              color: isLight ? "#14161A" : "#FFFFFF",
-                              fontSize: 12,
-                              fontWeight: 500,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            })}
                           </div>
                         </div>
                       ))}
@@ -2612,6 +2648,81 @@ export default function Alloy() {
               />
             </div>
           </div>
+        </>
+      )}
+
+      {/* 이미지/움짤 전체화면 뷰어 - 배경 페이드로 열리고, 좌우 드래그(스와이프)로
+          같은 목록 안의 이전/다음 사진으로 넘어간다. 우측 상단 리퀴드 글래스 X로 닫는다. */}
+      {viewerOpen && (
+        <>
+          <div
+            onPointerDown={viewerPointerDown}
+            onPointerUp={viewerPointerUp}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.92)",
+              zIndex: 49,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              opacity: viewerVisible ? 1 : 0,
+              transition: "opacity 0.25s ease",
+              touchAction: "none",
+            }}
+          >
+            {viewerImages[viewerIndex] && viewerImages[viewerIndex].url && (
+              <img
+                key={viewerImages[viewerIndex].id}
+                src={viewerImages[viewerIndex].url}
+                alt={viewerImages[viewerIndex].name}
+                draggable={false}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  maxWidth: "92vw",
+                  maxHeight: "85vh",
+                  objectFit: "contain",
+                  borderRadius: 12,
+                }}
+              />
+            )}
+          </div>
+          <button
+            onClick={closeViewer}
+            onMouseDown={pressDown("scale(0.9)")}
+            onMouseUp={pressUp("scale(1)")}
+            aria-label="닫기"
+            style={{
+              position: "fixed",
+              top: 20,
+              right: 20,
+              zIndex: 50,
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              border: "1px solid rgba(255,255,255,0.18)",
+              background: "rgba(255,255,255,0.12)",
+              backdropFilter: "blur(20px) saturate(180%)",
+              WebkitBackdropFilter: "blur(20px) saturate(180%)",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.15)",
+              color: "#FFFFFF",
+              cursor: "pointer",
+              outline: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              opacity: viewerVisible ? 1 : 0,
+              transition: "opacity 0.25s ease, transform 0.15s ease",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" />
+            </svg>
+          </button>
         </>
       )}
     </div>
