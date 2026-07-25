@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
@@ -321,6 +321,13 @@ export default function Alloy() {
     if (ext === "txt") return "doc";
     return null;
   };
+  // 파일 이름에서 확장자를 떼어낸다 - 제목(item.name)에는 확장자를 담지 않고, 확장자는
+  // 항목의 ext 필드에 따로 저장해서 정보 모달의 "확장자" 행 등에서만 쓴다.
+  const splitNameExt = (fullName) => {
+    const idx = fullName.lastIndexOf(".");
+    if (idx <= 0) return { base: fullName, ext: "" };
+    return { base: fullName.slice(0, idx), ext: fullName.slice(idx + 1).toLowerCase() };
+  };
 
   const [uploadButtonHovered, setUploadButtonHovered] = useState(false);
   const [trashCloseButtonHovered, setTrashCloseButtonHovered] = useState(false);
@@ -377,9 +384,13 @@ export default function Alloy() {
 
   // 저장 공간 - 지금은 10GB로 고정. 사용량은 files + 휴지통에 남아있는 파일 크기 합.
   const STORAGE_MAX_BYTES = 10 * 1024 * 1024 * 1024;
-  const usedStorageBytes =
+  // 텍스트 에디터에서 타이핑할 때마다 앱 전체가 리렌더되는데, 이 계산들이 매번 새로
+  // 돌면(특히 allTags/tagTargets는 전체 폴더·파일을 훑는다) 입력이 밀리면서 스페이스 등
+  // 키 입력이 여러 번 뭉쳐 들어가는 것처럼 보일 수 있어 실제 값이 바뀔 때만 다시 계산한다.
+  const usedStorageBytes = useMemo(() =>
     files.reduce((s, f) => s + (f.size || 0), 0) +
-    trash.reduce((s, t) => s + (t.files || []).reduce((s2, f) => s2 + (f.size || 0), 0), 0);
+    trash.reduce((s, t) => s + (t.files || []).reduce((s2, f) => s2 + (f.size || 0), 0), 0),
+  [files, trash]);
   const formatGBShort = (bytes) => {
     const gb = bytes / (1024 * 1024 * 1024);
     return `${gb % 1 === 0 ? gb : gb.toFixed(1)}GB`;
@@ -598,15 +609,16 @@ export default function Alloy() {
     const siblingNames = files
       .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
       .map((f) => f.name);
-    let name = "새 문서.txt";
+    let name = "새 문서";
     let n = 1;
     while (siblingNames.includes(name)) {
-      name = `새 문서(${n}).txt`;
+      name = `새 문서(${n})`;
       n++;
     }
     const newFile = {
       id: now,
       name,
+      ext: "txt",
       size: 0,
       mimeType: "text/plain",
       kind: "text",
@@ -829,7 +841,7 @@ export default function Alloy() {
   const [convertDrafts, setConvertDrafts] = useState({}); // { [id]: 미리보기용 새 이름 }
   const [convertInput, setConvertInput] = useState("");
 
-  const convertTargets =
+  const convertTargets = useMemo(() =>
     currentPath.length === 0
       ? vaults.map((v) => ({ id: v.id, name: v.name, type: "vault" }))
       : [
@@ -839,7 +851,8 @@ export default function Alloy() {
           ...files
             .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
             .map((f) => ({ id: f.id, name: f.name, type: "file" })),
-        ];
+        ],
+  [currentPath, vaults, folders, files]);
 
   const openConvertModal = () => {
     setConvertChecked({});
@@ -965,13 +978,13 @@ export default function Alloy() {
   // 확인을 누르면 여러 태그가 한꺼번에 들어온다(OR 조건 - 그 중 하나라도 달려있으면 보임).
   const [tagScreenTags, setTagScreenTags] = useState([]);
 
-  const tagTargets = convertTargets.map((t) => {
+  const tagTargets = useMemo(() => convertTargets.map((t) => {
     const source =
       t.type === "vault" ? vaults.find((v) => v.id === t.id) :
       t.type === "folder" ? folders.find((f) => f.id === t.id) :
       files.find((f) => f.id === t.id);
     return { ...t, tags: (source && source.tags) || [] };
-  });
+  }), [convertTargets, vaults, folders, files]);
 
   const openTagModal = () => {
     setTagChecked({});
@@ -1048,10 +1061,10 @@ export default function Alloy() {
   // 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류" / 검색창에 "#" 입력, 이 세 가지 진입점
   // 모두 앱에서 실제로 쓰이고 있는 모든 태그를 3열 그리드로 보여준다. 여기서 하나를 고르면
   // "분류" 화면(위의 taggedFolders/taggedImages/taggedDocs)이 그 태그로 열린다.
-  const allTags = Array.from(new Set([
+  const allTags = useMemo(() => Array.from(new Set([
     ...folders.flatMap((f) => f.tags || []),
     ...files.flatMap((f) => f.tags || []),
-  ])).sort();
+  ])).sort(), [folders, files]);
   const [tagPaletteOpen, setTagPaletteOpen] = useState(false);
   const [tagPaletteVisible, setTagPaletteVisible] = useState(false);
   const openTagPalette = () => {
@@ -1285,7 +1298,8 @@ export default function Alloy() {
             url = presigned.url;
           }
           const now = Date.now();
-          return { id, name: file.name, size: file.size, mimeType: file.type, kind, r2Key, url, path: currentPath, createdAt: now, updatedAt: now };
+          const { base, ext } = splitNameExt(file.name);
+          return { id, name: base, ext, size: file.size, mimeType: file.type, kind, r2Key, url, path: currentPath, createdAt: now, updatedAt: now };
         } catch (err) {
           console.error("파일 업로드 실패:", file.name, err);
           return null;
@@ -1568,7 +1582,7 @@ export default function Alloy() {
 
           {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션.
               하단 바가 중앙 정렬이라 marginRight로 검색 버튼과 같은 x좌표까지 밀어 넣는다. */}
-          {active === 0 && !tagScreenTags.length && (
+          {active === 0 && !tagScreenTags.length && !textEditorFile && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
               <button
                 ref={uploadButtonRef}
@@ -1764,8 +1778,10 @@ export default function Alloy() {
 
         {/* 홈 탭 콘텐츠 - tagScreenTags가 설정돼 있으면(태그 팔레트/분류 모달에서 고른 상태) 아래
             IIFE 안에서 "분류" 화면을 최우선으로 렌더링한다(renderRow 등을 그대로 재사용하기
-            위해 이 블록 안에 둔다). */}
-        {active === 0 && (
+            위해 이 블록 안에 둔다). 텍스트 에디터가 열려 있는 동안은 전체화면 오버레이에
+            완전히 가려지는 데다, 매 타이핑마다 이 무거운 목록 전체가 다시 계산/렌더되면서
+            입력이 밀리는 원인이 되므로 아예 렌더링을 건너뛴다. */}
+        {active === 0 && !textEditorFile && (
           <>
             {/* 경로 표기 및 정렬/보기 방식 아이콘 영역 - "분류" 화면에서는 마법사 버튼,
                 경로 표시 텍스트, 구분선 없이 곧바로 목록만 보여준다. */}
@@ -3437,8 +3453,11 @@ export default function Alloy() {
                 { label: "수정 일자", value: infoItem ? formatDate(infoItem.updatedAt) : "-" },
                 { label: "크기", value: infoItem ? formatFileSize(infoItemSize) : "-" },
                 // 확장자 - Vault/폴더는 확장자 개념이 없으므로 파일(이미지/움짤/텍스트 등)일 때만 보여준다.
+                // 이름(item.name)에는 더 이상 확장자를 담지 않으므로 ext 필드를 우선 쓰고,
+                // ext가 없는 예전 데이터는 이름에서 파싱해 보여준다.
                 ...(infoTarget && infoTarget.type === "file"
                   ? [{ label: "확장자", value: (() => {
+                      if (infoItem?.ext) return `.${infoItem.ext}`;
                       const parts = (infoItem?.name || "").split(".");
                       return parts.length > 1 ? `.${parts.pop().toLowerCase()}` : "-";
                     })() }]
