@@ -1055,7 +1055,9 @@ export default function Alloy() {
   const taggedFolders = tagScreenTags.length ? folders.filter((f) => (f.tags || []).some((t) => tagScreenTags.includes(t))) : [];
   const taggedFiles = tagScreenTags.length ? files.filter((f) => (f.tags || []).some((t) => tagScreenTags.includes(t))) : [];
   const taggedImages = taggedFiles.filter((f) => f.kind === "image");
-  const taggedDocs = taggedFiles.filter((f) => f.kind === "doc" || f.kind === "text");
+  // 이미지가 아닌 파일은 모두 문서 행으로 보여준다("doc"/"text" 외의 kind를 가진(레거시 등) 파일이
+  // 조용히 목록에서 누락되는 일이 없도록 - 변환/태그 모달의 대상 목록과 항상 일치해야 한다).
+  const taggedDocs = taggedFiles.filter((f) => f.kind !== "image");
   const closeTagScreen = () => setTagScreenTags([]);
 
   // 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류" / 검색창에 "#" 입력, 이 세 가지 진입점
@@ -2706,7 +2708,10 @@ export default function Alloy() {
                   f.path.length === currentPath.length &&
                   f.path.every((p, i) => p === currentPath[i])
               );
-              const visibleDocs = sortItems(filesHere.filter((f) => f.kind === "doc" || f.kind === "text"));
+              // 이미지가 아닌 파일은 모두 문서 행으로 보여준다("doc"/"text" 외의 kind를 가진(레거시 등)
+              // 파일이 폴더 목록에서 조용히 누락되는 일이 없도록 - 변환/태그 모달의 대상 목록(kind로
+              // 거르지 않음)과 항상 일치해야 한다.
+              const visibleDocs = sortItems(filesHere.filter((f) => f.kind !== "image"));
               const visibleImages = sortItems(filesHere.filter((f) => f.kind === "image"));
 
               if (visibleFolders.length === 0 && visibleDocs.length === 0 && visibleImages.length === 0) {
