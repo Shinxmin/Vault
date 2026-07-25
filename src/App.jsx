@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기
 const APP_VERSION = "0.2.2";
@@ -111,6 +112,72 @@ export default function Alloy() {
   const [vaults, setVaults] = useState([]);
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
+
+  // R2 presigned URL 발급 - 실제 파일 업로드/다운로드/삭제는 Supabase Edge Function이
+  // 발급한 presigned URL로 브라우저가 R2에 직접 요청한다(R2 시크릿 키는 서버에만 보관됨).
+  const r2Presign = async (payload) => {
+    const { data, error } = await supabase.functions.invoke("r2-presign", { body: payload });
+    if (error) throw error;
+    if (data && data.error) throw new Error(data.error);
+    return data;
+  };
+
+  // Vaulty 상태(Vault/폴더/파일 목록) 영구 저장 - 로그인이 없는 개인용 앱이라
+  // Supabase 단일 행(id='default')에 전체 상태를 그대로 저장한다.
+  // 파일의 실제 바이트는 R2에 있고 files[].r2Key로 R2 객체를 가리킨다.
+  const [dataLoaded, setDataLoaded] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("vaulty_state")
+        .select("vaults, folders, files")
+        .eq("id", "default")
+        .maybeSingle();
+      if (error) {
+        console.error("Vaulty 상태를 불러오지 못했습니다:", error);
+      } else if (data) {
+        const loadedVaults = data.vaults || [];
+        const loadedFolders = data.folders || [];
+        const loadedFiles = data.files || [];
+        setVaults(loadedVaults);
+        setFolders(loadedFolders);
+        // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
+        // 불러올 때마다 r2Key 기준으로 새로 발급받는다.
+        const imageKeys = loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
+        if (imageKeys.length) {
+          try {
+            const { urls } = await r2Presign({ action: "get-batch", keys: imageKeys });
+            setFiles(loadedFiles.map((f) => (f.kind === "image" && f.r2Key ? { ...f, url: urls[f.r2Key] || null } : f)));
+          } catch (e) {
+            console.error("이미지 URL 발급 실패:", e);
+            setFiles(loadedFiles);
+          }
+        } else {
+          setFiles(loadedFiles);
+        }
+      }
+      setDataLoaded(true);
+    })();
+  }, []);
+
+  // 초기 로드가 끝난 뒤부터 vaults/folders/files가 바뀔 때마다 살짝 지연을 두고
+  // (짧은 시간 내 연속 변경을 한 번으로 묶어) Supabase에 전체 상태를 저장한다.
+  const saveTimerRef = useRef(null);
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      // url은 만료되는 presigned URL이라 저장하지 않고 r2Key만 저장한다.
+      const filesToSave = files.map(({ url, ...rest }) => rest);
+      supabase
+        .from("vaulty_state")
+        .upsert({ id: "default", vaults, folders, files: filesToSave, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.error("Vaulty 상태 저장 실패:", error);
+        });
+    }, 800);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [vaults, folders, files, dataLoaded]);
 
   // Vault 생성 모달
   const [vaultModalOpen, setVaultModalOpen] = useState(false);
@@ -239,8 +306,12 @@ export default function Alloy() {
   const deleteVault = (vaultId) => {
     const vault = vaults.find((v) => v.id === vaultId);
     if (vault) {
+      const filesToRemove = files.filter((f) => f.path[0] === vault.name && f.r2Key);
       setFolders((prev) => prev.filter((f) => f.path[0] !== vault.name));
       setFiles((prev) => prev.filter((f) => f.path[0] !== vault.name));
+      filesToRemove.forEach((f) => {
+        r2Presign({ action: "delete", key: f.r2Key }).catch((e) => console.error("R2 삭제 실패:", e));
+      });
     }
     setVaults((prev) => prev.filter((v) => v.id !== vaultId));
     closeItemMenu();
@@ -517,32 +588,53 @@ export default function Alloy() {
     closeMoveModal();
   };
 
-  // 실제 갤러리/파일 선택 다이얼로그(input[type=file])를 통해 고른 항목을
-  // 현재 위치(currentPath)에 저장 - 아직 Cloudflare R2 연동 전이라 로컬 상태로만 보관.
-  // 지원 형식(JPG/JPEG/PNG/GIF/APNG/TXT)만 받아들이고, 이미지는 미리보기용 object URL 을 만든다.
-  const handleFilesPicked = (e) => {
+  // 실제 갤러리/파일 선택 다이얼로그(input[type=file])를 통해 고른 항목을 R2에 업로드하고
+  // 성공한 것만 현재 위치(currentPath)에 추가한다. 지원 형식(JPG/JPEG/PNG/GIF/APNG/TXT)만 받는다.
+  // 업로드는 이 함수가 아니라 브라우저가 presigned URL로 R2에 직접 PUT한다.
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const handleFilesPicked = async (e) => {
     const selected = Array.from(e.target.files || []);
-    const accepted = [];
-    for (const f of selected) {
-      const kind = getKindFromName(f.name);
-      if (!kind) continue; // 미지원 형식은 건너뛴다
-      accepted.push({
-        id: Date.now() + Math.random(),
-        name: f.name,
-        size: f.size,
-        mimeType: f.type,
-        kind,
-        url: kind === "image" ? URL.createObjectURL(f) : null,
-        path: currentPath,
-      });
-    }
-    if (accepted.length) setFiles((prev) => [...prev, ...accepted]);
     e.target.value = "";
+    const toUpload = selected
+      .map((f) => ({ file: f, kind: getKindFromName(f.name) }))
+      .filter((x) => x.kind); // 미지원 형식은 건너뛴다
+
+    if (!toUpload.length) return;
+
+    setUploadingCount((c) => c + toUpload.length);
+    const results = await Promise.all(
+      toUpload.map(async ({ file, kind }) => {
+        const id = Date.now() + Math.random();
+        const r2Key = `${id}-${encodeURIComponent(file.name)}`;
+        try {
+          const { url: putUrl } = await r2Presign({ action: "put", key: r2Key, contentType: file.type });
+          const putResp = await fetch(putUrl, { method: "PUT", body: file, headers: { "content-type": file.type } });
+          if (!putResp.ok) throw new Error(`업로드 실패 (${putResp.status})`);
+          let url = null;
+          if (kind === "image") {
+            const presigned = await r2Presign({ action: "get", key: r2Key });
+            url = presigned.url;
+          }
+          return { id, name: file.name, size: file.size, mimeType: file.type, kind, r2Key, url, path: currentPath };
+        } catch (err) {
+          console.error("파일 업로드 실패:", file.name, err);
+          return null;
+        } finally {
+          setUploadingCount((c) => c - 1);
+        }
+      })
+    );
+    const accepted = results.filter(Boolean);
+    if (accepted.length) setFiles((prev) => [...prev, ...accepted]);
   };
 
   const deleteFile = (fileId) => {
+    const target = files.find((f) => f.id === fileId);
     setFiles((prev) => prev.filter((f) => f.id !== fileId));
     closeItemMenu();
+    if (target && target.r2Key) {
+      r2Presign({ action: "delete", key: target.r2Key }).catch((e) => console.error("R2 삭제 실패:", e));
+    }
   };
 
   const formatFileSize = (bytes) => {
@@ -653,6 +745,10 @@ export default function Alloy() {
           min-height: 100%;
           background: ${isLight ? "#FFFFFF" : "#141413"};
         }
+        @keyframes vaulty-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
       `}</style>
 
       {/* 전체 화면을 항상 덮는 고정 배경 레이어 */}
@@ -739,22 +835,37 @@ export default function Alloy() {
                 }}
                 aria-label="추가하기"
               >
-                <svg
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  style={{
-                    transition: "transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
-                    transform: uploadMenuOpen ? "rotate(45deg)" : "rotate(0deg)",
-                  }}
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
+                {uploadingCount > 0 ? (
+                  <svg
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    style={{ animation: "vaulty-spin 0.8s linear infinite" }}
+                  >
+                    <path d="M12 3a9 9 0 1 0 9 9" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    style={{
+                      transition: "transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
+                      transform: uploadMenuOpen ? "rotate(45deg)" : "rotate(0deg)",
+                    }}
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                )}
               </button>
 
               {/* 숨겨진 파일 입력 - 갤러리/파일은 이미지·움짤만, 문서는 텍스트(TXT)만 받는다 */}
