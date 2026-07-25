@@ -277,6 +277,7 @@ export default function Alloy() {
   };
 
   const [uploadButtonHovered, setUploadButtonHovered] = useState(false);
+  const [trashCloseButtonHovered, setTrashCloseButtonHovered] = useState(false);
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [uploadMenuVisible, setUploadMenuVisible] = useState(false);
   // 업로드 메뉴 드롭다운 위치 - backdropFilter가 걸린 상단 헤더 안에 있으면 position:fixed
@@ -315,6 +316,23 @@ export default function Alloy() {
   const formatGBShort = (bytes) => {
     const gb = bytes / (1024 * 1024 * 1024);
     return `${gb % 1 === 0 ? gb : gb.toFixed(1)}GB`;
+  };
+
+  // 하단 탭바 바로 위에 뜨는 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다"처럼
+  // 짧은 안내 문구를 2초간 페이드 인/아웃으로 보여주고 사라진다.
+  const [toastMessage, setToastMessage] = useState(null);
+  const [toastVisible, setToastVisible] = useState(false);
+  const toastShowTimerRef = useRef(null);
+  const toastHideTimerRef = useRef(null);
+  const showToast = (message) => {
+    if (toastShowTimerRef.current) clearTimeout(toastShowTimerRef.current);
+    if (toastHideTimerRef.current) clearTimeout(toastHideTimerRef.current);
+    setToastMessage(message);
+    requestAnimationFrame(() => setToastVisible(true));
+    toastHideTimerRef.current = setTimeout(() => {
+      setToastVisible(false);
+      toastShowTimerRef.current = setTimeout(() => setToastMessage(null), 300);
+    }, 1700);
   };
 
   const toggleSearch = () => {
@@ -441,6 +459,7 @@ export default function Alloy() {
     setFolders((prev) => prev.filter((f) => f.path[0] !== vault.name));
     setFiles((prev) => prev.filter((f) => f.path[0] !== vault.name));
     closeItemMenu();
+    showToast("데이터를 삭제했습니다");
   };
 
   // 홈에서는 + 가 Vault 생성 모달을, Vault/폴더 안에서는 업로드 메뉴를 연다.
@@ -500,6 +519,7 @@ export default function Alloy() {
     setFolders((prev) => prev.filter((f) => f.id !== folder.id && !pathStartsWith(f.path, folder.path)));
     setFiles((prev) => prev.filter((f) => !pathStartsWith(f.path, folder.path)));
     closeItemMenu();
+    showToast("데이터를 삭제했습니다");
   };
 
   // 정렬 - 단일 "ABC" 버튼 하나로 가나다순 -> 숫자순 -> 알파벳순을 순환한다.
@@ -1006,6 +1026,7 @@ export default function Alloy() {
     }]);
     setFiles((prev) => prev.filter((f) => f.id !== fileId));
     closeItemMenu();
+    showToast("데이터를 삭제했습니다");
   };
 
   // 휴지통 복구 - 원래 있던 자리(vaults/folders/files)로 그대로 되돌려 놓는다.
@@ -1017,6 +1038,7 @@ export default function Alloy() {
     if (foldersToRestore.length) setFolders((prev) => [...prev, ...foldersToRestore]);
     if (entry.files && entry.files.length) setFiles((prev) => [...prev, ...entry.files]);
     setTrash((prev) => prev.filter((t) => t.id !== trashId));
+    showToast("데이터를 복구했습니다");
   };
 
   // 휴지통에서 영구 삭제 - 확인 절차 없이 바로 지워지고, R2에 있던 실제 파일도 함께 삭제한다.
@@ -1194,35 +1216,6 @@ export default function Alloy() {
         {/* 상단 헤더 */}
         <div style={stickyHeaderStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {active === 2 && trashScreenOpen && (
-              <button
-                onClick={() => setTrashScreenOpen(false)}
-                onMouseDown={pressDown("scale(0.85)")}
-                onMouseUp={pressUp("scale(1)")}
-                aria-label="뒤로가기"
-                style={{
-                  width: 30,
-                  height: 30,
-                  flexShrink: 0,
-                  borderRadius: 7,
-                  border: "none",
-                  background: "transparent",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  cursor: "pointer",
-                  outline: "none",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m15 6-6 6 6 6" />
-                </svg>
-              </button>
-            )}
             <h1
               onClick={() => {
                 if (active === 0) setCurrentPath([]);
@@ -1240,6 +1233,54 @@ export default function Alloy() {
               {active === 2 && trashScreenOpen ? "휴지통" : TAB_TITLES[active]}
             </h1>
           </div>
+
+          {/* 휴지통 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게 맞춘
+              리퀴드 글래스 원형 버튼. 우측 상단에 뜬다. */}
+          {active === 2 && trashScreenOpen && (
+            <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
+            <button
+              onClick={() => setTrashScreenOpen(false)}
+              onMouseEnter={() => setTrashCloseButtonHovered(true)}
+              onMouseLeave={(e) => {
+                setTrashCloseButtonHovered(false);
+                e.currentTarget.style.transform = "scale(1)";
+              }}
+              onMouseDown={pressDown("scale(0.9)")}
+              onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
+              onTouchStart={pressDown("scale(0.9)")}
+              onTouchEnd={pressUp("scale(1)")}
+              style={{
+                width: BAR_HEIGHT,
+                height: BAR_HEIGHT,
+                flexShrink: 0,
+                borderRadius: "50%",
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                background: trashCloseButtonHovered
+                  ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                  : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                backdropFilter: "blur(20px) saturate(180%)",
+                WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                boxShadow: trashCloseButtonHovered
+                  ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                  : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                color: isLight ? "#14161A" : "#FFFFFF",
+                outline: "none",
+                transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
+              }}
+              aria-label="닫기"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="6" y1="6" x2="18" y2="18" />
+                <line x1="18" y1="6" x2="6" y2="18" />
+              </svg>
+            </button>
+            </div>
+          )}
 
           {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션.
               하단 바가 중앙 정렬이라 marginRight로 검색 버튼과 같은 x좌표까지 밀어 넣는다. */}
@@ -2238,18 +2279,18 @@ export default function Alloy() {
           </>
         )}
 
-        {/* 설정 탭 콘텐츠 - "일반" 섹션(테마/저장 공간/휴지통) + 휴지통 화면 */}
+        {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통 화면 */}
         {active === 2 && !trashScreenOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div
               style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                fontSize: 20,
+                fontWeight: 800,
+                color: isLight ? "#14161A" : "#FFFFFF",
                 padding: "0 4px",
               }}
             >
-              일반
+              설정
             </div>
             <div
               style={{
@@ -3119,6 +3160,36 @@ export default function Alloy() {
             </button>
           </div>
         </>
+      )}
+
+      {/* 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다" 같은 짧은 안내를
+          하단 탭바 바로 위에 2초간 페이드 인/아웃으로 보여준다. */}
+      {toastMessage && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 24 + BAR_HEIGHT + 14,
+            left: "50%",
+            transform: toastVisible ? "translate(-50%, 0)" : "translate(-50%, 8px)",
+            opacity: toastVisible ? 1 : 0,
+            zIndex: 50,
+            padding: "12px 22px",
+            borderRadius: 999,
+            background: isLight ? "rgba(255,255,255,0.85)" : "rgba(30,29,28,0.85)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            WebkitBackdropFilter: "blur(20px) saturate(180%)",
+            border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+            color: isLight ? "#14161A" : "#FFFFFF",
+            fontSize: 14,
+            fontWeight: 500,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            transition: "opacity 0.3s ease, transform 0.3s ease",
+          }}
+        >
+          {toastMessage}
+        </div>
       )}
 
       {/* 하단 컨트롤 영역 - 탭바 + 검색 버튼을 화면 중앙에 정렬한다.
