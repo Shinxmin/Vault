@@ -2,7 +2,7 @@
 // R2 접근 키는 Supabase 프로젝트의 서버 전용 시크릿으로만 보관되며 이 함수 밖으로 노출되지 않는다.
 // 업로드/다운로드는 이 함수가 발급한 presigned URL로 브라우저가 R2에 직접 PUT/GET하고,
 // 삭제만 이 함수가 자신의 자격증명으로 직접 수행한다(presigned DELETE보다 왕복이 적다).
-import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
+import { AwsClient } from "npm:aws4fetch@1.0.20";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
