@@ -895,8 +895,10 @@ export default function Alloy() {
   const [tagChecked, setTagChecked] = useState({}); // { [id]: true }
   const [tagDrafts, setTagDrafts] = useState({}); // { [id]: 미리보기용 태그 배열 }
   const [tagInput, setTagInput] = useState("");
-  // 태그가 달린 항목을 모아 보여주는 화면에서 지금 보고 있는 태그. null이면 닫힌 상태.
-  const [tagScreenTag, setTagScreenTag] = useState(null);
+  // 태그가 달린 항목을 모아 보여주는 "분류" 화면에서 지금 보고 있는 태그(들). 빈 배열이면 닫힌 상태.
+  // 태그 팔레트에서 하나를 클릭하면 [tag] 하나만, 마법사의 분류 모달에서 여러 개를 체크해
+  // 확인을 누르면 여러 태그가 한꺼번에 들어온다(OR 조건 - 그 중 하나라도 달려있으면 보임).
+  const [tagScreenTags, setTagScreenTags] = useState([]);
 
   const tagTargets = convertTargets.map((t) => {
     const source =
@@ -970,13 +972,13 @@ export default function Alloy() {
     closeTagModal();
   };
 
-  // "분류" 화면(구 태그 화면)에서 보여줄, 해당 태그가 달린 폴더/이미지/문서를 종류별로 나눈 목록.
-  // 폴더가 항상 맨 위에 리스트로, 그 아래에 이미지/움짤이 갤러리(메이슨리)로 온다.
-  const taggedFolders = tagScreenTag ? folders.filter((f) => (f.tags || []).includes(tagScreenTag)) : [];
-  const taggedFiles = tagScreenTag ? files.filter((f) => (f.tags || []).includes(tagScreenTag)) : [];
+  // "분류" 화면(구 태그 화면)에서 보여줄, 선택된 태그들 중 하나라도 달린 폴더/이미지/문서를
+  // 종류별로 나눈 목록. 폴더가 항상 맨 위에 리스트로, 그 아래에 이미지/움짤이 갤러리(메이슨리)로 온다.
+  const taggedFolders = tagScreenTags.length ? folders.filter((f) => (f.tags || []).some((t) => tagScreenTags.includes(t))) : [];
+  const taggedFiles = tagScreenTags.length ? files.filter((f) => (f.tags || []).some((t) => tagScreenTags.includes(t))) : [];
   const taggedImages = taggedFiles.filter((f) => f.kind === "image");
   const taggedDocs = taggedFiles.filter((f) => f.kind === "doc");
-  const closeTagScreen = () => setTagScreenTag(null);
+  const closeTagScreen = () => setTagScreenTags([]);
 
   // 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류" / 검색창에 "#" 입력, 이 세 가지 진입점
   // 모두 앱에서 실제로 쓰이고 있는 모든 태그를 3열 그리드로 보여준다. 여기서 하나를 고르면
@@ -1007,9 +1009,33 @@ export default function Alloy() {
     setTimeout(() => setTagPaletteOpen(false), 200);
   };
   const openTagScreen = (tag) => {
-    setTagScreenTag(tag);
+    setTagScreenTags([tag]);
     closeTagPalette();
     if (searchOpen) toggleSearch();
+  };
+
+  // "분류" 모달 - 마법사 메뉴의 "분류"를 누르면 뜬다(태그 팔레트와는 별개). 존재하는 모든
+  // 태그를 2열 그리드로 보여주고, 여러 개를 체크한 뒤 확인을 누르면 그 태그들이 하나라도
+  // 달린 항목을 전부 모아 "분류" 화면을 연다.
+  const [classifyModalOpen, setClassifyModalOpen] = useState(false);
+  const [classifyModalVisible, setClassifyModalVisible] = useState(false);
+  const [classifyChecked, setClassifyChecked] = useState({}); // { [tag]: true }
+  const openClassifyModal = () => {
+    setClassifyChecked({});
+    setClassifyModalOpen(true);
+    requestAnimationFrame(() => setClassifyModalVisible(true));
+  };
+  const closeClassifyModal = () => {
+    setClassifyModalVisible(false);
+    setTimeout(() => setClassifyModalOpen(false), 200);
+  };
+  const toggleClassifyChecked = (tag) => {
+    setClassifyChecked((prev) => ({ ...prev, [tag]: !prev[tag] }));
+  };
+  const handleClassifyConfirm = () => {
+    const checked = allTags.filter((t) => classifyChecked[t]);
+    closeClassifyModal();
+    if (checked.length) setTagScreenTags(checked);
   };
 
   // 이미지/움짤 전체화면 뷰어 - 열 당시의 이미지 배열을 그대로 들고 있다가
@@ -1423,13 +1449,13 @@ export default function Alloy() {
                 cursor: active === 0 ? "pointer" : "default",
               }}
             >
-              {tagScreenTag ? "분류" : active === 2 && trashScreenOpen ? "휴지통" : active === 2 && subscriptionScreenOpen ? "구독" : TAB_TITLES[active]}
+              {tagScreenTags.length ? "분류" : active === 2 && trashScreenOpen ? "휴지통" : active === 2 && subscriptionScreenOpen ? "구독" : TAB_TITLES[active]}
             </h1>
           </div>
 
           {/* 휴지통/구독/태그 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게
               맞춘 리퀴드 글래스 원형 버튼. 우측 상단에 뜬다. */}
-          {(tagScreenTag || (active === 2 && (trashScreenOpen || subscriptionScreenOpen))) && (
+          {(tagScreenTags.length > 0 || (active === 2 && (trashScreenOpen || subscriptionScreenOpen))) && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
             <button
               onClick={() => { setTrashScreenOpen(false); setSubscriptionScreenOpen(false); closeTagScreen(); }}
@@ -1477,7 +1503,7 @@ export default function Alloy() {
 
           {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션.
               하단 바가 중앙 정렬이라 marginRight로 검색 버튼과 같은 x좌표까지 밀어 넣는다. */}
-          {active === 0 && !tagScreenTag && (
+          {active === 0 && !tagScreenTags.length && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
               <button
                 ref={uploadButtonRef}
@@ -1645,12 +1671,14 @@ export default function Alloy() {
           )}
         </div>
 
-        {/* 홈 탭 콘텐츠 - tagScreenTag가 설정돼 있으면(태그 팔레트에서 하나를 고른 상태) 아래
+        {/* 홈 탭 콘텐츠 - tagScreenTags가 설정돼 있으면(태그 팔레트/분류 모달에서 고른 상태) 아래
             IIFE 안에서 "분류" 화면을 최우선으로 렌더링한다(renderRow 등을 그대로 재사용하기
             위해 이 블록 안에 둔다). */}
         {active === 0 && (
           <>
-            {/* 경로 표기 및 정렬/보기 방식 아이콘 영역 */}
+            {/* 경로 표기 및 정렬/보기 방식 아이콘 영역 - "분류" 화면에서는 마법사 버튼,
+                경로 표시 텍스트, 구분선 없이 곧바로 목록만 보여준다. */}
+            {!tagScreenTags.length && (
             <div
               style={{
                 display: "flex",
@@ -1861,7 +1889,7 @@ export default function Alloy() {
                       <button
                         onClick={() => {
                           closeWizardMenu();
-                          openTagPalette();
+                          openClassifyModal();
                         }}
                         onMouseDown={pressDown("scale(0.97)")}
                         onMouseUp={pressUp("scale(1)")}
@@ -1889,6 +1917,7 @@ export default function Alloy() {
                 )}
               </div>
             </div>
+            )}
 
             {/* 구분선 아래 드라이브 공간 - 홈에서는 Vault 카드, Vault/폴더 안에서는
                 폴더(행) + 문서(행) + 이미지(비율 콜라주)를 함께 보여준다. */}
@@ -2331,10 +2360,10 @@ export default function Alloy() {
                 );
               };
 
-              // ── "분류" 화면 - 태그 팔레트에서 태그를 고르면(tagScreenTag) 지금 어느 위치에
+              // ── "분류" 화면 - 태그 팔레트/분류 모달에서 태그를 고르면(tagScreenTags) 지금 어느 위치에
               //     있었든 상관없이 그 태그가 달린 폴더가 먼저 리스트로, 그 아래 이미지/움짤이
               //     갤러리로 온다. 폴더/이미지 모두 평소와 같은 삼점 메뉴 등 전체 레이아웃을 그대로 쓴다. ──
-              if (tagScreenTag) {
+              if (tagScreenTags.length) {
                 if (taggedFolders.length === 0 && taggedDocs.length === 0 && taggedImages.length === 0) {
                   return (
                     <div
@@ -2616,7 +2645,7 @@ export default function Alloy() {
         )}
 
         {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통/구독 화면 */}
-        {active === 2 && !trashScreenOpen && !subscriptionScreenOpen && !tagScreenTag && (
+        {active === 2 && !trashScreenOpen && !subscriptionScreenOpen && !tagScreenTags.length && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div
               style={{
@@ -2881,7 +2910,7 @@ export default function Alloy() {
 
         {/* 휴지통 화면 - 삭제된 Vault/폴더/파일이 삭제된 시점으로부터 7일간 여기 담긴다.
             복구를 누르면 원래 위치로 돌아가고, 삭제를 누르면 확인 절차 없이 바로 영구 삭제된다. */}
-        {active === 2 && trashScreenOpen && !tagScreenTag && (
+        {active === 2 && trashScreenOpen && !tagScreenTags.length && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {trash.length === 0 ? (
               <div
@@ -3077,7 +3106,7 @@ export default function Alloy() {
 
         {/* 구독 화면 - 아직 내용 없이 빈 화면(추후 요금제 안내 예정). 휴지통 화면과 같은
             헤더(X 닫기 버튼) 패턴만 재사용한다. */}
-        {active === 2 && subscriptionScreenOpen && !tagScreenTag && (
+        {active === 2 && subscriptionScreenOpen && !tagScreenTags.length && (
           <div
             style={{
               padding: "48px 0",
@@ -3898,13 +3927,7 @@ export default function Alloy() {
               opacity: tagPaletteVisible ? 1 : 0,
               transform: tagPaletteVisible ? "translate(-50%, 0)" : "translate(-50%, 16px)",
               transition: "opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
-              padding: 10,
-              borderRadius: 20,
-              background: isLight ? "rgba(255,255,255,0.85)" : "rgba(20,20,19,0.9)",
-              backdropFilter: "blur(28px) saturate(180%)",
-              WebkitBackdropFilter: "blur(28px) saturate(180%)",
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-              boxShadow: "0 20px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.12)",
+              padding: 6,
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -3913,39 +3936,35 @@ export default function Alloy() {
               const filteredTags = q ? allTags.filter((t) => t.toLowerCase().includes(q)) : allTags;
               if (filteredTags.length === 0) {
                 return (
-                  <div style={{ padding: "16px 8px", textAlign: "center", fontSize: 13, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
+                  <div style={{ padding: "8px 4px", textAlign: "center", fontSize: 13, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)", textShadow: isLight ? "none" : "0 1px 4px rgba(0,0,0,0.6)" }}>
                     아직 태그가 없습니다
                   </div>
                 );
               }
               return (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
                   {filteredTags.map((tag) => (
-                    <button
+                    <span
                       key={tag}
                       onClick={() => openTagScreen(tag)}
-                      onMouseDown={pressDown("scale(0.95)")}
-                      onMouseUp={pressUp("scale(1)")}
                       style={{
-                        padding: "8px 6px",
-                        border: `1px solid ${isLight ? "rgba(20,22,26,0.15)" : "rgba(255,255,255,0.15)"}`,
-                        borderRadius: 10,
-                        background: isLight ? "rgba(20,22,26,0.04)" : "rgba(255,255,255,0.06)",
+                        padding: "4px 2px",
                         color: isLight ? "#14161A" : "#FFFFFF",
                         fontSize: 13,
                         fontWeight: 500,
                         cursor: "pointer",
-                        outline: "none",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
-                        transition: "background 0.15s ease, transform 0.15s ease",
+                        textAlign: "center",
+                        textShadow: isLight ? "0 1px 3px rgba(255,255,255,0.8)" : "0 1px 4px rgba(0,0,0,0.7)",
+                        transition: "opacity 0.15s ease",
                       }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.1)"}
-                      onMouseLeave={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.04)" : "rgba(255,255,255,0.06)"}
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = "0.6"}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
                     >
                       {tag}
-                    </button>
+                    </span>
                   ))}
                 </div>
               );
@@ -4019,7 +4038,7 @@ export default function Alloy() {
                     closeTagPalette();
                   }
                 }}
-                placeholder="검색 (#으로 태그 찾기)"
+                placeholder="검색"
                 aria-label="검색"
                 style={{
                   flex: 1,
@@ -4519,6 +4538,179 @@ export default function Alloy() {
               onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
             >
               적용
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* "분류" 모달 - 마법사의 "분류"를 누르면 뜬다. 모든 태그를 2열 그리드로, 가로/세로 구분선으로
+          칸을 나눠 보여주고 각 태그 오른쪽에 체크박스가 있다. 확인을 누르면 체크한 태그(들)로
+          "분류" 화면이 열린다. */}
+      {classifyModalOpen && (
+        <>
+          <div
+            onClick={closeClassifyModal}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.45)",
+              zIndex: 39,
+              opacity: classifyModalVisible ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: classifyModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: classifyModalVisible ? 1 : 0,
+              background: isLight ? "#FFFFFF" : "#1a1918",
+              borderRadius: 20,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              padding: "32px 30px",
+              width: "84vw",
+              boxSizing: "border-box",
+              zIndex: 40,
+              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                }}
+              >
+                분류
+              </h2>
+              <button
+                onClick={closeClassifyModal}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {allTags.length === 0 ? (
+              <div
+                style={{
+                  textAlign: "center",
+                  padding: "20px 0",
+                  marginBottom: 16,
+                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                  fontSize: 14,
+                }}
+              >
+                아직 태그가 없습니다
+              </div>
+            ) : (
+              <div
+                style={{
+                  maxHeight: 320,
+                  overflowY: "auto",
+                  marginBottom: 16,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.15)" : "rgba(255,255,255,0.15)"}`,
+                  borderRadius: 10,
+                }}
+              >
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+                  {allTags.map((tag, i) => {
+                    const totalRows = Math.ceil(allTags.length / 2);
+                    const isLastRow = Math.floor(i / 2) === totalRows - 1;
+                    const isLeftCol = i % 2 === 0;
+                    const cellBorderColor = isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)";
+                    return (
+                      <div
+                        key={tag}
+                        onClick={() => toggleClassifyChecked(tag)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          padding: "10px 12px",
+                          cursor: "pointer",
+                          borderRight: isLeftCol ? `1px solid ${cellBorderColor}` : "none",
+                          borderBottom: isLastRow ? "none" : `1px solid ${cellBorderColor}`,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 14,
+                            color: isLight ? "#14161A" : "#FFFFFF",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {tag}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={!!classifyChecked[tag]}
+                          onChange={() => toggleClassifyChecked(tag)}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ width: 18, height: 18, flexShrink: 0, cursor: "pointer" }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={handleClassifyConfirm}
+              onMouseDown={pressDown("scale(0.95)")}
+              onMouseUp={pressUp("scale(1)")}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: "pointer",
+                outline: "none",
+                transition: "transform 0.15s ease",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              확인
             </button>
           </div>
         </>
