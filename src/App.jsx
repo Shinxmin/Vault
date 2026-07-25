@@ -1253,7 +1253,7 @@ export default function Alloy() {
                             onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
                             onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                           >
-                            {type === "vault" ? "이름 바꾸기" : "이름 수정"}
+                            이름 바꾸기
                           </button>
                           {type === "vault" && (
                             <button
@@ -1373,7 +1373,7 @@ export default function Alloy() {
                 );
               };
 
-              // 항목 제목 텍스트 - 클릭하면(또는 "이름 바꾸기" 메뉴를 누르면) 그 자리에서
+              // 항목 제목 텍스트 - 삼점 메뉴의 "이름 바꾸기"를 눌러야만 그 자리에서
               // 인라인 입력창으로 바뀌고, 포커스를 벗어나면 자동 저장된다. 모달 없음.
               const renderEditableName = (type, item, textStyle) => {
                 const isEditing = editingItem && editingItem.type === type && editingItem.id === item.id;
@@ -1405,17 +1405,7 @@ export default function Alloy() {
                     />
                   );
                 }
-                return (
-                  <div
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startInlineEdit(type, item.id, item.name);
-                    }}
-                    style={{ ...textStyle, cursor: "text" }}
-                  >
-                    {item.name}
-                  </div>
-                );
+                return <div style={textStyle}>{item.name}</div>;
               };
 
               // ── 홈: Vault(프로젝트) 카드 목록 (2열, 세로 여백 넉넉히) ──
