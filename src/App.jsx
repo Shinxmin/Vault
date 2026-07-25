@@ -247,9 +247,9 @@ export default function Alloy() {
   const [itemMenuOpen, setItemMenuOpen] = useState(null); // { type: 'folder' | 'file', id }
   const [itemMenuVisibleKey, setItemMenuVisibleKey] = useState(null);
   const [itemMenuAnchor, setItemMenuAnchor] = useState({ top: 0, right: 0 });
-  // Vault 삭제 - 확인 문구 없이, 삭제 버튼을 한 번 누르면 배경이 붉게 변하고(armed) 같은
-  // 버튼을 한 번 더 누르면 그때 실제로 삭제된다.
-  const [vaultDeleteArmedId, setVaultDeleteArmedId] = useState(null);
+  // 삭제 - 확인 문구 없이, 삭제 버튼을 한 번 누르면 배경이 붉게 변하고(armed) 같은
+  // 버튼을 한 번 더 누르면 그때 실제로 삭제된다. Vault/폴더/파일(이미지) 전부 공용.
+  const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
 
   const toggleSearch = () => {
@@ -386,7 +386,7 @@ export default function Alloy() {
   };
   const closeItemMenu = () => {
     setItemMenuVisibleKey(null);
-    setVaultDeleteArmedId(null);
+    setDeleteArmedKey(null);
     setTimeout(() => setItemMenuOpen(null), 200);
   };
   const toggleItemMenu = (type, id, anchorEl) => {
@@ -1622,63 +1622,43 @@ export default function Alloy() {
                             </button>
                           )}
                           <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-                          {type === "vault" ? (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (vaultDeleteArmedId === item.id) {
-                                  onDelete(item.id);
-                                } else {
-                                  setVaultDeleteArmedId(item.id);
-                                }
-                              }}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                border: "none",
-                                background: vaultDeleteArmedId === item.id ? "#EF4444" : "transparent",
-                                color: vaultDeleteArmedId === item.id ? "#FFFFFF" : "#EF4444",
-                                fontSize: 15,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                outline: "none",
-                                textAlign: "left",
-                                transition: "background 0.15s ease, color 0.15s ease",
-                              }}
-                              onMouseEnter={(e) => {
-                                if (vaultDeleteArmedId !== item.id) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
-                              }}
-                              onMouseLeave={(e) => {
-                                if (vaultDeleteArmedId !== item.id) e.currentTarget.style.background = "transparent";
-                              }}
-                            >
-                              삭제
-                            </button>
-                          ) : (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDelete(item.id);
-                              }}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                border: "none",
-                                background: "transparent",
-                                color: "#EF4444",
-                                fontSize: 15,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                outline: "none",
-                                textAlign: "left",
-                                transition: "background 0.2s",
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)"}
-                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                            >
-                              삭제
-                            </button>
-                          )}
+                          {(() => {
+                            const deleteKey = `${type}-${item.id}`;
+                            const isArmed = deleteArmedKey === deleteKey;
+                            return (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isArmed) {
+                                    onDelete(item.id);
+                                  } else {
+                                    setDeleteArmedKey(deleteKey);
+                                  }
+                                }}
+                                style={{
+                                  width: "100%",
+                                  padding: "10px 12px",
+                                  border: "none",
+                                  background: isArmed ? "#EF4444" : "transparent",
+                                  color: isArmed ? "#FFFFFF" : "#EF4444",
+                                  fontSize: 15,
+                                  fontWeight: 500,
+                                  cursor: "pointer",
+                                  outline: "none",
+                                  textAlign: "left",
+                                  transition: "background 0.15s ease, color 0.15s ease",
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (!isArmed) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!isArmed) e.currentTarget.style.background = "transparent";
+                                }}
+                              >
+                                삭제
+                              </button>
+                            );
+                          })()}
                         </div>
                       </>,
                       document.body
@@ -2569,33 +2549,60 @@ export default function Alloy() {
               transform: moveModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
               opacity: moveModalVisible ? 1 : 0,
               background: isLight ? "#FFFFFF" : "#1a1918",
-              borderRadius: 16,
+              borderRadius: 20,
               border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-              padding: "24px 30px",
+              padding: "32px 30px",
               width: "84vw",
               boxSizing: "border-box",
-              maxHeight: "70vh",
-              display: "flex",
-              flexDirection: "column",
               zIndex: 40,
-              boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
+              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
               transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2
-              style={{
-                margin: "0 0 4px 0",
-                fontSize: 19,
-                fontWeight: 700,
-                color: isLight ? "#14161A" : "#FFFFFF",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {moveTarget ? `"${moveTarget.name}" 이동` : "이동"}
-            </h2>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 19,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {moveTarget ? moveTarget.name : "이동"}
+              </h2>
+              <button
+                onClick={closeMoveModal}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
             <div
               style={{
                 display: "flex",
@@ -2646,7 +2653,7 @@ export default function Alloy() {
               ))}
             </div>
 
-            <div style={{ flex: 1, overflowY: "auto", minHeight: 80, marginBottom: 16 }}>
+            <div style={{ maxHeight: 300, overflowY: "auto", marginBottom: 16 }}>
               {moveModalEntries.length === 0 ? (
                 <div
                   style={{
@@ -2704,57 +2711,30 @@ export default function Alloy() {
               )}
             </div>
 
-            <div style={{ display: "flex", gap: 12 }}>
-              <button
-                onClick={closeMoveModal}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  flex: 1,
-                  padding: 10,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  borderRadius: 8,
-                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  outline: "none",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-              >
-                취소
-              </button>
-              <button
-                onClick={confirmMove}
-                disabled={!canDropHere}
-                onMouseDown={canDropHere ? pressDown("scale(0.95)") : undefined}
-                onMouseUp={canDropHere ? pressUp("scale(1)") : undefined}
-                style={{
-                  flex: 1,
-                  padding: 10,
-                  border: "none",
-                  borderRadius: 8,
-                  background: isLight ? "#14161A" : "#FFFFFF",
-                  color: isLight ? "#FFFFFF" : "#14161A",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: canDropHere ? "pointer" : "not-allowed",
-                  opacity: canDropHere ? 1 : 0.4,
-                  outline: "none",
-                  transition: "transform 0.15s ease, opacity 0.2s ease",
-                }}
-                onMouseEnter={(e) => { if (canDropHere) e.currentTarget.style.transform = "translateY(-1px)"; }}
-                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-              >
-                여기로 이동
-              </button>
-            </div>
+            <button
+              onClick={confirmMove}
+              disabled={!canDropHere}
+              onMouseDown={canDropHere ? pressDown("scale(0.95)") : undefined}
+              onMouseUp={canDropHere ? pressUp("scale(1)") : undefined}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: canDropHere ? "pointer" : "not-allowed",
+                opacity: canDropHere ? 1 : 0.4,
+                outline: "none",
+                transition: "transform 0.15s ease, opacity 0.2s ease",
+              }}
+              onMouseEnter={(e) => { if (canDropHere) e.currentTarget.style.transform = "translateY(-1px)"; }}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              이동
+            </button>
           </div>
         </>
       )}
