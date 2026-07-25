@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#17191D" />
+    <!-- 아이폰 등에서 홈 화면에 추가해 PWA로 실행할 때 상단 상태 표시줄(와이파이/배터리 영역)이
+         투명하게 처리되어 아래 배경색이 그대로 비쳐 보이도록 한다. theme-color는 자바스크립트에서
+         라이트/다크 전환 시마다 동적으로 갱신한다(App.jsx 참고). -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Vaulty</title>
     <style>
       /* 웹사이트 내 모든 스크롤바를 시각적으로 숨김(스크롤 동작 자체는 유지) */

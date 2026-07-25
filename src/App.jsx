@@ -2,8 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
-// 앱 버전 표기
-const APP_VERSION = "0.2.2";
+// 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
+const APP_VERSION = "0.1.29";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -81,6 +81,20 @@ export default function Alloy() {
       localStorage.setItem("alloy_use_system_theme", String(useSystemTheme));
     } catch (e) {}
   }, [useSystemTheme, themeLoaded]);
+
+  // 상단 상태 표시줄(와이파이/배터리 등이 보이는 영역)까지 배경색이 이어져 보이도록,
+  // 라이트/다크(및 sunset/forest) 전환마다 <meta name="theme-color">를 갱신한다.
+  // sunset/forest는 그라디언트라 메타 태그에 그대로 쓸 수 없어 배경 톤에 맞춘 단색으로 대체한다.
+  const STATUS_BAR_COLORS = {
+    light: "#FFFFFF",
+    dark: "#141413",
+    sunset: "#2a1f1a",
+    forest: "#1a2a20",
+  };
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", STATUS_BAR_COLORS[theme] || STATUS_BAR_COLORS.dark);
+  }, [theme]);
 
   // 시스템 설정이 켜져 있으면 OS 다크모드 여부를 즉시 반영하고, 이후 시스템에서
   // 라이트/다크가 바뀔 때마다(아이폰 설정, 윈도우 자동 전환 등) 따라간다.
@@ -2424,14 +2438,14 @@ export default function Alloy() {
                 </button>
               </div>
 
-              {/* 테마 2열 - "시스템 설정" 작은 텍스트 + 체크박스. 켜면 OS(아이폰/안드로이드/
-                  윈도우/맥 등)의 라이트·다크 모드를 그대로 따라간다. */}
+              {/* 테마 2열 - "시스템 설정" 작은 텍스트 바로 오른쪽에 체크박스. 켜면 OS(아이폰/
+                  안드로이드/윈도우/맥 등)의 라이트·다크 모드를 그대로 따라간다. */}
               <div
                 onClick={toggleUseSystemTheme}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "space-between",
+                  gap: 8,
                   padding: "0 18px 14px 18px",
                   cursor: "pointer",
                 }}
@@ -2550,6 +2564,23 @@ export default function Alloy() {
                   </svg>
                 </div>
               </div>
+            </div>
+
+            {/* 앱 버전 표기 - 테마/저장 공간/휴지통 카드 바로 아래에 별도 테두리로 구분. */}
+            <div
+              style={{
+                borderRadius: 14,
+                background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                backdropFilter: "blur(20px) saturate(180%)",
+                WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                padding: "12px 18px",
+                textAlign: "center",
+              }}
+            >
+              <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
+                Vaulty v{APP_VERSION}
+              </span>
             </div>
           </div>
         )}
