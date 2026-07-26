@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.34";
+const APP_VERSION = "0.1.35";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -360,15 +360,23 @@ export default function Alloy() {
 
   // 설정 탭 > 휴지통 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
-  // 요금 안내 - "모든 요금제를 확인하세요"를 누르면 바로 밑에 토스트처럼 안내 문구가
-  // 2초간 페이드 인/아웃으로 떴다가 사라진다(하단 서브 액션바 토스트와 같은 타이밍).
+  // 요금 안내 - "모든 요금제를 확인하세요"를 누르면 하단 서브 액션바와 같은 리퀴드 글래스
+  // 배경을 가진 별도의 뜬 패널이 그 텍스트 바로 밑 위치에 2초간 페이드 인/아웃으로 떴다가
+  // 사라진다(레이아웃 흐름에 얹혀 다른 내용을 밀어내지 않고, document.body에 포탈로 띄운다).
+  // 떠 있는 동안에는 "모든 요금제를 확인하세요" 버튼을 비활성화하고 투명도를 낮춘다.
   const [pricingInfoOpen, setPricingInfoOpen] = useState(false);
   const [pricingInfoVisible, setPricingInfoVisible] = useState(false);
+  const [pricingInfoPos, setPricingInfoPos] = useState({ top: 0, left: 0 });
+  const pricingButtonRef = useRef(null);
   const pricingInfoShowTimerRef = useRef(null);
   const pricingInfoHideTimerRef = useRef(null);
   const showPricingInfo = () => {
     if (pricingInfoShowTimerRef.current) clearTimeout(pricingInfoShowTimerRef.current);
     if (pricingInfoHideTimerRef.current) clearTimeout(pricingInfoHideTimerRef.current);
+    if (pricingButtonRef.current) {
+      const rect = pricingButtonRef.current.getBoundingClientRect();
+      setPricingInfoPos({ top: rect.bottom + 8, left: rect.left });
+    }
     setPricingInfoOpen(true);
     requestAnimationFrame(() => setPricingInfoVisible(true));
     pricingInfoHideTimerRef.current = setTimeout(() => {
@@ -3061,45 +3069,32 @@ export default function Alloy() {
                     }}
                   />
                 </div>
-                {/* 저장 공간 2열 - 누르면 바로 밑에 안내 문구가 토스트처럼 2초간 페이드
-                    인/아웃되며 뜬다. */}
-                <div>
-                  <button
-                    onClick={showPricingInfo}
-                    style={{
-                      marginTop: 8,
-                      padding: 0,
-                      border: "none",
-                      background: "transparent",
-                      fontSize: 12,
-                      color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-                      cursor: "pointer",
-                      outline: "none",
-                      textDecoration: "underline",
-                      textUnderlineOffset: 2,
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"}
-                    onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
-                  >
-                    모든 요금제를 확인하세요
-                  </button>
-                  {pricingInfoOpen && (
-                    <div
-                      style={{
-                        marginTop: 8,
-                        opacity: pricingInfoVisible ? 1 : 0,
-                        transition: "opacity 0.3s ease",
-                      }}
-                    >
-                      <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                        Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
-                      </div>
-                      <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 4 }}>
-                        기본 저장 공간 10GB를 초과하면 $0.02/GB 가 청구됩니다
-                      </div>
-                    </div>
-                  )}
-                </div>
+                {/* 저장 공간 2열 - 누르면 이 버튼 바로 밑 위치에 서브 액션바 스타일의
+                    안내 패널이 2초간 떴다가 사라진다(별도 포탈, 아래 참고). 떠 있는 동안엔
+                    이 버튼 자체는 비활성화되고 흐려진다. */}
+                <button
+                  ref={pricingButtonRef}
+                  onClick={showPricingInfo}
+                  disabled={pricingInfoOpen}
+                  style={{
+                    marginTop: 8,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    fontSize: 12,
+                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    cursor: pricingInfoOpen ? "default" : "pointer",
+                    outline: "none",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                    opacity: pricingInfoOpen ? 0.4 : 1,
+                    transition: "opacity 0.3s ease, color 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => { if (!pricingInfoOpen) e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
+                  onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
+                >
+                  모든 요금제를 확인하세요
+                </button>
               </div>
 
               <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)" }} />
@@ -4305,6 +4300,39 @@ export default function Alloy() {
         >
           {toastMessage}
         </div>
+      )}
+
+      {/* 요금 안내 패널 - 서브 액션바와 같은 리퀴드 글래스 배경을 쓰되, 하단 고정이 아니라
+          "모든 요금제를 확인하세요" 버튼 바로 밑 위치(pricingInfoPos)에 뜬다. 레이아웃
+          흐름에 얹지 않고 document.body에 포탈로 띄워 다른 내용을 밀어내지 않는다. */}
+      {pricingInfoOpen && createPortal(
+        <div
+          style={{
+            position: "fixed",
+            top: pricingInfoPos.top,
+            left: pricingInfoPos.left,
+            transform: pricingInfoVisible ? "translateY(0)" : "translateY(8px)",
+            opacity: pricingInfoVisible ? 1 : 0,
+            zIndex: 50,
+            padding: "12px 16px",
+            borderRadius: 14,
+            background: isLight ? "rgba(255,255,255,0.85)" : "rgba(30,29,28,0.85)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            WebkitBackdropFilter: "blur(20px) saturate(180%)",
+            border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+            pointerEvents: "none",
+            transition: "opacity 0.3s ease, transform 0.3s ease",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+            Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 4 }}>
+            기본 저장 공간 10GB를 초과하면 $0.02/GB 가 청구됩니다
+          </div>
+        </div>,
+        document.body
       )}
 
       {/* 하단 컨트롤 영역 - 탭바 + 검색 버튼을 화면 중앙에 정렬한다.
