@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.36";
+const APP_VERSION = "0.1.37";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -946,8 +946,8 @@ export default function Alloy() {
   const [convertDrafts, setConvertDrafts] = useState({}); // { [id]: 미리보기용 새 이름 }
   const [convertInput, setConvertInput] = useState("");
 
-  const convertTargets = useMemo(() =>
-    currentPath.length === 0
+  const convertTargets = useMemo(() => {
+    const items = currentPath.length === 0
       ? vaults.map((v) => ({ id: v.id, name: v.name, type: "vault" }))
       : [
           ...folders
@@ -956,8 +956,10 @@ export default function Alloy() {
           ...files
             .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
             .map((f) => ({ id: f.id, name: f.name, type: "file" })),
-        ],
-  [currentPath, vaults, folders, files]);
+        ];
+    // 변환/태그 모달의 대상 목록은 항상 ㄱㄴㄷ(가나다)순으로 보여준다.
+    return items.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  }, [currentPath, vaults, folders, files]);
 
   const openConvertModal = () => {
     setConvertChecked({});
@@ -2517,7 +2519,7 @@ export default function Alloy() {
               const renderImageGrid = (imagesArray, marginTop) => {
                 if (imagesArray.length === 0) return null;
                 return (
-                  <div style={{ columnCount: 2, columnGap: 8, marginTop }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginTop }}>
                     {imagesArray.map((img) => {
                       const isPickedUp = draggingItem && draggingItem.type === "file" && draggingItem.id === img.id;
                       return (
@@ -2536,9 +2538,6 @@ export default function Alloy() {
                         onMouseUp={pressUp("none")}
                         style={{
                           position: "relative",
-                          breakInside: "avoid",
-                          WebkitColumnBreakInside: "avoid",
-                          marginBottom: 8,
                           borderRadius: 10,
                           overflow: "hidden",
                           border: `1px solid ${
