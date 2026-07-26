@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.39";
+const APP_VERSION = "0.1.40";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -1422,30 +1422,42 @@ export default function Alloy() {
     showToast("데이터를 삭제했습니다");
   };
 
-  // 휴지통 전체 선택 - 체크 아이콘 토글. 켜져 있을 때만 오른쪽의 삭제/복구 버튼이
-  // 휴지통에 담긴 모든 항목에 대해 한 번에 동작한다.
-  const [trashSelectAll, setTrashSelectAll] = useState(false);
-  const restoreAllTrash = () => {
-    if (!trash.length) return;
-    trash.forEach((entry) => {
+  // 휴지통 선택 - 변환/태그 모달과 동일한 체크박스 + "전체 선택" 토글 방식. 각 항목에
+  // 체크박스가 있고, "전체 선택"은 이미 전부 체크돼 있으면 전체 해제, 아니면 전체 선택으로
+  // 토글한다. 오른쪽의 삭제/복구 버튼은 체크된 항목들에 대해서만 동작한다.
+  const [trashChecked, setTrashChecked] = useState({}); // { [trashId]: true }
+  const toggleTrashChecked = (id) => {
+    setTrashChecked((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+  const toggleTrashSelectAll = () => {
+    const allChecked = trash.length > 0 && trash.every((entry) => trashChecked[entry.id]);
+    setTrashChecked(allChecked ? {} : Object.fromEntries(trash.map((entry) => [entry.id, true])));
+  };
+  const restoreCheckedTrash = () => {
+    const checkedEntries = trash.filter((entry) => trashChecked[entry.id]);
+    if (!checkedEntries.length) return;
+    checkedEntries.forEach((entry) => {
       if (entry.vault) setVaults((prev) => [...prev, entry.vault]);
       const foldersToRestore = entry.folder ? [entry.folder, ...(entry.folders || [])] : (entry.folders || []);
       if (foldersToRestore.length) setFolders((prev) => [...prev, ...foldersToRestore]);
       if (entry.files && entry.files.length) setFiles((prev) => [...prev, ...entry.files]);
     });
-    setTrash([]);
-    setTrashSelectAll(false);
+    const checkedIds = new Set(checkedEntries.map((entry) => entry.id));
+    setTrash((prev) => prev.filter((entry) => !checkedIds.has(entry.id)));
+    setTrashChecked({});
     showToast("데이터를 복구했습니다");
   };
-  const deleteAllTrash = () => {
-    if (!trash.length) return;
-    trash.forEach((entry) => {
+  const deleteCheckedTrash = () => {
+    const checkedEntries = trash.filter((entry) => trashChecked[entry.id]);
+    if (!checkedEntries.length) return;
+    checkedEntries.forEach((entry) => {
       (entry.files || []).forEach((f) => {
         if (f.r2Key) r2Presign({ action: "delete", key: f.r2Key }).catch((e) => console.error("R2 삭제 실패:", e));
       });
     });
-    setTrash([]);
-    setTrashSelectAll(false);
+    const checkedIds = new Set(checkedEntries.map((entry) => entry.id));
+    setTrash((prev) => prev.filter((entry) => !checkedIds.has(entry.id)));
+    setTrashChecked({});
   };
 
   // 휴지통 복구 - 원래 있던 자리(vaults/folders/files)로 그대로 되돌려 놓는다.
@@ -1658,7 +1670,7 @@ export default function Alloy() {
           {(tagScreenTags.length > 0 || (active === 2 && trashScreenOpen)) && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
             <button
-              onClick={() => { setTrashScreenOpen(false); setTrashSelectAll(false); closeTagScreen(); }}
+              onClick={() => { setTrashScreenOpen(false); setTrashChecked({}); closeTagScreen(); }}
               onMouseEnter={() => setTrashCloseButtonHovered(true)}
               onMouseLeave={(e) => {
                 setTrashCloseButtonHovered(false);
@@ -3182,73 +3194,79 @@ export default function Alloy() {
             복구를 누르면 원래 위치로 돌아가고, 삭제를 누르면 확인 절차 없이 바로 영구 삭제된다. */}
         {active === 2 && trashScreenOpen && !tagScreenTags.length && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {/* 제목 바로 밑 - 체크 아이콘 "전체 선택" 텍스트(좌) + 삭제/복구 버튼(우측 정렬).
-                전체 선택이 켜져 있을 때만 두 버튼이 휴지통 전체에 대해 동작한다. */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-              <button
-                onClick={() => setTrashSelectAll((v) => !v)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: 0,
-                  border: "none",
-                  background: "transparent",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  color: trashSelectAll
-                    ? (isLight ? "#14161A" : "#FFFFFF")
-                    : (isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)"),
-                  cursor: "pointer",
-                  outline: "none",
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-                전체 선택
-              </button>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button
-                  onClick={deleteAllTrash}
-                  disabled={!trashSelectAll || trash.length === 0}
-                  style={{
-                    padding: "6px 14px",
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    borderRadius: 8,
-                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                    color: "#EF4444",
-                    fontSize: 13,
-                    fontWeight: 500,
-                    cursor: trashSelectAll && trash.length > 0 ? "pointer" : "default",
-                    outline: "none",
-                    opacity: trashSelectAll && trash.length > 0 ? 1 : 0.4,
-                    transition: "opacity 0.2s ease",
-                  }}
-                >
-                  삭제
-                </button>
-                <button
-                  onClick={restoreAllTrash}
-                  disabled={!trashSelectAll || trash.length === 0}
-                  style={{
-                    padding: "6px 14px",
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    borderRadius: 8,
-                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 13,
-                    fontWeight: 500,
-                    cursor: trashSelectAll && trash.length > 0 ? "pointer" : "default",
-                    outline: "none",
-                    opacity: trashSelectAll && trash.length > 0 ? 1 : 0.4,
-                    transition: "opacity 0.2s ease",
-                  }}
-                >
-                  복구
-                </button>
-              </div>
-            </div>
+            {/* 제목 바로 밑 - 체크 아이콘 "전체 선택" 텍스트(좌, 변환/태그 모달과 동일한
+                토글: 전부 체크돼 있으면 전체 해제, 아니면 전체 선택) + 삭제/복구 버튼(우측 정렬).
+                두 버튼은 체크된 항목이 하나라도 있을 때만 활성화되고, 그 항목들에만 동작한다. */}
+            {(() => {
+              const hasChecked = trash.some((entry) => trashChecked[entry.id]);
+              return (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <button
+                    onClick={toggleTrashSelectAll}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: 0,
+                      border: "none",
+                      background: "transparent",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      color: hasChecked
+                        ? (isLight ? "#14161A" : "#FFFFFF")
+                        : (isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)"),
+                      cursor: "pointer",
+                      outline: "none",
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                    전체 선택
+                  </button>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      onClick={deleteCheckedTrash}
+                      disabled={!hasChecked}
+                      style={{
+                        padding: "6px 14px",
+                        border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                        borderRadius: 8,
+                        background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                        color: "#EF4444",
+                        fontSize: 13,
+                        fontWeight: 500,
+                        cursor: hasChecked ? "pointer" : "default",
+                        outline: "none",
+                        opacity: hasChecked ? 1 : 0.4,
+                        transition: "opacity 0.2s ease",
+                      }}
+                    >
+                      삭제
+                    </button>
+                    <button
+                      onClick={restoreCheckedTrash}
+                      disabled={!hasChecked}
+                      style={{
+                        padding: "6px 14px",
+                        border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                        borderRadius: 8,
+                        background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                        color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 13,
+                        fontWeight: 500,
+                        cursor: hasChecked ? "pointer" : "default",
+                        outline: "none",
+                        opacity: hasChecked ? 1 : 0.4,
+                        transition: "opacity 0.2s ease",
+                      }}
+                    >
+                      복구
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
             {trash.length === 0 ? (
               <div
                 style={{
@@ -3281,6 +3299,12 @@ export default function Alloy() {
                         border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
                       }}
                     >
+                      <input
+                        type="checkbox"
+                        checked={!!trashChecked[entry.id]}
+                        onChange={() => toggleTrashChecked(entry.id)}
+                        style={{ width: 18, height: 18, flexShrink: 0, cursor: "pointer" }}
+                      />
                       <div style={{ flexShrink: 0 }}>
                         {entry.type === "vault" ? (
                           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -4490,7 +4514,7 @@ export default function Alloy() {
                   setActive(i);
                   if (i !== 2) {
                     setTrashScreenOpen(false);
-                    setTrashSelectAll(false);
+                    setTrashChecked({});
                     setPricingInfoOpen(false);
                   }
                   closeTagScreen();
