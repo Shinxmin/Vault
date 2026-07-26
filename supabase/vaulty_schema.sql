@@ -9,13 +9,16 @@ create table if not exists public.vaulty_state (
   files jsonb not null default '[]'::jsonb,
   custom_order_active boolean not null default false,
   trash jsonb not null default '[]'::jsonb,
+  storage_limit_gb numeric not null default 10,
   updated_at timestamptz not null default now()
 );
 
--- 기존에 테이블이 이미 있는 환경에서는 아래 두 줄만 실행해도 됩니다.
+-- 기존에 테이블이 이미 있는 환경에서는 아래 줄들만 실행해도 됩니다.
 alter table public.vaulty_state add column if not exists custom_order_active boolean not null default false;
 -- 휴지통(삭제 후 7일간 보관되는 Vault/폴더/파일) 저장용 컬럼.
 alter table public.vaulty_state add column if not exists trash jsonb not null default '[]'::jsonb;
+-- 저장 공간 한도(GB) - 설정 탭의 "한도"에서 직접 늘려서 설정할 수 있다.
+alter table public.vaulty_state add column if not exists storage_limit_gb numeric not null default 10;
 
 alter table public.vaulty_state enable row level security;
 
