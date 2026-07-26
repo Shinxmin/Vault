@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.43";
+const APP_VERSION = "0.1.44";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -452,8 +452,10 @@ export default function Alloy() {
   };
   // 한도 표시 전용 포맷 - 1,000GB(=1TB)일 때만 "1TB"로 보여주고, 999GB 이하는 그대로 GB로 보여준다.
   const formatStorageLimitDisplay = (gb) => (gb >= 1000 ? "1TB" : formatGBShort(gb * 1024 * 1024 * 1024));
-  // 예상 청구 금액 - 기본 10GB를 초과해 설정한 한도만큼 GB당 $0.02를 곱한다.
-  const billingOverageGB = Math.max(0, storageLimitGB - 10);
+  // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 기본 10GB를
+  // 초과한 만큼만 GB당 $0.02를 곱한다.
+  const usedStorageGB = usedStorageBytes / (1024 * 1024 * 1024);
+  const billingOverageGB = Math.max(0, usedStorageGB - 10);
   const billingAmount = billingOverageGB * 0.02;
 
   // 하단 탭바 바로 위에 뜨는 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다"처럼
@@ -3257,8 +3259,9 @@ export default function Alloy() {
               </div>
             </div>
 
-            {/* 청구 금액 - 저장 공간 카드 바로 아래. 한도가 기본 10GB 그대로면 청구액이
-                없다는 안내만, 10GB를 초과해 설정했으면 초과분 × $0.02로 예상 청구 금액을 보여준다. */}
+            {/* 청구 금액 - 저장 공간 카드 바로 아래. 설정한 한도가 아니라 지금 실제로 쓰고
+                있는 용량 기준이다. 사용량이 기본 10GB 이하면 청구액이 없다는 안내만, 넘으면
+                초과분 × $0.02로 예상 청구 금액을 보여준다. */}
             <div
               style={{
                 borderRadius: 14,
