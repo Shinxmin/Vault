@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.40";
+const APP_VERSION = "0.1.41";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -176,6 +176,8 @@ export default function Alloy() {
   const SORT_MODES = ["ko", "num", "en"];
   const [sortModeIndex, setSortModeIndex] = useState(0);
   const [customOrderActive, setCustomOrderActive] = useState(false);
+  // storageLimitGB도 같은 이유로 여기서 미리 선언한다(저장 공간 한도, 기본 10GB).
+  const [storageLimitGB, setStorageLimitGB] = useState(10);
   const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
   const cycleSortMode = () => {
     setCustomOrderActive(false);
@@ -216,6 +218,7 @@ export default function Alloy() {
         setVaults(loadedVaults);
         setFolders(loadedFolders);
         setCustomOrderActive(data.custom_order_active === true);
+        setStorageLimitGB(typeof data.storage_limit_gb === "number" && data.storage_limit_gb > 0 ? data.storage_limit_gb : 10);
         // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
         // 불러올 때마다 r2Key 기준으로 새로 발급받는다. 휴지통 안의 이미지도 복구/미리보기를
         // 위해 함께 새로 발급받는다.
@@ -260,6 +263,7 @@ export default function Alloy() {
           folders,
           files: filesToSave,
           custom_order_active: customOrderActive,
+          storage_limit_gb: storageLimitGB,
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
@@ -267,7 +271,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, dataLoaded]);
+  }, [vaults, folders, files, customOrderActive, storageLimitGB, dataLoaded]);
 
   // 휴지통은 별도 컬럼(trash)에 저장한다. 위 저장과 분리해 둔 이유는, 이 컬럼이 아직
   // 없는(마이그레이션 전) 환경에서 이 upsert가 실패하더라도 vaults/folders/files 등
@@ -405,8 +409,9 @@ export default function Alloy() {
     else openTrashItemMenu(id, anchorEl);
   };
 
-  // 저장 공간 - 지금은 10GB로 고정. 사용량은 files + 휴지통에 남아있는 파일 크기 합.
-  const STORAGE_MAX_BYTES = 10 * 1024 * 1024 * 1024;
+  // 저장 공간 - 기본 10GB, "한도"를 눌러 직접 늘려서 설정할 수 있다(storageLimitGB,
+  // 위에서 미리 선언됨). 사용량은 files + 휴지통에 남아있는 파일 크기 합.
+  const STORAGE_MAX_BYTES = storageLimitGB * 1024 * 1024 * 1024;
   // 텍스트 에디터에서 타이핑할 때마다 앱 전체가 리렌더되는데, 이 계산들이 매번 새로
   // 돌면(특히 allTags/tagTargets는 전체 폴더·파일을 훑는다) 입력이 밀리면서 스페이스 등
   // 키 입력이 여러 번 뭉쳐 들어가는 것처럼 보일 수 있어 실제 값이 바뀔 때만 다시 계산한다.
@@ -417,6 +422,20 @@ export default function Alloy() {
   const formatGBShort = (bytes) => {
     const gb = bytes / (1024 * 1024 * 1024);
     return `${gb % 1 === 0 ? gb : gb.toFixed(1)}GB`;
+  };
+
+  // 저장 공간 한도 편집 - "한도"를 누르면 "0.0GB/10GB"의 "10GB" 부분이 직접 입력 가능한
+  // 인풋으로 바뀐다. 포커스를 벗어나거나 Enter를 누르면 커밋되고, 잘못된 값이면 원래 값으로 되돌린다.
+  const [storageLimitEditing, setStorageLimitEditing] = useState(false);
+  const [storageLimitDraft, setStorageLimitDraft] = useState("");
+  const startEditStorageLimit = () => {
+    setStorageLimitDraft(String(storageLimitGB));
+    setStorageLimitEditing(true);
+  };
+  const commitStorageLimit = () => {
+    const parsed = parseFloat(storageLimitDraft);
+    if (!isNaN(parsed) && parsed > 0) setStorageLimitGB(parsed);
+    setStorageLimitEditing(false);
   };
 
   // 하단 탭바 바로 위에 뜨는 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다"처럼
@@ -1377,6 +1396,13 @@ export default function Alloy() {
       .filter((x) => x.kind); // 미지원 형식은 건너뛴다
 
     if (!toUpload.length) return;
+
+    // 이 업로드로 저장 공간 한도를 넘기면 하나도 올리지 않고 안내만 띄운다.
+    const incomingBytes = toUpload.reduce((s, x) => s + x.file.size, 0);
+    if (usedStorageBytes + incomingBytes > STORAGE_MAX_BYTES) {
+      showToast("저장공간이 부족합니다");
+      return;
+    }
 
     setUploadingCount((c) => c + toUpload.length);
     const results = await Promise.all(
@@ -3084,8 +3110,33 @@ export default function Alloy() {
               <div style={{ padding: "16px 18px" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>저장 공간</span>
-                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)" }}>
-                    {formatGBShort(usedStorageBytes)}/{formatGBShort(STORAGE_MAX_BYTES)}
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", display: "flex", alignItems: "center" }}>
+                    {formatGBShort(usedStorageBytes)}/
+                    {storageLimitEditing ? (
+                      <input
+                        type="number"
+                        min="0.1"
+                        step="0.1"
+                        value={storageLimitDraft}
+                        onChange={(e) => setStorageLimitDraft(e.target.value)}
+                        onBlur={commitStorageLimit}
+                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                        autoFocus
+                        style={{
+                          width: 44,
+                          marginLeft: 2,
+                          padding: 0,
+                          border: "none",
+                          borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 12,
+                          outline: "none",
+                        }}
+                      />
+                    ) : (
+                      formatGBShort(STORAGE_MAX_BYTES)
+                    )}
                   </span>
                 </div>
                 <div
@@ -3131,6 +3182,28 @@ export default function Alloy() {
                   onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
                 >
                   모든 요금제를 확인하세요
+                </button>
+                {/* 한도 - 누르면 위 "0.0GB/10GB"의 10GB 부분이 인풋으로 바뀌어 직접
+                    저장 공간 한도를 설정할 수 있다. */}
+                <button
+                  onClick={startEditStorageLimit}
+                  style={{
+                    display: "block",
+                    marginTop: 4,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    fontSize: 12,
+                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    cursor: "pointer",
+                    outline: "none",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"}
+                  onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
+                >
+                  한도
                 </button>
               </div>
 
