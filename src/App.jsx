@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.46";
+const APP_VERSION = "0.1.47";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -180,6 +180,8 @@ export default function Alloy() {
   const [storageLimitGB, setStorageLimitGB] = useState(10);
   // nickname도 같은 이유로 여기서 미리 선언한다(설정 탭 "프로필" 카드의 닉네임).
   const [nickname, setNickname] = useState("사용자");
+  // posts도 같은 이유로 여기서 미리 선언한다(커뮤니티 탭 "자유게시판" 게시글 목록).
+  const [posts, setPosts] = useState([]);
   const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
   const cycleSortMode = () => {
     setCustomOrderActive(false);
@@ -222,6 +224,7 @@ export default function Alloy() {
         setCustomOrderActive(data.custom_order_active === true);
         setStorageLimitGB(typeof data.storage_limit_gb === "number" && data.storage_limit_gb > 0 ? data.storage_limit_gb : 10);
         setNickname(typeof data.nickname === "string" && data.nickname ? data.nickname : "사용자");
+        setPosts((data.community_posts || []).map(withDates));
         // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
         // 불러올 때마다 r2Key 기준으로 새로 발급받는다. 휴지통 안의 이미지도 복구/미리보기를
         // 위해 함께 새로 발급받는다.
@@ -268,6 +271,7 @@ export default function Alloy() {
           custom_order_active: customOrderActive,
           storage_limit_gb: storageLimitGB,
           nickname,
+          community_posts: posts,
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
@@ -275,7 +279,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, dataLoaded]);
+  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, posts, dataLoaded]);
 
   // 휴지통은 별도 컬럼(trash)에 저장한다. 위 저장과 분리해 둔 이유는, 이 컬럼이 아직
   // 없는(마이그레이션 전) 환경에서 이 upsert가 실패하더라도 vaults/folders/files 등
@@ -472,6 +476,188 @@ export default function Alloy() {
       setNickname(trimmed);
       showToast("변경사항이 저장되었습니다");
     }
+  };
+
+  // 커뮤니티 - 지금은 "자유게시판" 하나만 있는 리스트형 게시판. 글 작성/수정은 전체화면
+  // 에디터(텍스트 에디터와 같은 패턴)를 쓴다. postEditorId가 "new"면 새 글, 아니면 그 id의
+  // 글을 수정하는 중이다.
+  const [postEditorId, setPostEditorId] = useState(null);
+  const [postEditorVisible, setPostEditorVisible] = useState(false);
+  const [postTitleDraft, setPostTitleDraft] = useState("");
+  const [postContentDraft, setPostContentDraft] = useState("");
+  const openPostEditor = (post) => {
+    setPostEditorId(post ? post.id : "new");
+    setPostTitleDraft(post ? post.title : "");
+    setPostContentDraft(post ? post.content : "");
+    requestAnimationFrame(() => setPostEditorVisible(true));
+  };
+  const closePostEditor = () => {
+    const title = postTitleDraft.trim();
+    const now = Date.now();
+    if (postEditorId === "new") {
+      if (title || postContentDraft.trim()) {
+        setPosts((prev) => [...prev, { id: now, title: title || "제목 없음", content: postContentDraft, createdAt: now, updatedAt: now }]);
+      }
+    } else if (postEditorId) {
+      setPosts((prev) => prev.map((p) => (p.id === postEditorId ? { ...p, title: title || p.title, content: postContentDraft, updatedAt: now } : p)));
+    }
+    setPostEditorVisible(false);
+    setTimeout(() => setPostEditorId(null), 200);
+  };
+  // 삭제 - 다른 항목들과 같은 두 번 눌러 확인하는 패턴(deleteArmedKey)을 그대로 쓴다.
+  // 휴지통을 거치지 않고 바로 영구 삭제된다.
+  const deletePost = (id) => {
+    setPosts((prev) => prev.filter((p) => p.id !== id));
+    closeItemMenu();
+    showToast("데이터를 삭제했습니다");
+  };
+  // 게시글 삼점 메뉴 - 수정/삭제만 있는 간단한 버전. itemMenuOpen 등 기존 삼점 메뉴
+  // 인프라를 type: "post"로 그대로 재사용한다.
+  const renderPostMenu = (post) => {
+    const isOpen = itemMenuOpen && itemMenuOpen.type === "post" && itemMenuOpen.id === post.id;
+    const isVisible = itemMenuVisibleKey === `post-${post.id}`;
+    return (
+      <div
+        style={{ position: "relative", margin: -5, padding: 5, flexShrink: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleItemMenu("post", post.id, e.currentTarget);
+          }}
+          onMouseDown={pressDown("scale(0.85)")}
+          onMouseUp={pressUp("scale(1)")}
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 7,
+            border: "none",
+            background: "transparent",
+            color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+            cursor: "pointer",
+            outline: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "all 0.2s",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)";
+            e.currentTarget.style.color = isLight ? "#14161A" : "#FFFFFF";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)";
+          }}
+          aria-label="옵션"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="5" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="12" cy="19" r="2" />
+          </svg>
+        </button>
+
+        {isOpen && createPortal(
+          <>
+            <div
+              onClick={(e) => { e.stopPropagation(); closeItemMenu(); }}
+              style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 29 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: itemMenuAnchor.top,
+                right: itemMenuAnchor.right,
+                minWidth: 128,
+                background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
+                backdropFilter: "blur(20px) saturate(180%)",
+                WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                borderRadius: 12,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+                zIndex: 30,
+                overflow: "hidden",
+                transformOrigin: "top right",
+                opacity: isVisible ? 1 : 0,
+                transform: isVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
+                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeItemMenu();
+                  openPostEditor(post);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  outline: "none",
+                  textAlign: "left",
+                  transition: "background 0.2s",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              >
+                수정
+              </button>
+              <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+              {(() => {
+                const deleteKey = `post-${post.id}`;
+                const isArmed = deleteArmedKey === deleteKey;
+                return (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isArmed) {
+                        deletePost(post.id);
+                      } else {
+                        setDeleteArmedKey(deleteKey);
+                      }
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      border: "none",
+                      background: isArmed ? "#EF4444" : "transparent",
+                      color: isArmed ? "#FFFFFF" : "#EF4444",
+                      fontSize: 15,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      outline: "none",
+                      textAlign: "left",
+                      transition: "background 0.15s ease, color 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isArmed) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isArmed) e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    삭제
+                  </button>
+                );
+              })()}
+            </div>
+          </>,
+          document.body
+        )}
+      </div>
+    );
   };
   // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 기본 10GB를
   // 초과한 만큼만 GB당 $0.02를 곱한다.
@@ -2984,6 +3170,134 @@ export default function Alloy() {
                 </>
               );
             })()}
+          </>
+        )}
+
+        {/* 커뮤니티 탭 콘텐츠 - 지금은 "자유게시판" 하나만 있는 리스트형 게시판. 홈 탭과
+            동일하게 구분선 위에 경로(홈 > 자유게시판)를 보여주고, 오른쪽엔 마법사 대신
+            "게시글 작성" 버튼이 있다. 게시글은 전부 내가 쓴 것이라 항상 삼점 메뉴를 보여준다. */}
+        {active === 1 && (
+          <>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                paddingBottom: 12,
+                marginBottom: 16,
+                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                <span style={{ color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500, opacity: 0.7 }}>
+                  홈
+                </span>
+                <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 15 }}>
+                  &gt;
+                </span>
+                <span style={{ color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500 }}>
+                  자유게시판
+                </span>
+              </div>
+
+              <button
+                onClick={() => openPostEditor(null)}
+                onMouseDown={pressDown("scale(0.9)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="게시글 작성"
+                title="게시글 작성"
+                style={{
+                  minWidth: 36,
+                  height: 30,
+                  padding: "0 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: 0.2,
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  whiteSpace: "nowrap",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.12)"}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                게시글 작성
+              </button>
+            </div>
+
+            {posts.length === 0 ? (
+              <div
+                style={{
+                  padding: "48px 0",
+                  textAlign: "center",
+                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                  fontSize: 14,
+                }}
+              >
+                아직 게시글이 없습니다
+              </div>
+            ) : (
+              posts
+                .slice()
+                .sort((a, b) => b.createdAt - a.createdAt)
+                .map((post) => (
+                  <div
+                    key={post.id}
+                    onClick={() => openPostEditor(post)}
+                    onMouseDown={pressDown("scale(0.98)")}
+                    onMouseUp={pressUp("none")}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)"}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "18px 18px",
+                      marginBottom: 8,
+                      borderRadius: 10,
+                      background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                      backdropFilter: "blur(20px) saturate(180%)",
+                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                      border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                      cursor: "pointer",
+                      touchAction: "manipulation",
+                      userSelect: "none",
+                      WebkitUserSelect: "none",
+                      WebkitTouchCallout: "none",
+                      transition: "background 0.2s ease, transform 0.15s ease",
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 15,
+                          fontWeight: 500,
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {post.title}
+                      </div>
+                      <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 4 }}>
+                        {formatDate(post.createdAt)}
+                      </div>
+                    </div>
+                    {renderPostMenu(post)}
+                  </div>
+                ))
+            )}
           </>
         )}
 
@@ -5815,6 +6129,112 @@ export default function Alloy() {
               lineHeight: 1.7,
               color: isLight ? "#14161A" : "#FFFFFF",
               fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+            }}
+          />
+        </div>
+      )}
+
+      {/* 게시글 작성/수정 - 텍스트 에디터와 동일한 전체화면 패턴(좌측 제목 인풋 + 우측 X 닫기).
+          닫으면(X, 뒤로가기 등) 초안이 바로 저장/생성된다 - 별도 저장 버튼 없음. */}
+      {postEditorId && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: isLight ? "#FFFFFF" : "#141413",
+            zIndex: 49,
+            display: "flex",
+            flexDirection: "column",
+            opacity: postEditorVisible ? 1 : 0,
+            transition: "opacity 0.25s ease",
+          }}
+        >
+          <div
+            style={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "20px 20px 12px 20px",
+              paddingTop: "max(20px, env(safe-area-inset-top))",
+            }}
+          >
+            <input
+              type="text"
+              value={postTitleDraft}
+              onChange={(e) => setPostTitleDraft(e.target.value)}
+              placeholder="제목 없음"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                fontSize: 22,
+                fontWeight: 700,
+                color: isLight ? "#14161A" : "#FFFFFF",
+              }}
+            />
+            <div style={{ position: "relative", marginRight: addButtonExtraInset, flexShrink: 0 }}>
+              <button
+                onClick={closePostEditor}
+                onMouseEnter={() => setTrashCloseButtonHovered(true)}
+                onMouseLeave={(e) => {
+                  setTrashCloseButtonHovered(false);
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+                onMouseDown={pressDown("scale(0.9)")}
+                onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
+                aria-label="닫기"
+                style={{
+                  width: TOP_BUTTON_SIZE,
+                  height: TOP_BUTTON_SIZE,
+                  flexShrink: 0,
+                  borderRadius: "50%",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  background: trashCloseButtonHovered
+                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  boxShadow: trashCloseButtonHovered
+                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  outline: "none",
+                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                  transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <textarea
+            value={postContentDraft}
+            onChange={(e) => setPostContentDraft(e.target.value)}
+            placeholder="내용을 입력하세요"
+            style={{
+              flex: 1,
+              minHeight: 0,
+              border: "none",
+              outline: "none",
+              resize: "none",
+              background: "transparent",
+              padding: "0 20px 24px 20px",
+              fontSize: 15,
+              lineHeight: 1.7,
+              color: isLight ? "#14161A" : "#FFFFFF",
             }}
           />
         </div>
