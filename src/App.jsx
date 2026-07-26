@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.37";
+const APP_VERSION = "0.1.38";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -1422,6 +1422,32 @@ export default function Alloy() {
     showToast("데이터를 삭제했습니다");
   };
 
+  // 휴지통 전체 선택 - 텍스트 없는 스위치. 켜져 있을 때만 옆의 전체 삭제/복구 버튼이
+  // 휴지통에 담긴 모든 항목에 대해 한 번에 동작한다.
+  const [trashSelectAll, setTrashSelectAll] = useState(false);
+  const restoreAllTrash = () => {
+    if (!trash.length) return;
+    trash.forEach((entry) => {
+      if (entry.vault) setVaults((prev) => [...prev, entry.vault]);
+      const foldersToRestore = entry.folder ? [entry.folder, ...(entry.folders || [])] : (entry.folders || []);
+      if (foldersToRestore.length) setFolders((prev) => [...prev, ...foldersToRestore]);
+      if (entry.files && entry.files.length) setFiles((prev) => [...prev, ...entry.files]);
+    });
+    setTrash([]);
+    setTrashSelectAll(false);
+    showToast("데이터를 복구했습니다");
+  };
+  const deleteAllTrash = () => {
+    if (!trash.length) return;
+    trash.forEach((entry) => {
+      (entry.files || []).forEach((f) => {
+        if (f.r2Key) r2Presign({ action: "delete", key: f.r2Key }).catch((e) => console.error("R2 삭제 실패:", e));
+      });
+    });
+    setTrash([]);
+    setTrashSelectAll(false);
+  };
+
   // 휴지통 복구 - 원래 있던 자리(vaults/folders/files)로 그대로 되돌려 놓는다.
   const restoreTrashItem = (trashId) => {
     const entry = trash.find((t) => t.id === trashId);
@@ -1632,7 +1658,7 @@ export default function Alloy() {
           {(tagScreenTags.length > 0 || (active === 2 && trashScreenOpen)) && (
             <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
             <button
-              onClick={() => { setTrashScreenOpen(false); closeTagScreen(); }}
+              onClick={() => { setTrashScreenOpen(false); setTrashSelectAll(false); closeTagScreen(); }}
               onMouseEnter={() => setTrashCloseButtonHovered(true)}
               onMouseLeave={(e) => {
                 setTrashCloseButtonHovered(false);
@@ -3156,6 +3182,79 @@ export default function Alloy() {
             복구를 누르면 원래 위치로 돌아가고, 삭제를 누르면 확인 절차 없이 바로 영구 삭제된다. */}
         {active === 2 && trashScreenOpen && !tagScreenTags.length && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {/* 제목 바로 밑 - 텍스트 없는 전체 선택 스위치 + 오른쪽에 삭제/복구 버튼.
+                스위치가 켜져 있을 때만 두 버튼이 휴지통 전체에 대해 동작한다. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              <button
+                onClick={() => setTrashSelectAll((v) => !v)}
+                aria-label="전체 선택"
+                role="switch"
+                aria-checked={trashSelectAll}
+                style={{
+                  width: 40,
+                  height: 24,
+                  flexShrink: 0,
+                  borderRadius: 999,
+                  border: "none",
+                  padding: 2,
+                  background: trashSelectAll ? (isLight ? "#14161A" : "#FFFFFF") : (isLight ? "rgba(20,22,26,0.15)" : "rgba(255,255,255,0.18)"),
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  justifyContent: trashSelectAll ? "flex-end" : "flex-start",
+                  transition: "background 0.2s ease",
+                }}
+              >
+                <div
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: "50%",
+                    background: trashSelectAll ? (isLight ? "#FFFFFF" : "#14161A") : (isLight ? "#FFFFFF" : "#3a3a39"),
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                    transition: "background 0.2s ease",
+                  }}
+                />
+              </button>
+              <button
+                onClick={deleteAllTrash}
+                disabled={!trashSelectAll || trash.length === 0}
+                style={{
+                  padding: "6px 14px",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: "#EF4444",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: trashSelectAll && trash.length > 0 ? "pointer" : "default",
+                  outline: "none",
+                  opacity: trashSelectAll && trash.length > 0 ? 1 : 0.4,
+                  transition: "opacity 0.2s ease",
+                }}
+              >
+                삭제
+              </button>
+              <button
+                onClick={restoreAllTrash}
+                disabled={!trashSelectAll || trash.length === 0}
+                style={{
+                  padding: "6px 14px",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: trashSelectAll && trash.length > 0 ? "pointer" : "default",
+                  outline: "none",
+                  opacity: trashSelectAll && trash.length > 0 ? 1 : 0.4,
+                  transition: "opacity 0.2s ease",
+                }}
+              >
+                복구
+              </button>
+            </div>
             {trash.length === 0 ? (
               <div
                 style={{
@@ -4397,6 +4496,7 @@ export default function Alloy() {
                   setActive(i);
                   if (i !== 2) {
                     setTrashScreenOpen(false);
+                    setTrashSelectAll(false);
                     setPricingInfoOpen(false);
                   }
                   closeTagScreen();
