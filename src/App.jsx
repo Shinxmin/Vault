@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.33";
+const APP_VERSION = "0.1.34";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -360,20 +360,22 @@ export default function Alloy() {
 
   // 설정 탭 > 휴지통 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
-  // 요금 안내 - "모든 요금제를 확인하세요"를 누르면 바로 밑에 안내 문구가 펼쳐지고,
-  // 다른 곳을 터치하면(바깥 클릭 감지) 접힌다.
+  // 요금 안내 - "모든 요금제를 확인하세요"를 누르면 바로 밑에 토스트처럼 안내 문구가
+  // 2초간 페이드 인/아웃으로 떴다가 사라진다(하단 서브 액션바 토스트와 같은 타이밍).
   const [pricingInfoOpen, setPricingInfoOpen] = useState(false);
-  const pricingInfoRef = useRef(null);
-  useEffect(() => {
-    if (!pricingInfoOpen) return;
-    const handleOutside = (e) => {
-      if (pricingInfoRef.current && !pricingInfoRef.current.contains(e.target)) {
-        setPricingInfoOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", handleOutside);
-    return () => document.removeEventListener("pointerdown", handleOutside);
-  }, [pricingInfoOpen]);
+  const [pricingInfoVisible, setPricingInfoVisible] = useState(false);
+  const pricingInfoShowTimerRef = useRef(null);
+  const pricingInfoHideTimerRef = useRef(null);
+  const showPricingInfo = () => {
+    if (pricingInfoShowTimerRef.current) clearTimeout(pricingInfoShowTimerRef.current);
+    if (pricingInfoHideTimerRef.current) clearTimeout(pricingInfoHideTimerRef.current);
+    setPricingInfoOpen(true);
+    requestAnimationFrame(() => setPricingInfoVisible(true));
+    pricingInfoHideTimerRef.current = setTimeout(() => {
+      setPricingInfoVisible(false);
+      pricingInfoShowTimerRef.current = setTimeout(() => setPricingInfoOpen(false), 300);
+    }, 2000);
+  };
   // 휴지통 항목의 복구/삭제 - 다른 항목들과 같은 우측 끝 삼점 메뉴 패턴으로 담는다.
   const [trashItemMenuOpen, setTrashItemMenuOpen] = useState(null); // 휴지통 항목 id
   const [trashItemMenuVisible, setTrashItemMenuVisible] = useState(false);
@@ -963,6 +965,11 @@ export default function Alloy() {
   const toggleConvertChecked = (id) => {
     setConvertChecked((prev) => ({ ...prev, [id]: !prev[id] }));
   };
+  // 전체 선택 - 이미 전부 체크돼 있으면 전체 해제, 아니면 전체 선택으로 토글한다.
+  const toggleConvertSelectAll = () => {
+    const allChecked = convertTargets.length > 0 && convertTargets.every((item) => convertChecked[item.id]);
+    setConvertChecked(allChecked ? {} : Object.fromEntries(convertTargets.map((item) => [item.id, true])));
+  };
   // 지우기 - 체크된 항목들의 미리보기 이름을 비운다.
   const handleConvertClear = () => {
     setConvertDrafts((prev) => {
@@ -1095,6 +1102,11 @@ export default function Alloy() {
   const toggleTagChecked = (id) => {
     setTagChecked((prev) => ({ ...prev, [id]: !prev[id] }));
   };
+  // 전체 선택 - 이미 전부 체크돼 있으면 전체 해제, 아니면 전체 선택으로 토글한다.
+  const toggleTagSelectAll = () => {
+    const allChecked = tagTargets.length > 0 && tagTargets.every((item) => tagChecked[item.id]);
+    setTagChecked(allChecked ? {} : Object.fromEntries(tagTargets.map((item) => [item.id, true])));
+  };
   // 삭제 - 체크된 항목들의 기존 보유 태그를 전부 비운다.
   const handleTagClear = () => {
     setTagDrafts((prev) => {
@@ -1155,26 +1167,14 @@ export default function Alloy() {
   const taggedDocs = taggedFiles.filter((f) => f.kind !== "image");
   const closeTagScreen = () => setTagScreenTags([]);
 
-  // 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류", 두 진입점 모두 앱에서 실제로 쓰이고
-  // 있는 모든 태그를 3열 그리드로 보여준다. 검색창과는 무관한 독립된 플로팅 패널이다.
-  // 여기서 하나를 고르면 "분류" 화면(위의 taggedFolders/taggedImages/taggedDocs)이 그 태그로 열린다.
+  // 앱에서 실제로 쓰이고 있는 모든 태그 - 마법사의 "분류" 모달(여러 개 체크)에서 쓴다.
   const allTags = useMemo(() => Array.from(new Set([
     ...folders.flatMap((f) => f.tags || []),
     ...files.flatMap((f) => f.tags || []),
   ])).sort(), [folders, files]);
-  const [tagPaletteOpen, setTagPaletteOpen] = useState(false);
-  const [tagPaletteVisible, setTagPaletteVisible] = useState(false);
-  const openTagPalette = () => {
-    setTagPaletteOpen(true);
-    requestAnimationFrame(() => setTagPaletteVisible(true));
-  };
-  const closeTagPalette = () => {
-    setTagPaletteVisible(false);
-    setTimeout(() => setTagPaletteOpen(false), 200);
-  };
+  // 태그 텍스트를 누르면 검색/팔레트를 거치지 않고 곧바로 그 태그의 "분류" 화면을 연다.
   const openTagScreen = (tag) => {
     setTagScreenTags([tag]);
-    closeTagPalette();
   };
 
   // "분류" 모달 - 마법사 메뉴의 "분류"를 누르면 뜬다(태그 팔레트와는 별개). 존재하는 모든
@@ -2399,7 +2399,8 @@ export default function Alloy() {
               };
 
               // 폴더/이미지/문서 제목 아래에 "#태그"를 작은 글씨로 나열한다. 누르면(클릭 전파를
-              // 막아 상위 행의 이동 동작을 가로채지 않고) 그 태그의 전체 목록 화면을 연다.
+              // 막아 상위 행의 이동 동작을 가로채지 않고) 검색/팔레트를 거치지 않고 곧바로
+              // 그 태그가 달린 항목들을 모은 "분류" 화면을 연다.
               const renderTagPills = (item) => {
                 if (!item.tags || item.tags.length === 0) return null;
                 return (
@@ -2409,7 +2410,7 @@ export default function Alloy() {
                         key={tag}
                         onClick={(e) => {
                           e.stopPropagation();
-                          openTagPalette();
+                          openTagScreen(tag);
                         }}
                         style={{
                           fontSize: 12,
@@ -3060,11 +3061,11 @@ export default function Alloy() {
                     }}
                   />
                 </div>
-                {/* 저장 공간 2열 - 누르면 바로 밑에 요금 안내 문구가 펼쳐진다. 다른 곳을
-                    터치하면(pricingInfoRef 바깥 클릭) 접힌다. */}
-                <div ref={pricingInfoRef}>
+                {/* 저장 공간 2열 - 누르면 바로 밑에 안내 문구가 토스트처럼 2초간 페이드
+                    인/아웃되며 뜬다. */}
+                <div>
                   <button
-                    onClick={() => setPricingInfoOpen(true)}
+                    onClick={showPricingInfo}
                     style={{
                       marginTop: 8,
                       padding: 0,
@@ -3083,7 +3084,13 @@ export default function Alloy() {
                     모든 요금제를 확인하세요
                   </button>
                   {pricingInfoOpen && (
-                    <div style={{ marginTop: 8 }}>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        opacity: pricingInfoVisible ? 1 : 0,
+                        transition: "opacity 0.3s ease",
+                      }}
+                    >
                       <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
                         Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
                       </div>
@@ -4474,73 +4481,6 @@ export default function Alloy() {
         </button>
       </div>
 
-      {/* 태그 팔레트 - 태그 텍스트 클릭 / 마법사의 "분류", 두 진입점이 여기로 온다. 검색창과
-          무관하게 탭바 위에 독립적으로 뜨는 3열 그리드. 하나를 고르면 "분류" 화면이 열린다. */}
-      {tagPaletteOpen && (
-        <>
-          <div onClick={closeTagPalette} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 11 }} />
-          <div
-            style={{
-              position: "fixed",
-              bottom: 24 + BAR_HEIGHT + 14,
-              left: "50%",
-              zIndex: 12,
-              width: "min(360px, 88vw)",
-              maxHeight: "40vh",
-              overflowY: "auto",
-              opacity: tagPaletteVisible ? 1 : 0,
-              transform: tagPaletteVisible ? "translate(-50%, 0)" : "translate(-50%, 16px)",
-              transition: "opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
-              padding: 10,
-              borderRadius: 20,
-              background: isLight ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.08)",
-              backdropFilter: "blur(28px) saturate(180%)",
-              WebkitBackdropFilter: "blur(28px) saturate(180%)",
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-              boxShadow: "0 20px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.12)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {(() => {
-              if (allTags.length === 0) {
-                return (
-                  <div style={{ padding: "8px 4px", textAlign: "center", fontSize: 13, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)", textShadow: isLight ? "none" : "0 1px 4px rgba(0,0,0,0.6)" }}>
-                    아직 태그가 없습니다
-                  </div>
-                );
-              }
-              return (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-                  {allTags.map((tag) => (
-                    <span
-                      key={tag}
-                      onClick={() => openTagScreen(tag)}
-                      style={{
-                        padding: "4px 2px",
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 13,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        textAlign: "center",
-                        textShadow: isLight ? "0 1px 3px rgba(255,255,255,0.8)" : "0 1px 4px rgba(0,0,0,0.7)",
-                        transition: "opacity 0.15s ease",
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = "0.6"}
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              );
-            })()}
-          </div>
-        </>
-      )}
-
       {/* 검색창 패널 (리퀴드 글래스) - 탭바와 동일한 디자인 위에 검색 플레이스홀더 입력창 하나만 있다.
           입력창 폰트 크기를 16px 이상으로 둬야 iOS 사파리가 포커스 시 화면을 자동 확대하지 않는다. */}
       {searchOpen && (
@@ -4691,6 +4631,29 @@ export default function Alloy() {
                 </svg>
               </button>
             </div>
+
+            <button
+              onClick={toggleConvertSelectAll}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: 0,
+                marginBottom: 14,
+                border: "none",
+                background: "transparent",
+                fontSize: 13,
+                fontWeight: 500,
+                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                cursor: "pointer",
+                outline: "none",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              전체 선택
+            </button>
 
             <div
               style={{
@@ -4929,6 +4892,29 @@ export default function Alloy() {
                 </svg>
               </button>
             </div>
+
+            <button
+              onClick={toggleTagSelectAll}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: 0,
+                marginBottom: 14,
+                border: "none",
+                background: "transparent",
+                fontSize: 13,
+                fontWeight: 500,
+                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                cursor: "pointer",
+                outline: "none",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              전체 선택
+            </button>
 
             {/* 지정할 데이터 - 체크한 항목에 태그가 적용된다. 각 항목의 현재 미리보기 태그도 함께 보여준다. */}
             <div
