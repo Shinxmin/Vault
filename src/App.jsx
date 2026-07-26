@@ -3,12 +3,12 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.45";
+const APP_VERSION = "0.1.46";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
   // 상단 바 제목 - 홈 탭과 설정 탭에 "Vaulty" 브랜드를 보여준다. 설정 탭에는 + 추가 버튼이 없다.
-  const TAB_TITLES = ["Vaulty", "", "Vaulty"];
+  const TAB_TITLES = ["Vaulty", "Vaulty", "Vaulty"];
   const [active, setActive] = useState(0);
 
   // 탭 전환 시 이전 탭의 스크롤 위치가 유지되어 콘텐츠가 적은 탭에서
@@ -178,6 +178,8 @@ export default function Alloy() {
   const [customOrderActive, setCustomOrderActive] = useState(false);
   // storageLimitGB도 같은 이유로 여기서 미리 선언한다(저장 공간 한도, 기본 10GB).
   const [storageLimitGB, setStorageLimitGB] = useState(10);
+  // nickname도 같은 이유로 여기서 미리 선언한다(설정 탭 "프로필" 카드의 닉네임).
+  const [nickname, setNickname] = useState("사용자");
   const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
   const cycleSortMode = () => {
     setCustomOrderActive(false);
@@ -219,6 +221,7 @@ export default function Alloy() {
         setFolders(loadedFolders);
         setCustomOrderActive(data.custom_order_active === true);
         setStorageLimitGB(typeof data.storage_limit_gb === "number" && data.storage_limit_gb > 0 ? data.storage_limit_gb : 10);
+        setNickname(typeof data.nickname === "string" && data.nickname ? data.nickname : "사용자");
         // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
         // 불러올 때마다 r2Key 기준으로 새로 발급받는다. 휴지통 안의 이미지도 복구/미리보기를
         // 위해 함께 새로 발급받는다.
@@ -264,6 +267,7 @@ export default function Alloy() {
           files: filesToSave,
           custom_order_active: customOrderActive,
           storage_limit_gb: storageLimitGB,
+          nickname,
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
@@ -271,7 +275,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, storageLimitGB, dataLoaded]);
+  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, dataLoaded]);
 
   // 휴지통은 별도 컬럼(trash)에 저장한다. 위 저장과 분리해 둔 이유는, 이 컬럼이 아직
   // 없는(마이그레이션 전) 환경에서 이 upsert가 실패하더라도 vaults/folders/files 등
@@ -452,6 +456,23 @@ export default function Alloy() {
   };
   // 한도 표시 전용 포맷 - 1,000GB(=1TB)일 때만 "1TB"로 보여주고, 999GB 이하는 그대로 GB로 보여준다.
   const formatStorageLimitDisplay = (gb) => (gb >= 1000 ? "1TB" : formatGBShort(gb * 1024 * 1024 * 1024));
+
+  // 프로필 닉네임 편집 - 연필 아이콘을 누르면 닉네임이 인풋으로 바뀌고, 포커스를 벗어나거나
+  // Enter를 누르면 확인 버튼 없이 바로 저장된다.
+  const [nicknameEditing, setNicknameEditing] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState("");
+  const startEditNickname = () => {
+    setNicknameDraft(nickname);
+    setNicknameEditing(true);
+  };
+  const commitNickname = () => {
+    const trimmed = nicknameDraft.trim();
+    setNicknameEditing(false);
+    if (trimmed && trimmed !== nickname) {
+      setNickname(trimmed);
+      showToast("변경사항이 저장되었습니다");
+    }
+  };
   // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 기본 10GB를
   // 초과한 만큼만 GB당 $0.02를 곱한다.
   const usedStorageGB = usedStorageBytes / (1024 * 1024 * 1024);
@@ -2979,6 +3000,93 @@ export default function Alloy() {
             >
               설정
             </div>
+
+            {/* 프로필 카드 - 테마 카드 바로 위, 별도 테두리. 닉네임 오른쪽 연필 아이콘을
+                누르면 인풋으로 바뀌고, 포커스를 벗어나거나 Enter를 누르면 확인 버튼 없이
+                바로 저장된다(서브 액션바 안내 + DB 반영). */}
+            <div
+              style={{
+                borderRadius: 14,
+                background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                backdropFilter: "blur(20px) saturate(180%)",
+                WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                padding: "14px 18px",
+              }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
+                프로필
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0 }}>
+                  닉네임
+                </span>
+                {nicknameEditing ? (
+                  <input
+                    type="text"
+                    value={nicknameDraft}
+                    onChange={(e) => setNicknameDraft(e.target.value)}
+                    onBlur={commitNickname}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    autoFocus
+                    maxLength={20}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: 0,
+                      border: "none",
+                      borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
+                      background: "transparent",
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 16,
+                      fontWeight: 500,
+                      outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 500,
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {nickname}
+                  </span>
+                )}
+                {!nicknameEditing && (
+                  <button
+                    onClick={startEditNickname}
+                    aria-label="닉네임 수정"
+                    style={{
+                      flexShrink: 0,
+                      width: 22,
+                      height: 22,
+                      padding: 0,
+                      border: "none",
+                      background: "transparent",
+                      color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)",
+                      cursor: "pointer",
+                      outline: "none",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"}
+                    onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)"}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div
               style={{
                 borderRadius: 14,

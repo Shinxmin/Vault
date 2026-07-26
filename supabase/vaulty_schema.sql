@@ -10,6 +10,7 @@ create table if not exists public.vaulty_state (
   custom_order_active boolean not null default false,
   trash jsonb not null default '[]'::jsonb,
   storage_limit_gb numeric not null default 10,
+  nickname text not null default '사용자',
   updated_at timestamptz not null default now()
 );
 
@@ -17,8 +18,10 @@ create table if not exists public.vaulty_state (
 alter table public.vaulty_state add column if not exists custom_order_active boolean not null default false;
 -- 휴지통(삭제 후 7일간 보관되는 Vault/폴더/파일) 저장용 컬럼.
 alter table public.vaulty_state add column if not exists trash jsonb not null default '[]'::jsonb;
--- 저장 공간 한도(GB) - 설정 탭의 "한도"에서 직접 늘려서 설정할 수 있다.
+-- 저장 공간 한도(GB) - 설정 탭의 "한도 설정"에서 직접 늘려서 설정할 수 있다.
 alter table public.vaulty_state add column if not exists storage_limit_gb numeric not null default 10;
+-- 프로필 닉네임 - 설정 탭의 "프로필" 카드에서 연필 아이콘으로 수정한다.
+alter table public.vaulty_state add column if not exists nickname text not null default '사용자';
 
 alter table public.vaulty_state enable row level security;
 
