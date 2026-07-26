@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.35";
+const APP_VERSION = "0.1.36";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -153,7 +153,7 @@ export default function Alloy() {
   //  - vaults: 홈 화면에 카드로 보이는 최상위 프로젝트 [{id, name}]
   //  - folders: path[0]가 소속 Vault 이름이며 path 는 자기 이름까지 포함
   //  - files: path 는 소속 디렉터리(= Vault 이름 포함). kind 는 'image' | 'doc'
-  //    · 이미지/움짤(JPG/JPEG/PNG/GIF/APNG)과 텍스트(TXT)만 업로드 가능
+  //    · 이미지/움짤(JPG/JPEG/PNG/GIF/APNG/WEBP)과 텍스트(TXT)만 업로드 가능
   //    · 문서(doc)는 Vault 바로 아래(path.length === 1)에서만 생성/보관 가능
   const [currentPath, setCurrentPath] = useState([]); // [] = 홈(Vault 목록)
   const [vaults, setVaults] = useState([]);
@@ -314,7 +314,7 @@ export default function Alloy() {
   const [vaultModalVisible, setVaultModalVisible] = useState(false);
   const [vaultNameInput, setVaultNameInput] = useState("");
 
-  const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "apng"];
+  const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "apng", "webp"];
   const getKindFromName = (name) => {
     const ext = (name.split(".").pop() || "").toLowerCase();
     if (IMAGE_EXTS.includes(ext)) return "image";
@@ -1364,7 +1364,7 @@ export default function Alloy() {
   };
 
   // 실제 갤러리/파일 선택 다이얼로그(input[type=file])를 통해 고른 항목을 R2에 업로드하고
-  // 성공한 것만 현재 위치(currentPath)에 추가한다. 지원 형식(JPG/JPEG/PNG/GIF/APNG/TXT)만 받는다.
+  // 성공한 것만 현재 위치(currentPath)에 추가한다. 지원 형식(JPG/JPEG/PNG/GIF/APNG/WEBP/TXT)만 받는다.
   // 업로드는 이 함수가 아니라 브라우저가 presigned URL로 R2에 직접 PUT한다.
   const [uploadingCount, setUploadingCount] = useState(0);
   const handleFilesPicked = async (e) => {
@@ -1751,7 +1751,7 @@ export default function Alloy() {
               <input
                 ref={galleryInputRef}
                 type="file"
-                accept="image/jpeg,image/png,image/gif,image/apng,.jpg,.jpeg,.png,.gif,.apng"
+                accept="image/jpeg,image/png,image/gif,image/apng,image/webp,.jpg,.jpeg,.png,.gif,.apng,.webp"
                 multiple
                 onChange={handleFilesPicked}
                 style={{ display: "none" }}
