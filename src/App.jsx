@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.44";
+const APP_VERSION = "0.1.45";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -3276,7 +3276,7 @@ export default function Alloy() {
                 청구 금액
               </div>
               {billingOverageGB > 0 ? (
-                <div style={{ fontSize: 16, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "#14161A" : "#FFFFFF" }}>
                   {billingOverageGB % 1 === 0 ? billingOverageGB : billingOverageGB.toFixed(1)}GB ({billingAmount.toFixed(2)}$/월)
                 </div>
               ) : (
