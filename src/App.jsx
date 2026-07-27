@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.47";
+const APP_VERSION = "0.1.48";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -180,7 +180,7 @@ export default function Alloy() {
   const [storageLimitGB, setStorageLimitGB] = useState(10);
   // nickname도 같은 이유로 여기서 미리 선언한다(설정 탭 "프로필" 카드의 닉네임).
   const [nickname, setNickname] = useState("사용자");
-  // posts도 같은 이유로 여기서 미리 선언한다(커뮤니티 탭 "자유게시판" 게시글 목록).
+  // posts도 같은 이유로 여기서 미리 선언한다(커뮤니티 탭 "게시판" 게시글 목록).
   const [posts, setPosts] = useState([]);
   const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
   const cycleSortMode = () => {
@@ -478,32 +478,52 @@ export default function Alloy() {
     }
   };
 
-  // 커뮤니티 - 지금은 "자유게시판" 하나만 있는 리스트형 게시판. 글 작성/수정은 전체화면
-  // 에디터(텍스트 에디터와 같은 패턴)를 쓴다. postEditorId가 "new"면 새 글, 아니면 그 id의
-  // 글을 수정하는 중이다.
+  // 커뮤니티 - 지금은 "게시판" 하나만 있는 리스트형 게시판. 글 작성/수정은 전체화면
+  // 에디터(텍스트 에디터와 같은 패턴)를 쓴다. viewingPostId는 목록에서 글을 눌러 들어간
+  // 상세 화면(경로: 게시판 > 제목)의 글 id - null이면 목록(게시판) 화면이다.
+  const [viewingPostId, setViewingPostId] = useState(null);
   const [postEditorId, setPostEditorId] = useState(null);
   const [postEditorVisible, setPostEditorVisible] = useState(false);
   const [postTitleDraft, setPostTitleDraft] = useState("");
   const [postContentDraft, setPostContentDraft] = useState("");
+  // 새 글은 "새 문서"와 동일하게 열자마자 실제 항목을 만들어 둔다(빈 글도 목록에 남는다) -
+  // 그래야 아래 자동저장 이펙트가 글 수정 때와 똑같이 "이 id를 업데이트"만 하면 된다.
   const openPostEditor = (post) => {
-    setPostEditorId(post ? post.id : "new");
-    setPostTitleDraft(post ? post.title : "");
-    setPostContentDraft(post ? post.content : "");
+    if (post) {
+      setPostEditorId(post.id);
+      setPostTitleDraft(post.title);
+      setPostContentDraft(post.content);
+    } else {
+      const now = Date.now();
+      setPosts((prev) => [...prev, { id: now, title: "", content: "", createdAt: now, updatedAt: now }]);
+      setPostEditorId(now);
+      setPostTitleDraft("");
+      setPostContentDraft("");
+    }
     requestAnimationFrame(() => setPostEditorVisible(true));
   };
   const closePostEditor = () => {
-    const title = postTitleDraft.trim();
-    const now = Date.now();
-    if (postEditorId === "new") {
-      if (title || postContentDraft.trim()) {
-        setPosts((prev) => [...prev, { id: now, title: title || "제목 없음", content: postContentDraft, createdAt: now, updatedAt: now }]);
-      }
-    } else if (postEditorId) {
-      setPosts((prev) => prev.map((p) => (p.id === postEditorId ? { ...p, title: title || p.title, content: postContentDraft, updatedAt: now } : p)));
-    }
+    setPosts((prev) => prev.map((p) => (
+      p.id === postEditorId
+        ? { ...p, title: postTitleDraft.trim() || "제목 없음", content: postContentDraft, updatedAt: Date.now() }
+        : p
+    )));
     setPostEditorVisible(false);
     setTimeout(() => setPostEditorId(null), 200);
   };
+  // 게시글 에디터가 열려 있는 동안 타이핑을 멈추면 잠시 뒤 자동 저장 - 텍스트 문서 에디터와
+  // 동일한 패턴의 백그라운드 저장.
+  useEffect(() => {
+    if (!postEditorId) return;
+    const t = setTimeout(() => {
+      setPosts((prev) => prev.map((p) => (
+        p.id === postEditorId
+          ? { ...p, title: postTitleDraft.trim() || p.title, content: postContentDraft, updatedAt: Date.now() }
+          : p
+      )));
+    }, 600);
+    return () => clearTimeout(t);
+  }, [postTitleDraft, postContentDraft, postEditorId]);
   // 삭제 - 다른 항목들과 같은 두 번 눌러 확인하는 패턴(deleteArmedKey)을 그대로 쓴다.
   // 휴지통을 거치지 않고 바로 영구 삭제된다.
   const deletePost = (id) => {
@@ -1832,6 +1852,9 @@ export default function Alloy() {
 
   // 상단 헤더(제목) 스티키 공통 스타일: 스크롤해도 화면 최상단에 계속 고정되어 보이고,
   // 탭 콘텐츠의 좌우 패딩을 상쇄하는 음수 마진으로 배경을 화면 끝까지 채운다.
+  // minHeight를 우측 버튼 크기(TOP_BUTTON_SIZE)로 고정해둔다 - 안 그러면 그 자리에 버튼이
+  // 뜨는 탭(홈의 +)과 안 뜨는 탭(설정/커뮤니티)의 헤더 높이가 달라져서 구분선/본문 시작
+  // 위치가 탭마다 어긋나 보인다.
   const stickyHeaderStyle = {
     position: "sticky",
     top: 0,
@@ -1839,6 +1862,7 @@ export default function Alloy() {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
+    minHeight: TOP_BUTTON_SIZE,
     margin: "0 -20px 24px -20px",
     padding: "22px 20px 14px 20px",
     background: isLight ? "rgba(255,255,255,0.45)" : "rgba(20,20,19,0.45)",
@@ -3173,10 +3197,13 @@ export default function Alloy() {
           </>
         )}
 
-        {/* 커뮤니티 탭 콘텐츠 - 지금은 "자유게시판" 하나만 있는 리스트형 게시판. 홈 탭과
-            동일하게 구분선 위에 경로(홈 > 자유게시판)를 보여주고, 오른쪽엔 마법사 대신
-            "게시글 작성" 버튼이 있다. 게시글은 전부 내가 쓴 것이라 항상 삼점 메뉴를 보여준다. */}
-        {active === 1 && (
+        {/* 커뮤니티 탭 콘텐츠 - 지금은 "게시판" 하나만 있는 리스트형 게시판. 홈 탭과 동일하게
+            구분선 위에 경로를 보여준다(목록에서는 "게시판", 글을 누르면 "게시판 > 제목").
+            오른쪽엔 마법사 대신 "작성" 버튼이 있다. 게시글은 전부 내가 쓴 것이라 목록에서
+            항상 삼점 메뉴를 보여준다. */}
+        {active === 1 && (() => {
+          const viewingPost = viewingPostId ? posts.find((p) => p.id === viewingPostId) : null;
+          return (
           <>
             <div
               style={{
@@ -3188,16 +3215,51 @@ export default function Alloy() {
                 borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
-                <span style={{ color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500, opacity: 0.7 }}>
-                  홈
-                </span>
-                <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 15 }}>
-                  &gt;
-                </span>
-                <span style={{ color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500 }}>
-                  자유게시판
-                </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+                <button
+                  onClick={() => setViewingPostId(null)}
+                  onMouseDown={pressDown("scale(0.92)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    fontSize: 15,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    padding: 0,
+                    outline: "none",
+                    flexShrink: 0,
+                    opacity: viewingPost ? 0.7 : 1,
+                    transition: "opacity 0.2s ease, transform 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.opacity = viewingPost ? "0.7" : "1";
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                >
+                  게시판
+                </button>
+                {viewingPost && (
+                  <>
+                    <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 15, flexShrink: 0 }}>
+                      &gt;
+                    </span>
+                    <span
+                      style={{
+                        color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 15,
+                        fontWeight: 500,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {viewingPost.title || "제목 없음"}
+                    </span>
+                  </>
+                )}
               </div>
 
               <button
@@ -3210,6 +3272,7 @@ export default function Alloy() {
                   minWidth: 36,
                   height: 30,
                   padding: "0 10px",
+                  flexShrink: 0,
                   borderRadius: 8,
                   border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                   background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
@@ -3231,11 +3294,24 @@ export default function Alloy() {
                   e.currentTarget.style.transform = "scale(1)";
                 }}
               >
-                게시글 작성
+                작성
               </button>
             </div>
 
-            {posts.length === 0 ? (
+            {viewingPost ? (
+              /* 게시글 상세 화면 - 읽기 전용. 수정/삭제는 목록의 삼점 메뉴에서 한다. */
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
+                  {viewingPost.title || "제목 없음"}
+                </div>
+                <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginBottom: 20 }}>
+                  {formatDate(viewingPost.createdAt)}
+                </div>
+                <div style={{ fontSize: 15, lineHeight: 1.7, color: isLight ? "#14161A" : "#FFFFFF", whiteSpace: "pre-wrap" }}>
+                  {viewingPost.content}
+                </div>
+              </div>
+            ) : posts.length === 0 ? (
               <div
                 style={{
                   padding: "48px 0",
@@ -3253,7 +3329,7 @@ export default function Alloy() {
                 .map((post) => (
                   <div
                     key={post.id}
-                    onClick={() => openPostEditor(post)}
+                    onClick={() => setViewingPostId(post.id)}
                     onMouseDown={pressDown("scale(0.98)")}
                     onMouseUp={pressUp("none")}
                     onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
@@ -3288,7 +3364,7 @@ export default function Alloy() {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {post.title}
+                        {post.title || "제목 없음"}
                       </div>
                       <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 4 }}>
                         {formatDate(post.createdAt)}
@@ -3299,7 +3375,8 @@ export default function Alloy() {
                 ))
             )}
           </>
-        )}
+          );
+        })()}
 
         {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통 화면 */}
         {active === 2 && !trashScreenOpen && !tagScreenTags.length && (
@@ -5049,10 +5126,11 @@ export default function Alloy() {
                 key={tab}
                 ref={(el) => (btnRefs.current[i] = el)}
                 onClick={() => {
-                  // 다른 탭에 있다가 홈 탭으로 "넘어올" 때는 currentPath를 그대로 둬서 최근에
-                  // 열어본 위치(Vault/폴더)가 보이게 한다. 이미 홈 탭에 있는데 홈 아이콘을 다시
-                  // 누르면(흔한 모바일 탭바 관례대로) 그때는 루트로 초기화한다.
+                  // 다른 탭에 있다가 홈/커뮤니티 탭으로 "넘어올" 때는 각각의 위치를 그대로 둬서
+                  // 최근에 열어본 곳(Vault/폴더, 게시글)이 보이게 한다. 이미 그 탭에 있는데
+                  // 같은 아이콘을 다시 누르면(흔한 모바일 탭바 관례대로) 루트로 초기화한다.
                   if (i === 0 && active === 0) setCurrentPath([]);
+                  if (i === 1 && active === 1) setViewingPostId(null);
                   setActive(i);
                   if (i !== 2) {
                     setTrashScreenOpen(false);
@@ -6081,7 +6159,7 @@ export default function Alloy() {
                 }}
                 onMouseDown={pressDown("scale(0.9)")}
                 onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
-                aria-label="닫기"
+                aria-label="완료"
                 style={{
                   width: TOP_BUTTON_SIZE,
                   height: TOP_BUTTON_SIZE,
@@ -6106,9 +6184,8 @@ export default function Alloy() {
                   transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
                 }}
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 6 9 17l-5-5" />
                 </svg>
               </button>
             </div>
@@ -6116,7 +6193,7 @@ export default function Alloy() {
           <textarea
             value={textContentDraft}
             onChange={(e) => setTextContentDraft(e.target.value)}
-            placeholder="새 문서를 작성해보세요"
+            placeholder="내용을 입력하세요"
             style={{
               flex: 1,
               minHeight: 0,
@@ -6188,7 +6265,7 @@ export default function Alloy() {
                 }}
                 onMouseDown={pressDown("scale(0.9)")}
                 onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
-                aria-label="닫기"
+                aria-label="완료"
                 style={{
                   width: TOP_BUTTON_SIZE,
                   height: TOP_BUTTON_SIZE,
@@ -6213,9 +6290,8 @@ export default function Alloy() {
                   transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
                 }}
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 6 9 17l-5-5" />
                 </svg>
               </button>
             </div>
