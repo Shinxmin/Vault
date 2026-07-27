@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.50";
+const APP_VERSION = "0.1.51";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -1289,7 +1289,7 @@ export default function Alloy() {
   const importVaultByAddress = (address) => {
     const source = vaults.find((v) => v.address === address);
     if (!source) { showToast("존재하지 않는 주소입니다"); return; }
-    if (importedVaults.some((iv) => iv.address === address)) { showToast("이미 가져온 Vaulty입니다"); return; }
+    if (importedVaults.some((iv) => iv.address === address)) { showToast("이미 가져온 Vault입니다"); return; }
     setImportedVaults((prev) => [...prev, { id: Date.now(), sourceVaultId: source.id, address, importedAt: Date.now() }]);
     showToast(`Vaulty@${address}를 가져왔습니다`);
   };
@@ -3494,14 +3494,19 @@ export default function Alloy() {
                         >
                           <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                             <rect x="3" y="3" width="20" height="20" rx="2.5" />
-                            <path d="M9 12h6M12 9v6" strokeDasharray="2 2" />
+                            <circle cx="12" cy="12" r="4.5" />
+                            <circle cx="12" cy="12" r="1" fill={isLight ? "#14161A" : "#FFFFFF"} stroke="none" />
+                            <path d="M12 7.5v1M12 15.5v1M7.5 12h1M15.5 12h1" />
                           </svg>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ color: isLight ? "#14161A" : "#FFFFFF", fontSize: 17, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {source ? source.name : "삭제된 Vault"}
                             </div>
                             <div style={{ marginTop: 5, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              Vaulty@{entry.address} · 읽기 전용
+                              {source ? vaultStatsText(source.name) : "-"}
+                            </div>
+                            <div style={{ marginTop: 3, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13 }}>
+                              읽기 전용
                             </div>
                           </div>
                           {renderImportedVaultMenu(entry)}
@@ -5882,11 +5887,13 @@ export default function Alloy() {
                 key={tab}
                 ref={(el) => (btnRefs.current[i] = el)}
                 onClick={() => {
-                  // 다른 탭에 있다가 홈/커뮤니티 탭으로 "넘어올" 때는 각각의 위치를 그대로 둬서
-                  // 최근에 열어본 곳(Vault/폴더, 게시글)이 보이게 한다. 이미 그 탭에 있는데
-                  // 같은 아이콘을 다시 누르면(흔한 모바일 탭바 관례대로) 루트로 초기화한다.
+                  // 다른 탭에 있다가 홈 탭으로 "넘어올" 때는 위치를 그대로 둬서 최근에 열어본
+                  // 곳(Vault/폴더)이 보이게 한다. 이미 그 탭에 있는데 같은 아이콘을 다시
+                  // 누르면(흔한 모바일 탭바 관례대로) 루트로 초기화한다.
                   if (i === 0 && active === 0) setCurrentPath([]);
-                  if (i === 1 && active === 1) setViewingPostId(null);
+                  // 커뮤니티 탭은 다른 탭에 갔다가 돌아올 때도 항상 게시글 상세에서
+                  // 나가져서 게시판(목록) 화면으로 돌아간다.
+                  if (i === 1) setViewingPostId(null);
                   setActive(i);
                   if (i !== 2) {
                     setTrashScreenOpen(false);
