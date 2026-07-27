@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.48";
+const APP_VERSION = "0.1.49";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -182,6 +182,10 @@ export default function Alloy() {
   const [nickname, setNickname] = useState("사용자");
   // posts도 같은 이유로 여기서 미리 선언한다(커뮤니티 탭 "게시판" 게시글 목록).
   const [posts, setPosts] = useState([]);
+  // importedVaults도 같은 이유로 여기서 미리 선언한다 - 게시글/텍스트문서에 적힌 Vaulty@주소
+  // 링크를 눌러 "가져온" Vault 참조 목록. { id, sourceVaultId, address, importedAt } 형태이며
+  // 원본 vaults 배열은 그대로 두고 읽기 전용 접근 권한만 로컬에 기록한다(진짜 삭제/수정은 불가).
+  const [importedVaults, setImportedVaults] = useState([]);
   const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
   const cycleSortMode = () => {
     setCustomOrderActive(false);
@@ -225,6 +229,7 @@ export default function Alloy() {
         setStorageLimitGB(typeof data.storage_limit_gb === "number" && data.storage_limit_gb > 0 ? data.storage_limit_gb : 10);
         setNickname(typeof data.nickname === "string" && data.nickname ? data.nickname : "사용자");
         setPosts((data.community_posts || []).map(withDates));
+        setImportedVaults(data.imported_vaults || []);
         // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
         // 불러올 때마다 r2Key 기준으로 새로 발급받는다. 휴지통 안의 이미지도 복구/미리보기를
         // 위해 함께 새로 발급받는다.
@@ -272,6 +277,7 @@ export default function Alloy() {
           storage_limit_gb: storageLimitGB,
           nickname,
           community_posts: posts,
+          imported_vaults: importedVaults,
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
@@ -279,7 +285,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, posts, dataLoaded]);
+  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, posts, importedVaults, dataLoaded]);
 
   // 휴지통은 별도 컬럼(trash)에 저장한다. 위 저장과 분리해 둔 이유는, 이 컬럼이 아직
   // 없는(마이그레이션 전) 환경에서 이 upsert가 실패하더라도 vaults/folders/files 등
@@ -370,6 +376,19 @@ export default function Alloy() {
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
 
+  // 게시글/텍스트 문서 에디터의 첨부파일 - 체크(완료) 버튼 바로 왼쪽의 + 버튼을 누르면
+  // "업로드" 버튼 하나만 있는 작은 메뉴가 뜬다. 이미지 뿐 아니라 어떤 파일이든 업로드 가능하고,
+  // (여기선 항상 작성자이므로) 각 첨부파일에 삼점바로 삭제할 수 있다. 삭제는 posts/files의
+  // attachments 배열에서만 빼는 것이고 R2 delete를 호출하지 않아 원본 파일은 그대로 남는다.
+  const [attachMenuOpenFor, setAttachMenuOpenFor] = useState(null); // 'text' | 'post' | null
+  const [attachButtonHovered, setAttachButtonHovered] = useState(false);
+  const attachFileInputRef = useRef(null);
+  const pendingAttachTargetRef = useRef(null); // 'text' | 'post'
+  const toggleAttachMenu = (target) => {
+    setAttachMenuOpenFor((prev) => (prev === target ? null : target));
+  };
+  const closeAttachMenu = () => setAttachMenuOpenFor(null);
+
   // 설정 탭 > 휴지통 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
   // 요금 안내 - "모든 요금제를 확인하세요"를 누르면 하단 서브 액션바와 같은 리퀴드 글래스
@@ -423,10 +442,13 @@ export default function Alloy() {
   // 텍스트 에디터에서 타이핑할 때마다 앱 전체가 리렌더되는데, 이 계산들이 매번 새로
   // 돌면(특히 allTags/tagTargets는 전체 폴더·파일을 훑는다) 입력이 밀리면서 스페이스 등
   // 키 입력이 여러 번 뭉쳐 들어가는 것처럼 보일 수 있어 실제 값이 바뀔 때만 다시 계산한다.
+  const attachmentsBytes = (arr) => arr.reduce((s, item) => s + (item.attachments || []).reduce((s2, a) => s2 + (a.size || 0), 0), 0);
   const usedStorageBytes = useMemo(() =>
     files.reduce((s, f) => s + (f.size || 0), 0) +
-    trash.reduce((s, t) => s + (t.files || []).reduce((s2, f) => s2 + (f.size || 0), 0), 0),
-  [files, trash]);
+    attachmentsBytes(files) +
+    attachmentsBytes(posts) +
+    trash.reduce((s, t) => s + (t.files || []).reduce((s2, f) => s2 + (f.size || 0) + (f.attachments || []).reduce((s3, a) => s3 + (a.size || 0), 0), 0), 0),
+  [files, posts, trash]);
   const formatGBShort = (bytes) => {
     const gb = bytes / (1024 * 1024 * 1024);
     return `${gb % 1 === 0 ? gb : gb.toFixed(1)}GB`;
@@ -679,6 +701,268 @@ export default function Alloy() {
       </div>
     );
   };
+  // 첨부파일 삼점 메뉴 - "삭제" 하나뿐인 아주 단순한 버전. itemMenuOpen 인프라를
+  // type: "attachment"로 재사용하고, id는 "target:targetId:attachmentId" 형태의 합성 키다.
+  const renderAttachmentMenu = (target, targetId, attachment) => {
+    const menuId = `${target}:${targetId}:${attachment.id}`;
+    const isOpen = itemMenuOpen && itemMenuOpen.type === "attachment" && itemMenuOpen.id === menuId;
+    const isVisible = itemMenuVisibleKey === `attachment-${menuId}`;
+    return (
+      <div
+        style={{ position: "relative", flexShrink: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleItemMenu("attachment", menuId, e.currentTarget);
+          }}
+          onMouseDown={pressDown("scale(0.85)")}
+          onMouseUp={pressUp("scale(1)")}
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            border: "none",
+            background: "transparent",
+            color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+            cursor: "pointer",
+            outline: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+          aria-label="옵션"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="5" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="12" cy="19" r="2" />
+          </svg>
+        </button>
+
+        {isOpen && createPortal(
+          <>
+            <div
+              onClick={(e) => { e.stopPropagation(); closeItemMenu(); }}
+              style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 51 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: itemMenuAnchor.top,
+                right: itemMenuAnchor.right,
+                minWidth: 110,
+                background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
+                backdropFilter: "blur(20px) saturate(180%)",
+                WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                borderRadius: 12,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+                zIndex: 52,
+                overflow: "hidden",
+                transformOrigin: "top right",
+                opacity: isVisible ? 1 : 0,
+                transform: isVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
+                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {(() => {
+                const deleteKey = `attachment-${menuId}`;
+                const isArmed = deleteArmedKey === deleteKey;
+                return (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isArmed) {
+                        deleteAttachment(target, targetId, attachment.id);
+                      } else {
+                        setDeleteArmedKey(deleteKey);
+                      }
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      border: "none",
+                      background: isArmed ? "#EF4444" : "transparent",
+                      color: isArmed ? "#FFFFFF" : "#EF4444",
+                      fontSize: 15,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      outline: "none",
+                      textAlign: "left",
+                      transition: "background 0.15s ease, color 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isArmed) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isArmed) e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    삭제
+                  </button>
+                );
+              })()}
+            </div>
+          </>,
+          document.body
+        )}
+      </div>
+    );
+  };
+  // 가져온 Vaulty 삼점 메뉴 - "정보"/"삭제"만 있다. 삭제해도 원본 Vault는 지워지지 않고
+  // importedVaults에서 이 참조만 빠져서 접근 권한이 비활성화된다.
+  const renderImportedVaultMenu = (entry) => {
+    const isOpen = itemMenuOpen && itemMenuOpen.type === "importedVault" && itemMenuOpen.id === entry.id;
+    const isVisible = itemMenuVisibleKey === `importedVault-${entry.id}`;
+    return (
+      <div
+        style={{ position: "relative", margin: -5, padding: 5, flexShrink: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleItemMenu("importedVault", entry.id, e.currentTarget);
+          }}
+          onMouseDown={pressDown("scale(0.85)")}
+          onMouseUp={pressUp("scale(1)")}
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 7,
+            border: "none",
+            background: "transparent",
+            color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+            cursor: "pointer",
+            outline: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "all 0.2s",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)";
+            e.currentTarget.style.color = isLight ? "#14161A" : "#FFFFFF";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)";
+          }}
+          aria-label="옵션"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="5" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="12" cy="19" r="2" />
+          </svg>
+        </button>
+
+        {isOpen && createPortal(
+          <>
+            <div
+              onClick={(e) => { e.stopPropagation(); closeItemMenu(); }}
+              style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 29 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: itemMenuAnchor.top,
+                right: itemMenuAnchor.right,
+                minWidth: 128,
+                background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
+                backdropFilter: "blur(20px) saturate(180%)",
+                WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                borderRadius: 12,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+                zIndex: 30,
+                overflow: "hidden",
+                transformOrigin: "top right",
+                opacity: isVisible ? 1 : 0,
+                transform: isVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
+                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeItemMenu();
+                  openInfoModal("importedVault", entry.id);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  outline: "none",
+                  textAlign: "left",
+                  transition: "background 0.2s",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              >
+                정보
+              </button>
+              <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+              {(() => {
+                const deleteKey = `importedVault-${entry.id}`;
+                const isArmed = deleteArmedKey === deleteKey;
+                return (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isArmed) {
+                        revokeImportedVault(entry.id);
+                      } else {
+                        setDeleteArmedKey(deleteKey);
+                      }
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      border: "none",
+                      background: isArmed ? "#EF4444" : "transparent",
+                      color: isArmed ? "#FFFFFF" : "#EF4444",
+                      fontSize: 15,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      outline: "none",
+                      textAlign: "left",
+                      transition: "background 0.15s ease, color 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isArmed) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isArmed) e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    삭제
+                  </button>
+                );
+              })()}
+            </div>
+          </>,
+          document.body
+        )}
+      </div>
+    );
+  };
   // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 기본 10GB를
   // 초과한 만큼만 GB당 $0.02를 곱한다.
   const usedStorageGB = usedStorageBytes / (1024 * 1024 * 1024);
@@ -887,6 +1171,50 @@ export default function Alloy() {
     }));
     closeEncryptModal();
   };
+
+  // Vaulty@주소 가져오기 - 게시글/텍스트문서 본문에 적힌 "Vaulty@ABCDE" 형태를 찾아 링크
+  // 칩으로 보여주고, 누르면 그 주소를 가진 Vault를 로컬 vaults 배열에서 찾아 importedVaults에
+  // 참조만 추가한다(원본 vaults/folders/files는 전혀 건드리지 않는다 - 읽기 전용 접근 권한만 부여).
+  const VAULTY_LINK_RE = /Vaulty@([A-Za-z]{2,10})/g;
+  const extractVaultyAddresses = (text) => {
+    if (!text) return [];
+    const found = [...text.matchAll(VAULTY_LINK_RE)].map((m) => m[1]);
+    return [...new Set(found)];
+  };
+  // 게시글 읽기 화면처럼 읽기 전용으로 본문을 보여줄 때, 본문 속 "Vaulty@ABCDE"를
+  // 실제 클릭 가능한 링크 조각으로 바꿔 끼워넣는다.
+  const renderLinkedContent = (text) => {
+    if (!text) return null;
+    const parts = text.split(/(Vaulty@[A-Za-z]{2,10})/g);
+    return parts.map((part, i) => {
+      const m = part.match(/^Vaulty@([A-Za-z]{2,10})$/);
+      if (!m) return part;
+      return (
+        <span
+          key={i}
+          onClick={(e) => { e.stopPropagation(); importVaultByAddress(m[1]); }}
+          style={{ color: isLight ? "#2563EB" : "#60A5FA", fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
+        >
+          {part}
+        </span>
+      );
+    });
+  };
+  const importVaultByAddress = (address) => {
+    const source = vaults.find((v) => v.address === address);
+    if (!source) { showToast("존재하지 않는 주소입니다"); return; }
+    if (importedVaults.some((iv) => iv.address === address)) { showToast("이미 가져온 Vaulty입니다"); return; }
+    setImportedVaults((prev) => [...prev, { id: Date.now(), sourceVaultId: source.id, address, importedAt: Date.now() }]);
+    showToast(`Vaulty@${address}를 가져왔습니다`);
+  };
+  // 삭제 = 로컬 접근 권한만 비활성화. 원본 Vault(및 그 안의 폴더/파일)는 그대로 남는다.
+  const revokeImportedVault = (id) => {
+    setImportedVaults((prev) => prev.filter((iv) => iv.id !== id));
+    closeItemMenu();
+    showToast("접근 권한을 삭제했습니다");
+  };
+  const [viewingImportedVaultId, setViewingImportedVaultId] = useState(null);
+  const [importedBrowsePath, setImportedBrowsePath] = useState([]); // 가져온 Vault 안에서의 하위 폴더 경로(읽기 전용 탐색용)
 
   // Vault 잠금 해제 - 암호(열쇠)가 설정된 Vault를 열려면 먼저 열쇠를 맞게 입력해야 한다.
   const [unlockVaultId, setUnlockVaultId] = useState(null);
@@ -1680,6 +2008,67 @@ export default function Alloy() {
     if (accepted.length) setFiles((prev) => [...prev, ...accepted]);
   };
 
+  // 게시글/텍스트 문서 첨부파일 업로드 - 메인 Vault 업로드(handleFilesPicked)와 달리
+  // 확장자 제한이 없다(이미지/기타 파일 모두 허용). pendingAttachTargetRef로 어느 에디터
+  // (text/post)에서 눌렀는지 기억해뒀다가 그 항목의 attachments 배열에 이어붙인다.
+  const handleAttachFilesPicked = async (e) => {
+    const target = pendingAttachTargetRef.current;
+    const targetId = target === "text" ? textEditorFile : postEditorId;
+    const selected = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!selected.length || !target || !targetId) return;
+
+    const incomingBytes = selected.reduce((s, f) => s + f.size, 0);
+    if (usedStorageBytes + incomingBytes > STORAGE_MAX_BYTES) {
+      showToast("저장공간이 부족합니다");
+      return;
+    }
+
+    const results = await Promise.all(
+      selected.map(async (file) => {
+        const id = Date.now() + Math.random();
+        const r2Key = `${id}-${encodeURIComponent(file.name)}`;
+        try {
+          const { url: putUrl } = await r2Presign({ action: "put", key: r2Key, contentType: file.type || "application/octet-stream" });
+          const putResp = await fetch(putUrl, { method: "PUT", body: file, headers: { "content-type": file.type || "application/octet-stream" } });
+          if (!putResp.ok) throw new Error(`업로드 실패 (${putResp.status})`);
+          const { base, ext } = splitNameExt(file.name);
+          const kind = IMAGE_EXTS.includes(ext) ? "image" : "file";
+          return { id, name: base, ext, size: file.size, mimeType: file.type, kind, r2Key, createdAt: Date.now() };
+        } catch (err) {
+          console.error("첨부파일 업로드 실패:", file.name, err);
+          return null;
+        }
+      })
+    );
+    const accepted = results.filter(Boolean);
+    if (!accepted.length) return;
+    if (target === "text") {
+      setFiles((prev) => prev.map((f) => (f.id === targetId ? { ...f, attachments: [...(f.attachments || []), ...accepted] } : f)));
+    } else {
+      setPosts((prev) => prev.map((p) => (p.id === targetId ? { ...p, attachments: [...(p.attachments || []), ...accepted] } : p)));
+    }
+  };
+  // 첨부파일 열기 - persist 해두지 않고 열 때마다 새 presigned GET url을 받아온다.
+  const openAttachment = async (attachment) => {
+    try {
+      const { url } = await r2Presign({ action: "get", key: attachment.r2Key });
+      window.open(url, "_blank", "noopener");
+    } catch (err) {
+      console.error("첨부파일 열기 실패:", err);
+    }
+  };
+  // 첨부파일 삭제 - 게시글/문서의 attachments 배열에서만 제거한다. r2Presign delete를
+  // 호출하지 않으므로 R2에 올라간 원본 파일은 그대로 남는다.
+  const deleteAttachment = (target, targetId, attachmentId) => {
+    if (target === "text") {
+      setFiles((prev) => prev.map((f) => (f.id === targetId ? { ...f, attachments: (f.attachments || []).filter((a) => a.id !== attachmentId) } : f)));
+    } else {
+      setPosts((prev) => prev.map((p) => (p.id === targetId ? { ...p, attachments: (p.attachments || []).filter((a) => a.id !== attachmentId) } : p)));
+    }
+    closeItemMenu();
+  };
+
   const deleteFile = (fileId) => {
     const target = files.find((f) => f.id === fileId);
     if (!target) { closeItemMenu(); return; }
@@ -1807,6 +2196,13 @@ export default function Alloy() {
     ? vaults.find((v) => v.id === infoTarget.id)
     : infoTarget.type === "folder"
     ? folders.find((f) => f.id === infoTarget.id)
+    : infoTarget.type === "importedVault"
+    ? (() => {
+        const entry = importedVaults.find((iv) => iv.id === infoTarget.id);
+        if (!entry) return null;
+        const source = vaults.find((v) => v.id === entry.sourceVaultId);
+        return { name: source ? source.name : "삭제된 Vault", createdAt: entry.importedAt, updatedAt: entry.importedAt, address: entry.address };
+      })()
     : files.find((f) => f.id === infoTarget.id);
   const infoItemSize =
     !infoTarget || !infoItem
@@ -1815,6 +2211,8 @@ export default function Alloy() {
       ? vaultTotalBytes(infoItem.name)
       : infoTarget.type === "folder"
       ? files.filter((f) => pathStartsWith(f.path, infoItem.path)).reduce((s, f) => s + (f.size || 0), 0)
+      : infoTarget.type === "importedVault"
+      ? 0
       : infoItem.size || 0;
 
   const getFileIcon = (mimeType) => {
@@ -3019,18 +3417,71 @@ export default function Alloy() {
               // ── 홈: Vault(프로젝트) 카드 목록 (2열, 세로 여백 넉넉히) ──
               if (currentPath.length === 0) {
                 const visibleVaults = sortItems(vaults);
+                // 가져온 Vaulty(읽기 전용 참조) - 내 Vault 목록 아래에 별도 섹션으로 보여준다.
+                // 정렬/분류/태그/변환 대상이 아니므로 sortItems를 거치지 않는다.
+                const importedSection = importedVaults.length > 0 && (
+                  <>
+                    <div style={{ marginTop: 14, marginBottom: 2, fontSize: 13, fontWeight: 600, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)" }}>
+                      가져온 Vaulty
+                    </div>
+                    {importedVaults.map((entry) => {
+                      const source = vaults.find((v) => v.id === entry.sourceVaultId);
+                      return (
+                        <div
+                          key={`imported-${entry.id}`}
+                          onClick={() => { setViewingImportedVaultId(entry.id); setImportedBrowsePath([]); }}
+                          onMouseDown={pressDown("scale(0.98)")}
+                          onMouseUp={pressUp("none")}
+                          style={{
+                            position: "relative",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 20,
+                            padding: "48px 18px",
+                            borderRadius: 16,
+                            background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                            backdropFilter: "blur(20px) saturate(180%)",
+                            WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                            border: `1px dashed ${isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)"}`,
+                            cursor: "pointer",
+                            touchAction: "manipulation",
+                          }}
+                        >
+                          <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                            <rect x="3" y="3" width="20" height="20" rx="2.5" />
+                            <path d="M9 12h6M12 9v6" strokeDasharray="2 2" />
+                          </svg>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ color: isLight ? "#14161A" : "#FFFFFF", fontSize: 17, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {source ? source.name : "삭제된 Vault"}
+                            </div>
+                            <div style={{ marginTop: 5, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              Vaulty@{entry.address} · 읽기 전용
+                            </div>
+                          </div>
+                          {renderImportedVaultMenu(entry)}
+                        </div>
+                      );
+                    })}
+                  </>
+                );
                 if (visibleVaults.length === 0) {
                   return (
-                    <div
-                      style={{
-                        padding: "56px 0",
-                        textAlign: "center",
-                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
-                        fontSize: 14,
-                        lineHeight: 1.7,
-                      }}
-                    >
-                      아직 프로젝트가 없습니다
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {!importedSection && (
+                        <div
+                          style={{
+                            padding: "56px 0",
+                            textAlign: "center",
+                            color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                            fontSize: 14,
+                            lineHeight: 1.7,
+                          }}
+                        >
+                          아직 프로젝트가 없습니다
+                        </div>
+                      )}
+                      {importedSection}
                     </div>
                   );
                 }
@@ -3131,6 +3582,7 @@ export default function Alloy() {
                       </div>
                       );
                     })}
+                    {importedSection}
                   </div>
                 );
               }
@@ -3308,8 +3760,39 @@ export default function Alloy() {
                   {formatDate(viewingPost.createdAt)}
                 </div>
                 <div style={{ fontSize: 15, lineHeight: 1.7, color: isLight ? "#14161A" : "#FFFFFF", whiteSpace: "pre-wrap" }}>
-                  {viewingPost.content}
+                  {renderLinkedContent(viewingPost.content)}
                 </div>
+                {(viewingPost.attachments || []).length > 0 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 20 }}>
+                    {viewingPost.attachments.map((a) => (
+                      <div
+                        key={a.id}
+                        onClick={() => openAttachment(a)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "6px 10px",
+                          borderRadius: 10,
+                          border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                          background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          {a.kind === "image" ? (
+                            <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
+                          ) : (
+                            <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
+                          )}
+                        </svg>
+                        <span style={{ fontSize: 13, color: isLight ? "#14161A" : "#FFFFFF", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {a.name}{a.ext ? `.${a.ext}` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : posts.length === 0 ? (
               <div
@@ -4321,6 +4804,9 @@ export default function Alloy() {
                       return parts.length > 1 ? `.${parts.pop().toLowerCase()}` : "-";
                     })() }]
                   : []),
+                ...(infoTarget && infoTarget.type === "importedVault"
+                  ? [{ label: "주소", value: infoItem?.address ? `Vaulty@${infoItem.address}` : "-" }]
+                  : []),
               ].map((row) => (
                 <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>
@@ -5006,6 +5492,16 @@ export default function Alloy() {
           </div>
         </>
       )}
+
+      {/* 게시글/텍스트문서 첨부파일용 숨겨진 입력 - 탭/에디터 상태와 무관하게 항상 마운트돼 있어야
+          + 버튼을 눌렀을 때 언제든 클릭할 수 있다. 메인 업로드(galleryInputRef)와 달리 확장자 제한이 없다. */}
+      <input
+        ref={attachFileInputRef}
+        type="file"
+        multiple
+        onChange={handleAttachFilesPicked}
+        style={{ display: "none" }}
+      />
 
       {/* 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다" 같은 짧은 안내를
           하단 탭바 바로 위에 2초간 페이드 인/아웃으로 보여준다. */}
@@ -6025,6 +6521,188 @@ export default function Alloy() {
         </>
       )}
 
+      {/* 가져온 Vaulty 읽기 전용 브라우저 - Vaulty@주소로 가져온 Vault 내부를 탐색만 할 수 있다.
+          업로드/이름 바꾸기/삭제/이동/정렬/분류/태그/변환이 전부 없고, 폴더 들어가기와
+          이미지/문서 열기(읽기)만 된다. 원본 vaults/folders/files는 절대 건드리지 않는다. */}
+      {viewingImportedVaultId !== null && (() => {
+        const entry = importedVaults.find((iv) => iv.id === viewingImportedVaultId);
+        const source = entry && vaults.find((v) => v.id === entry.sourceVaultId);
+        const closeImportedViewer = () => { setViewingImportedVaultId(null); setImportedBrowsePath([]); };
+        if (!entry || !source) return null;
+        const fullPath = [source.name, ...importedBrowsePath];
+        const visibleFolders = folders.filter(
+          (f) => f.path.length === fullPath.length + 1 && f.path.slice(0, fullPath.length).every((p, i) => p === fullPath[i])
+        );
+        const filesHere = files.filter(
+          (f) => f.path.length === fullPath.length && f.path.every((p, i) => p === fullPath[i])
+        );
+        const visibleDocs = filesHere.filter((f) => f.kind !== "image");
+        const visibleImages = filesHere.filter((f) => f.kind === "image");
+        const isEmpty = visibleFolders.length === 0 && visibleDocs.length === 0 && visibleImages.length === 0;
+        return (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: isLight ? "#FFFFFF" : "#141413",
+              zIndex: 48,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "20px 20px 12px 20px",
+                paddingTop: "max(20px, env(safe-area-inset-top))",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span
+                  onClick={() => setImportedBrowsePath([])}
+                  style={{ cursor: "pointer", fontSize: 16, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}
+                >
+                  {source.name}
+                </span>
+                {importedBrowsePath.map((seg, i) => (
+                  <React.Fragment key={i}>
+                    <span style={{ color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 16 }}>›</span>
+                    <span
+                      onClick={() => setImportedBrowsePath(importedBrowsePath.slice(0, i + 1))}
+                      style={{ cursor: "pointer", fontSize: 16, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}
+                    >
+                      {seg}
+                    </span>
+                  </React.Fragment>
+                ))}
+                <span
+                  style={{
+                    marginLeft: 4,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.1)",
+                    color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)",
+                  }}
+                >
+                  읽기 전용
+                </span>
+              </div>
+              <button
+                onClick={closeImportedViewer}
+                onMouseDown={pressDown("scale(0.9)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  width: TOP_BUTTON_SIZE,
+                  height: TOP_BUTTON_SIZE,
+                  flexShrink: 0,
+                  borderRadius: "50%",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  background: isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)",
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  outline: "none",
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 24px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+              {isEmpty && (
+                <div style={{ padding: "48px 0", textAlign: "center", color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 14 }}>
+                  비어 있습니다
+                </div>
+              )}
+              {visibleFolders.map((folder) => (
+                <div
+                  key={folder.id}
+                  onClick={() => setImportedBrowsePath((prev) => [...prev, folder.name])}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                    cursor: "pointer",
+                  }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
+                    <path d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5z" />
+                  </svg>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {folder.name}
+                  </span>
+                </div>
+              ))}
+              {visibleDocs.map((doc) => (
+                <div
+                  key={doc.id}
+                  onClick={() => openAttachment(doc)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
+                    cursor: "pointer",
+                  }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6" />
+                  </svg>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {doc.name}{doc.ext ? `.${doc.ext}` : ""}
+                  </span>
+                </div>
+              ))}
+              {visibleImages.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {visibleImages.map((img, idx) => (
+                    <div
+                      key={img.id}
+                      onClick={() => openViewer(visibleImages, idx)}
+                      style={{
+                        aspectRatio: "1",
+                        borderRadius: 12,
+                        overflow: "hidden",
+                        background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {img.url && (
+                        <img src={img.url} alt={img.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 이미지/움짤 전체화면 뷰어 - 배경 페이드로 열리고, 좌우 드래그(스와이프)로
           같은 목록 안의 이전/다음 사진으로 넘어간다. 우측 상단 리퀴드 글래스 X로 닫는다. */}
       {viewerOpen && (
@@ -6149,6 +6827,93 @@ export default function Alloy() {
                 color: isLight ? "#14161A" : "#FFFFFF",
               }}
             />
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); toggleAttachMenu("text"); }}
+                onMouseEnter={() => setAttachButtonHovered(true)}
+                onMouseLeave={(e) => {
+                  setAttachButtonHovered(false);
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+                onMouseDown={pressDown("scale(0.9)")}
+                onMouseUp={pressUp(attachButtonHovered ? "scale(1.08)" : "scale(1)")}
+                aria-label="첨부"
+                style={{
+                  width: TOP_BUTTON_SIZE,
+                  height: TOP_BUTTON_SIZE,
+                  flexShrink: 0,
+                  borderRadius: "50%",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  background: attachMenuOpenFor === "text" || attachButtonHovered
+                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  boxShadow: attachButtonHovered
+                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  outline: "none",
+                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                  transform: attachButtonHovered ? "scale(1.08)" : "scale(1)",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+              {attachMenuOpenFor === "text" && (
+                <>
+                  <div onClick={closeAttachMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} />
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 8px)",
+                      right: 0,
+                      minWidth: 100,
+                      background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
+                      backdropFilter: "blur(20px) saturate(180%)",
+                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                      borderRadius: 12,
+                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                      boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+                      zIndex: 6,
+                      overflow: "hidden",
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={() => {
+                        closeAttachMenu();
+                        pendingAttachTargetRef.current = "text";
+                        attachFileInputRef.current && attachFileInputRef.current.click();
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        border: "none",
+                        background: "transparent",
+                        color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 15,
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        outline: "none",
+                        textAlign: "left",
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                    >
+                      업로드
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <div style={{ position: "relative", marginRight: addButtonExtraInset, flexShrink: 0 }}>
               <button
                 onClick={closeTextEditor}
@@ -6190,6 +6955,70 @@ export default function Alloy() {
               </button>
             </div>
           </div>
+          {(() => {
+            const attachments = (files.find((f) => f.id === textEditorFile) || {}).attachments || [];
+            const addrs = extractVaultyAddresses(textContentDraft);
+            if (!attachments.length && !addrs.length) return null;
+            return (
+              <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: "0 20px 12px 20px" }}>
+                {attachments.length > 0 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {attachments.map((a) => (
+                      <div
+                        key={a.id}
+                        onClick={() => openAttachment(a)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "6px 6px 6px 10px",
+                          borderRadius: 10,
+                          border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                          background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          {a.kind === "image" ? (
+                            <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
+                          ) : (
+                            <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
+                          )}
+                        </svg>
+                        <span style={{ fontSize: 13, color: isLight ? "#14161A" : "#FFFFFF", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {a.name}{a.ext ? `.${a.ext}` : ""}
+                        </span>
+                        {renderAttachmentMenu("text", textEditorFile, a)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {addrs.length > 0 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {addrs.map((addr) => (
+                      <button
+                        key={addr}
+                        onClick={() => importVaultByAddress(addr)}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: 999,
+                          border: `1px solid ${isLight ? "rgba(37,99,235,0.35)" : "rgba(96,165,250,0.35)"}`,
+                          background: isLight ? "rgba(37,99,235,0.08)" : "rgba(96,165,250,0.12)",
+                          color: isLight ? "#2563EB" : "#60A5FA",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          outline: "none",
+                        }}
+                      >
+                        🔗 Vaulty@{addr}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <textarea
             value={textContentDraft}
             onChange={(e) => setTextContentDraft(e.target.value)}
@@ -6255,6 +7084,93 @@ export default function Alloy() {
                 color: isLight ? "#14161A" : "#FFFFFF",
               }}
             />
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); toggleAttachMenu("post"); }}
+                onMouseEnter={() => setAttachButtonHovered(true)}
+                onMouseLeave={(e) => {
+                  setAttachButtonHovered(false);
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+                onMouseDown={pressDown("scale(0.9)")}
+                onMouseUp={pressUp(attachButtonHovered ? "scale(1.08)" : "scale(1)")}
+                aria-label="첨부"
+                style={{
+                  width: TOP_BUTTON_SIZE,
+                  height: TOP_BUTTON_SIZE,
+                  flexShrink: 0,
+                  borderRadius: "50%",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  background: attachMenuOpenFor === "post" || attachButtonHovered
+                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  boxShadow: attachButtonHovered
+                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  outline: "none",
+                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                  transform: attachButtonHovered ? "scale(1.08)" : "scale(1)",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+              {attachMenuOpenFor === "post" && (
+                <>
+                  <div onClick={closeAttachMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} />
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 8px)",
+                      right: 0,
+                      minWidth: 100,
+                      background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
+                      backdropFilter: "blur(20px) saturate(180%)",
+                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                      borderRadius: 12,
+                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                      boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+                      zIndex: 6,
+                      overflow: "hidden",
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={() => {
+                        closeAttachMenu();
+                        pendingAttachTargetRef.current = "post";
+                        attachFileInputRef.current && attachFileInputRef.current.click();
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        border: "none",
+                        background: "transparent",
+                        color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 15,
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        outline: "none",
+                        textAlign: "left",
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                    >
+                      업로드
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <div style={{ position: "relative", marginRight: addButtonExtraInset, flexShrink: 0 }}>
               <button
                 onClick={closePostEditor}
@@ -6296,6 +7212,70 @@ export default function Alloy() {
               </button>
             </div>
           </div>
+          {(() => {
+            const attachments = (posts.find((p) => p.id === postEditorId) || {}).attachments || [];
+            const addrs = extractVaultyAddresses(postContentDraft);
+            if (!attachments.length && !addrs.length) return null;
+            return (
+              <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: "0 20px 12px 20px" }}>
+                {attachments.length > 0 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {attachments.map((a) => (
+                      <div
+                        key={a.id}
+                        onClick={() => openAttachment(a)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "6px 6px 6px 10px",
+                          borderRadius: 10,
+                          border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                          background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          {a.kind === "image" ? (
+                            <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
+                          ) : (
+                            <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
+                          )}
+                        </svg>
+                        <span style={{ fontSize: 13, color: isLight ? "#14161A" : "#FFFFFF", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {a.name}{a.ext ? `.${a.ext}` : ""}
+                        </span>
+                        {renderAttachmentMenu("post", postEditorId, a)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {addrs.length > 0 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {addrs.map((addr) => (
+                      <button
+                        key={addr}
+                        onClick={() => importVaultByAddress(addr)}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: 999,
+                          border: `1px solid ${isLight ? "rgba(37,99,235,0.35)" : "rgba(96,165,250,0.35)"}`,
+                          background: isLight ? "rgba(37,99,235,0.08)" : "rgba(96,165,250,0.12)",
+                          color: isLight ? "#2563EB" : "#60A5FA",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          outline: "none",
+                        }}
+                      >
+                        🔗 Vaulty@{addr}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <textarea
             value={postContentDraft}
             onChange={(e) => setPostContentDraft(e.target.value)}
