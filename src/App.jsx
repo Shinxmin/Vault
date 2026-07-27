@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.52";
+const APP_VERSION = "0.1.53";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -787,7 +787,7 @@ export default function Alloy() {
   };
   // 첨부파일 삼점 메뉴 - "삭제" 하나뿐인 아주 단순한 버전. itemMenuOpen 인프라를
   // type: "attachment"로 재사용하고, id는 "target:targetId:attachmentId" 형태의 합성 키다.
-  const renderAttachmentMenu = (target, targetId, attachment) => {
+  const renderAttachmentMenu = (target, targetId, attachment, overlay) => {
     const menuId = `${target}:${targetId}:${attachment.id}`;
     const isOpen = itemMenuOpen && itemMenuOpen.type === "attachment" && itemMenuOpen.id === menuId;
     const isVisible = itemMenuVisibleKey === `attachment-${menuId}`;
@@ -805,7 +805,22 @@ export default function Alloy() {
           }}
           onMouseDown={pressDown("scale(0.85)")}
           onMouseUp={pressUp("scale(1)")}
-          style={{
+          style={overlay ? {
+            width: 30,
+            height: 30,
+            borderRadius: "50%",
+            border: "1px solid rgba(255,255,255,0.18)",
+            background: "rgba(0,0,0,0.45)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            color: "#FFFFFF",
+            cursor: "pointer",
+            outline: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          } : {
             width: 22,
             height: 22,
             borderRadius: 6,
@@ -821,7 +836,7 @@ export default function Alloy() {
           }}
           aria-label="옵션"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <svg width={overlay ? 18 : 16} height={overlay ? 18 : 16} viewBox="0 0 24 24" fill="currentColor">
             <circle cx="12" cy="5" r="2" />
             <circle cx="12" cy="12" r="2" />
             <circle cx="12" cy="19" r="2" />
@@ -904,31 +919,82 @@ export default function Alloy() {
   // "삭제된 파일"만 보여주고 클릭도 안 되지만, 참조 자체는 삼점 메뉴로 지울 수 있다.
   const renderAttachmentChip = (target, targetId, a, readOnly) => {
     const source = files.find((f) => f.id === a.refFileId);
+    // 첨부 없이는 "삭제된 파일" 안내만 - 이 경우엔 이미지든 아니든 작은 안내 줄로 보여준다.
+    if (!source) {
+      return (
+        <div
+          key={a.id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+            opacity: 0.45,
+            boxSizing: "border-box",
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
+          </svg>
+          <span style={{ fontSize: 14, color: isLight ? "#14161A" : "#FFFFFF" }}>삭제된 파일</span>
+          {!readOnly && renderAttachmentMenu(target, targetId, a)}
+        </div>
+      );
+    }
+    // 이미지는 첨부 느낌의 작은 칩이 아니라 폭에 맞춰 실제 사진을 그대로 보여준다.
+    if (source.kind === "image") {
+      return (
+        <div
+          key={a.id}
+          onClick={() => openAttachedFile(source)}
+          style={{
+            position: "relative",
+            width: "100%",
+            borderRadius: 14,
+            overflow: "hidden",
+            background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
+            cursor: "pointer",
+          }}
+        >
+          {source.url ? (
+            <img src={source.url} alt={source.name} style={{ width: "100%", height: "auto", display: "block" }} />
+          ) : (
+            <div style={{ width: "100%", aspectRatio: "4 / 3" }} />
+          )}
+          {!readOnly && (
+            <div style={{ position: "absolute", top: 8, right: 8 }}>
+              {renderAttachmentMenu(target, targetId, a, true)}
+            </div>
+          )}
+        </div>
+      );
+    }
+    // 이미지가 아닌 파일은 폭 전체를 쓰는 카드형 행으로 - 작은 칩이 아니라 본문 요소처럼 보이게 한다.
     return (
       <div
         key={a.id}
-        onClick={() => source && openAttachedFile(source)}
+        onClick={() => openAttachedFile(source)}
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          padding: readOnly ? "6px 10px" : "6px 6px 6px 10px",
-          borderRadius: 10,
+          gap: 10,
+          width: "100%",
+          padding: "14px 16px",
+          borderRadius: 14,
           border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
           background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-          cursor: source ? "pointer" : "default",
-          opacity: source ? 1 : 0.45,
+          cursor: "pointer",
+          boxSizing: "border-box",
         }}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-          {source && source.kind === "image" ? (
-            <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
-          ) : (
-            <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
-          )}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
         </svg>
-        <span style={{ fontSize: 13, color: isLight ? "#14161A" : "#FFFFFF", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {source ? `${source.name}${source.ext ? `.${source.ext}` : ""}` : "삭제된 파일"}
+        <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {source.name}{source.ext ? `.${source.ext}` : ""}
         </span>
         {!readOnly && renderAttachmentMenu(target, targetId, a)}
       </div>
@@ -3846,7 +3912,7 @@ export default function Alloy() {
                   {renderLinkedContent(viewingPost.content)}
                 </div>
                 {(viewingPost.attachments || []).length > 0 && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 20 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 20 }}>
                     {viewingPost.attachments.map((a) => renderAttachmentChip(null, null, a, true))}
                   </div>
                 )}
@@ -7216,7 +7282,7 @@ export default function Alloy() {
             return (
               <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: "0 20px 12px 20px" }}>
                 {attachments.length > 0 && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {attachments.map((a) => renderAttachmentChip("text", textEditorFile, a, false))}
                   </div>
                 )}
@@ -7400,7 +7466,7 @@ export default function Alloy() {
             return (
               <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: "0 20px 12px 20px" }}>
                 {attachments.length > 0 && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {attachments.map((a) => renderAttachmentChip("post", postEditorId, a, false))}
                   </div>
                 )}
