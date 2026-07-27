@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.49";
+const APP_VERSION = "0.1.50";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -376,18 +376,70 @@ export default function Alloy() {
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
 
-  // 게시글/텍스트 문서 에디터의 첨부파일 - 체크(완료) 버튼 바로 왼쪽의 + 버튼을 누르면
-  // "업로드" 버튼 하나만 있는 작은 메뉴가 뜬다. 이미지 뿐 아니라 어떤 파일이든 업로드 가능하고,
-  // (여기선 항상 작성자이므로) 각 첨부파일에 삼점바로 삭제할 수 있다. 삭제는 posts/files의
-  // attachments 배열에서만 빼는 것이고 R2 delete를 호출하지 않아 원본 파일은 그대로 남는다.
-  const [attachMenuOpenFor, setAttachMenuOpenFor] = useState(null); // 'text' | 'post' | null
+  // 게시글/텍스트 문서 에디터의 첨부 - 체크(완료) 버튼 바로 왼쪽의 + 버튼을 누르면 내
+  // Vaulty에 이미 올라가 있는 데이터(이미지/파일)를 고르는 탐색창이 뜬다. 컴퓨터에서
+  // 새로 업로드하는 게 아니라 "이미 있는 내 데이터를 읽게" 참조만 추가하는 것이라
+  // 원본을 복제하지 않는다(이중 업로드/다운로드 없음). attachments 배열엔 참조 대상의
+  // refFileId만 담고, 실제 이름/크기/썸네일 등은 항상 files 배열에서 그때그때 조회한다 -
+  // 그래야 원본이 이름을 바꾸거나 옮겨져도 첨부가 최신 상태를 그대로 반영한다.
+  // (여기선 항상 작성자이므로) 각 첨부에 삼점바로 "삭제"가 뜨고, 이는 이 게시글/문서에서
+  // 참조만 빼는 것이지 원본 파일에는 전혀 영향이 없다.
   const [attachButtonHovered, setAttachButtonHovered] = useState(false);
-  const attachFileInputRef = useRef(null);
-  const pendingAttachTargetRef = useRef(null); // 'text' | 'post'
-  const toggleAttachMenu = (target) => {
-    setAttachMenuOpenFor((prev) => (prev === target ? null : target));
+  const [attachPickerFor, setAttachPickerFor] = useState(null); // 'text' | 'post' | null
+  const [attachPickerVisible, setAttachPickerVisible] = useState(false);
+  const [attachPickerPath, setAttachPickerPath] = useState([]);
+  const [attachPickerSelected, setAttachPickerSelected] = useState({}); // { [fileId]: true }
+  const openAttachPicker = (target) => {
+    setAttachPickerFor(target);
+    setAttachPickerPath([]);
+    setAttachPickerSelected({});
+    requestAnimationFrame(() => setAttachPickerVisible(true));
   };
-  const closeAttachMenu = () => setAttachMenuOpenFor(null);
+  const closeAttachPicker = () => {
+    setAttachPickerVisible(false);
+    setTimeout(() => {
+      setAttachPickerFor(null);
+      setAttachPickerPath([]);
+      setAttachPickerSelected({});
+    }, 200);
+  };
+  const toggleAttachPickerFile = (id) => {
+    setAttachPickerSelected((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+  // 확인(추가) - 선택한 파일들을 참조(refFileId)로 붙인다. 이미 붙어있는 참조는 중복 없이 갈아끼운다.
+  const confirmAttachPicker = () => {
+    const selectedIds = Object.keys(attachPickerSelected).filter((id) => attachPickerSelected[id]).map(Number);
+    const target = attachPickerFor;
+    const targetId = target === "text" ? textEditorFile : postEditorId;
+    if (!selectedIds.length || !target || !targetId) { closeAttachPicker(); return; }
+    const newRefs = selectedIds.map((refFileId) => ({ id: Date.now() + Math.random(), refFileId, addedAt: Date.now() }));
+    const mergeAttachments = (existing) => [...(existing || []).filter((a) => !selectedIds.includes(a.refFileId)), ...newRefs];
+    if (target === "text") {
+      setFiles((prev) => prev.map((f) => (f.id === targetId ? { ...f, attachments: mergeAttachments(f.attachments) } : f)));
+    } else {
+      setPosts((prev) => prev.map((p) => (p.id === targetId ? { ...p, attachments: mergeAttachments(p.attachments) } : p)));
+    }
+    closeAttachPicker();
+  };
+  // 탐색창 목록 - 홈에서는 Vault를, 그 안에서는 하위 폴더(들어가기)와 이 위치의 파일(선택 가능)을 보여준다.
+  const attachPickerFolders = attachPickerFor && attachPickerPath.length > 0
+    ? folders.filter(
+        (f) => f.path.length === attachPickerPath.length + 1 && f.path.slice(0, attachPickerPath.length).every((p, i) => p === attachPickerPath[i])
+      )
+    : [];
+  const attachPickerFiles = attachPickerFor && attachPickerPath.length > 0
+    ? files.filter((f) => f.path.length === attachPickerPath.length && f.path.every((p, i) => p === attachPickerPath[i]))
+    : [];
+  // 첨부 대상 파일을 열람 - 이미지는 전체화면 뷰어, R2에 실제 업로드된 파일은 새 창에서
+  // presigned GET으로, 인앱에서 만든 텍스트 문서(본문이 content 필드뿐 R2 없음)는
+  // 간단한 읽기 전용 미리보기 모달로 연다.
+  const [docPreviewId, setDocPreviewId] = useState(null);
+  const openAttachedFile = (file) => {
+    if (!file) return;
+    if (file.kind === "image") { openViewer([file], 0); return; }
+    if (file.r2Key) { openAttachment(file); return; }
+    setDocPreviewId(file.id);
+  };
 
   // 설정 탭 > 휴지통 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
@@ -442,13 +494,12 @@ export default function Alloy() {
   // 텍스트 에디터에서 타이핑할 때마다 앱 전체가 리렌더되는데, 이 계산들이 매번 새로
   // 돌면(특히 allTags/tagTargets는 전체 폴더·파일을 훑는다) 입력이 밀리면서 스페이스 등
   // 키 입력이 여러 번 뭉쳐 들어가는 것처럼 보일 수 있어 실제 값이 바뀔 때만 다시 계산한다.
-  const attachmentsBytes = (arr) => arr.reduce((s, item) => s + (item.attachments || []).reduce((s2, a) => s2 + (a.size || 0), 0), 0);
+  // attachments는 이미 있는 파일을 참조만 하는 것(원본을 복제하지 않음)이라 저장 공간
+  // 사용량 계산에 별도로 더하지 않는다 - 참조 대상 파일의 용량은 files 합계에 이미 잡혀 있다.
   const usedStorageBytes = useMemo(() =>
     files.reduce((s, f) => s + (f.size || 0), 0) +
-    attachmentsBytes(files) +
-    attachmentsBytes(posts) +
-    trash.reduce((s, t) => s + (t.files || []).reduce((s2, f) => s2 + (f.size || 0) + (f.attachments || []).reduce((s3, a) => s3 + (a.size || 0), 0), 0), 0),
-  [files, posts, trash]);
+    trash.reduce((s, t) => s + (t.files || []).reduce((s2, f) => s2 + (f.size || 0), 0), 0),
+  [files, trash]);
   const formatGBShort = (bytes) => {
     const gb = bytes / (1024 * 1024 * 1024);
     return `${gb % 1 === 0 ? gb : gb.toFixed(1)}GB`;
@@ -812,6 +863,41 @@ export default function Alloy() {
           </>,
           document.body
         )}
+      </div>
+    );
+  };
+  // 첨부 칩 - attachments 항목은 참조(refFileId)만 담고 있으므로 실제 이름/종류는
+  // 항상 files 배열에서 그때그때 찾아 그린다. 원본이 삭제/휴지통에 가 있으면 회색으로
+  // "삭제된 파일"만 보여주고 클릭도 안 되지만, 참조 자체는 삼점 메뉴로 지울 수 있다.
+  const renderAttachmentChip = (target, targetId, a, readOnly) => {
+    const source = files.find((f) => f.id === a.refFileId);
+    return (
+      <div
+        key={a.id}
+        onClick={() => source && openAttachedFile(source)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: readOnly ? "6px 10px" : "6px 6px 6px 10px",
+          borderRadius: 10,
+          border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+          background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+          cursor: source ? "pointer" : "default",
+          opacity: source ? 1 : 0.45,
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          {source && source.kind === "image" ? (
+            <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
+          ) : (
+            <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
+          )}
+        </svg>
+        <span style={{ fontSize: 13, color: isLight ? "#14161A" : "#FFFFFF", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {source ? `${source.name}${source.ext ? `.${source.ext}` : ""}` : "삭제된 파일"}
+        </span>
+        {!readOnly && renderAttachmentMenu(target, targetId, a)}
       </div>
     );
   };
@@ -2008,48 +2094,7 @@ export default function Alloy() {
     if (accepted.length) setFiles((prev) => [...prev, ...accepted]);
   };
 
-  // 게시글/텍스트 문서 첨부파일 업로드 - 메인 Vault 업로드(handleFilesPicked)와 달리
-  // 확장자 제한이 없다(이미지/기타 파일 모두 허용). pendingAttachTargetRef로 어느 에디터
-  // (text/post)에서 눌렀는지 기억해뒀다가 그 항목의 attachments 배열에 이어붙인다.
-  const handleAttachFilesPicked = async (e) => {
-    const target = pendingAttachTargetRef.current;
-    const targetId = target === "text" ? textEditorFile : postEditorId;
-    const selected = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (!selected.length || !target || !targetId) return;
-
-    const incomingBytes = selected.reduce((s, f) => s + f.size, 0);
-    if (usedStorageBytes + incomingBytes > STORAGE_MAX_BYTES) {
-      showToast("저장공간이 부족합니다");
-      return;
-    }
-
-    const results = await Promise.all(
-      selected.map(async (file) => {
-        const id = Date.now() + Math.random();
-        const r2Key = `${id}-${encodeURIComponent(file.name)}`;
-        try {
-          const { url: putUrl } = await r2Presign({ action: "put", key: r2Key, contentType: file.type || "application/octet-stream" });
-          const putResp = await fetch(putUrl, { method: "PUT", body: file, headers: { "content-type": file.type || "application/octet-stream" } });
-          if (!putResp.ok) throw new Error(`업로드 실패 (${putResp.status})`);
-          const { base, ext } = splitNameExt(file.name);
-          const kind = IMAGE_EXTS.includes(ext) ? "image" : "file";
-          return { id, name: base, ext, size: file.size, mimeType: file.type, kind, r2Key, createdAt: Date.now() };
-        } catch (err) {
-          console.error("첨부파일 업로드 실패:", file.name, err);
-          return null;
-        }
-      })
-    );
-    const accepted = results.filter(Boolean);
-    if (!accepted.length) return;
-    if (target === "text") {
-      setFiles((prev) => prev.map((f) => (f.id === targetId ? { ...f, attachments: [...(f.attachments || []), ...accepted] } : f)));
-    } else {
-      setPosts((prev) => prev.map((p) => (p.id === targetId ? { ...p, attachments: [...(p.attachments || []), ...accepted] } : p)));
-    }
-  };
-  // 첨부파일 열기 - persist 해두지 않고 열 때마다 새 presigned GET url을 받아온다.
+  // 첨부(참조) 대상 파일 열기 - persist 해두지 않고 열 때마다 새 presigned GET url을 받아온다.
   const openAttachment = async (attachment) => {
     try {
       const { url } = await r2Presign({ action: "get", key: attachment.r2Key });
@@ -3764,33 +3809,7 @@ export default function Alloy() {
                 </div>
                 {(viewingPost.attachments || []).length > 0 && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 20 }}>
-                    {viewingPost.attachments.map((a) => (
-                      <div
-                        key={a.id}
-                        onClick={() => openAttachment(a)}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "6px 10px",
-                          borderRadius: 10,
-                          border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                          background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                          {a.kind === "image" ? (
-                            <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
-                          ) : (
-                            <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
-                          )}
-                        </svg>
-                        <span style={{ fontSize: 13, color: isLight ? "#14161A" : "#FFFFFF", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {a.name}{a.ext ? `.${a.ext}` : ""}
-                        </span>
-                      </div>
-                    ))}
+                    {viewingPost.attachments.map((a) => renderAttachmentChip(null, null, a, true))}
                   </div>
                 )}
               </div>
@@ -5493,15 +5512,256 @@ export default function Alloy() {
         </>
       )}
 
-      {/* 게시글/텍스트문서 첨부파일용 숨겨진 입력 - 탭/에디터 상태와 무관하게 항상 마운트돼 있어야
-          + 버튼을 눌렀을 때 언제든 클릭할 수 있다. 메인 업로드(galleryInputRef)와 달리 확장자 제한이 없다. */}
-      <input
-        ref={attachFileInputRef}
-        type="file"
-        multiple
-        onChange={handleAttachFilesPicked}
-        style={{ display: "none" }}
-      />
+      {/* 첨부 탐색창 - 이동 모달과 같은 패턴(홈에서 Vault, 그 안에서 폴더/파일)으로 내
+          Vaulty에 이미 있는 데이터를 찾아 참조로 붙인다. 컴퓨터에서 새로 업로드하는 게
+          아니므로 파일 입력(input[type=file])이 전혀 없다. */}
+      {attachPickerFor && (() => {
+        const selectedCount = Object.values(attachPickerSelected).filter(Boolean).length;
+        return (
+          <>
+            <div
+              onClick={closeAttachPicker}
+              style={{
+                position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+                background: "rgba(0,0,0,0.4)", zIndex: 59,
+                opacity: attachPickerVisible ? 1 : 0, transition: "opacity 0.2s ease",
+              }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: "50%",
+                transform: attachPickerVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+                opacity: attachPickerVisible ? 1 : 0,
+                background: isLight ? "#FFFFFF" : "#1a1918",
+                borderRadius: 20,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                padding: "32px 30px",
+                width: "84vw",
+                boxSizing: "border-box",
+                zIndex: 60,
+                boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
+                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                  내 Vaulty에서 가져오기
+                </h2>
+                <button
+                  onClick={closeAttachPicker}
+                  onMouseDown={pressDown("scale(0.85)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="닫기"
+                  style={{
+                    flexShrink: 0, width: 30, height: 30, borderRadius: 7, border: "none",
+                    background: "transparent", color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                    cursor: "pointer", outline: "none", display: "flex", alignItems: "center", justifyContent: "center",
+                    transition: "background 0.2s ease, transform 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4,
+                  margin: "12px 0", paddingBottom: 12,
+                  borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                }}
+              >
+                <button
+                  onClick={() => setAttachPickerPath([])}
+                  style={{
+                    background: "none", border: "none", color: isLight ? "#14161A" : "#FFFFFF",
+                    fontSize: 14, fontWeight: 500, cursor: "pointer", padding: 0, outline: "none",
+                    opacity: attachPickerPath.length === 0 ? 1 : 0.7,
+                  }}
+                >
+                  홈
+                </button>
+                {attachPickerPath.map((seg, index) => (
+                  <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 14 }}>&gt;</span>
+                    <button
+                      onClick={() => setAttachPickerPath(attachPickerPath.slice(0, index + 1))}
+                      style={{
+                        background: "none", border: "none", color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 14, fontWeight: 500, cursor: "pointer", padding: 0, outline: "none",
+                        opacity: index === attachPickerPath.length - 1 ? 1 : 0.7,
+                      }}
+                    >
+                      {seg}
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ maxHeight: 320, overflowY: "auto", marginBottom: 16 }}>
+                {attachPickerPath.length === 0 ? (
+                  vaults.length === 0 ? (
+                    <div style={{ padding: "24px 0", textAlign: "center", color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 14 }}>
+                      Vault가 없습니다
+                    </div>
+                  ) : (
+                    vaults.map((v) => (
+                      <div
+                        key={`v-${v.id}`}
+                        onClick={() => setAttachPickerPath([v.name])}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderRadius: 8, cursor: "pointer", transition: "background 0.2s ease" }}
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="12" cy="12" r="4" />
+                        </svg>
+                        <div style={{ flex: 1, color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {v.name}
+                        </div>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="m9 6 6 6-6 6" />
+                        </svg>
+                      </div>
+                    ))
+                  )
+                ) : attachPickerFolders.length === 0 && attachPickerFiles.length === 0 ? (
+                  <div style={{ padding: "24px 0", textAlign: "center", color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 14 }}>
+                    비어 있습니다
+                  </div>
+                ) : (
+                  <>
+                    {attachPickerFolders.map((folder) => (
+                      <div
+                        key={`f-${folder.id}`}
+                        onClick={() => setAttachPickerPath([...attachPickerPath, folder.name])}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderRadius: 8, cursor: "pointer", transition: "background 0.2s ease" }}
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"} style={{ flexShrink: 0 }}>
+                          <path d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5z" />
+                        </svg>
+                        <div style={{ flex: 1, color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {folder.name}
+                        </div>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="m9 6 6 6-6 6" />
+                        </svg>
+                      </div>
+                    ))}
+                    {attachPickerFiles.map((file) => {
+                      const checked = !!attachPickerSelected[file.id];
+                      return (
+                        <div
+                          key={`file-${file.id}`}
+                          onClick={() => toggleAttachPickerFile(file.id)}
+                          onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderRadius: 8, cursor: "pointer", transition: "background 0.2s ease" }}
+                        >
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                            {file.kind === "image" ? (
+                              <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
+                            ) : (
+                              <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
+                            )}
+                          </svg>
+                          <div style={{ flex: 1, color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {file.name}{file.ext ? `.${file.ext}` : ""}
+                          </div>
+                          <div
+                            style={{
+                              width: 20, height: 20, borderRadius: 6, flexShrink: 0,
+                              border: `1.5px solid ${checked ? (isLight ? "#14161A" : "#FFFFFF") : (isLight ? "rgba(20,22,26,0.3)" : "rgba(255,255,255,0.3)")}`,
+                              background: checked ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                            }}
+                          >
+                            {checked && (
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#FFFFFF" : "#14161A"} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M20 6 9 17l-5-5" />
+                              </svg>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+
+              <button
+                onClick={confirmAttachPicker}
+                disabled={selectedCount === 0}
+                onMouseDown={selectedCount > 0 ? pressDown("scale(0.95)") : undefined}
+                onMouseUp={selectedCount > 0 ? pressUp("scale(1)") : undefined}
+                style={{
+                  width: "100%", padding: 10, border: "none", borderRadius: 8,
+                  background: isLight ? "#14161A" : "#FFFFFF", color: isLight ? "#FFFFFF" : "#14161A",
+                  fontSize: 15, fontWeight: 600,
+                  cursor: selectedCount > 0 ? "pointer" : "not-allowed",
+                  opacity: selectedCount > 0 ? 1 : 0.4,
+                  outline: "none", transition: "transform 0.15s ease, opacity 0.2s ease",
+                }}
+                onMouseEnter={(e) => { if (selectedCount > 0) e.currentTarget.style.transform = "translateY(-1px)"; }}
+                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+              >
+                {selectedCount > 0 ? `추가 (${selectedCount})` : "추가"}
+              </button>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* 첨부(참조) 파일 중 인앱에서 만든 텍스트 문서(R2 없이 content 필드만 있는 경우) 읽기
+          전용 미리보기 - 별도의 "열기" 방식이 없어 간단한 모달로 본문을 보여준다. */}
+      {docPreviewId !== null && (() => {
+        const doc = files.find((f) => f.id === docPreviewId);
+        if (!doc) return null;
+        return (
+          <>
+            <div onClick={() => setDocPreviewId(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.45)", zIndex: 59 }} />
+            <div
+              style={{
+                position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+                background: isLight ? "#FFFFFF" : "#1a1918", borderRadius: 20,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                padding: "28px 26px", width: "84vw", maxHeight: "70vh", overflowY: "auto",
+                boxSizing: "border-box", zIndex: 60, boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                  {doc.name}{doc.ext ? `.${doc.ext}` : ""}
+                </h2>
+                <button
+                  onClick={() => setDocPreviewId(null)}
+                  aria-label="닫기"
+                  style={{
+                    flexShrink: 0, width: 30, height: 30, borderRadius: 7, border: "none",
+                    background: "transparent", color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                    cursor: "pointer", outline: "none", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              <div style={{ fontSize: 14, lineHeight: 1.7, color: isLight ? "#14161A" : "#FFFFFF", whiteSpace: "pre-wrap" }}>
+                {doc.content}
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다" 같은 짧은 안내를
           하단 탭바 바로 위에 2초간 페이드 인/아웃으로 보여준다. */}
@@ -6829,7 +7089,7 @@ export default function Alloy() {
             />
             <div style={{ position: "relative", flexShrink: 0 }}>
               <button
-                onClick={(e) => { e.stopPropagation(); toggleAttachMenu("text"); }}
+                onClick={(e) => { e.stopPropagation(); openAttachPicker("text"); }}
                 onMouseEnter={() => setAttachButtonHovered(true)}
                 onMouseLeave={(e) => {
                   setAttachButtonHovered(false);
@@ -6844,7 +7104,7 @@ export default function Alloy() {
                   flexShrink: 0,
                   borderRadius: "50%",
                   border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: attachMenuOpenFor === "text" || attachButtonHovered
+                  background: attachButtonHovered
                     ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
                     : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
                   backdropFilter: "blur(20px) saturate(180%)",
@@ -6867,52 +7127,6 @@ export default function Alloy() {
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
               </button>
-              {attachMenuOpenFor === "text" && (
-                <>
-                  <div onClick={closeAttachMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} />
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "calc(100% + 8px)",
-                      right: 0,
-                      minWidth: 100,
-                      background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
-                      backdropFilter: "blur(20px) saturate(180%)",
-                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                      borderRadius: 12,
-                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                      boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
-                      zIndex: 6,
-                      overflow: "hidden",
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      onClick={() => {
-                        closeAttachMenu();
-                        pendingAttachTargetRef.current = "text";
-                        attachFileInputRef.current && attachFileInputRef.current.click();
-                      }}
-                      style={{
-                        width: "100%",
-                        padding: "10px 12px",
-                        border: "none",
-                        background: "transparent",
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        outline: "none",
-                        textAlign: "left",
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                    >
-                      업로드
-                    </button>
-                  </div>
-                </>
-              )}
             </div>
             <div style={{ position: "relative", marginRight: addButtonExtraInset, flexShrink: 0 }}>
               <button
@@ -6963,34 +7177,7 @@ export default function Alloy() {
               <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: "0 20px 12px 20px" }}>
                 {attachments.length > 0 && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {attachments.map((a) => (
-                      <div
-                        key={a.id}
-                        onClick={() => openAttachment(a)}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "6px 6px 6px 10px",
-                          borderRadius: 10,
-                          border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                          background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                          {a.kind === "image" ? (
-                            <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
-                          ) : (
-                            <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
-                          )}
-                        </svg>
-                        <span style={{ fontSize: 13, color: isLight ? "#14161A" : "#FFFFFF", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {a.name}{a.ext ? `.${a.ext}` : ""}
-                        </span>
-                        {renderAttachmentMenu("text", textEditorFile, a)}
-                      </div>
-                    ))}
+                    {attachments.map((a) => renderAttachmentChip("text", textEditorFile, a, false))}
                   </div>
                 )}
                 {addrs.length > 0 && (
@@ -7086,7 +7273,7 @@ export default function Alloy() {
             />
             <div style={{ position: "relative", flexShrink: 0 }}>
               <button
-                onClick={(e) => { e.stopPropagation(); toggleAttachMenu("post"); }}
+                onClick={(e) => { e.stopPropagation(); openAttachPicker("post"); }}
                 onMouseEnter={() => setAttachButtonHovered(true)}
                 onMouseLeave={(e) => {
                   setAttachButtonHovered(false);
@@ -7101,7 +7288,7 @@ export default function Alloy() {
                   flexShrink: 0,
                   borderRadius: "50%",
                   border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: attachMenuOpenFor === "post" || attachButtonHovered
+                  background: attachButtonHovered
                     ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
                     : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
                   backdropFilter: "blur(20px) saturate(180%)",
@@ -7124,52 +7311,6 @@ export default function Alloy() {
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
               </button>
-              {attachMenuOpenFor === "post" && (
-                <>
-                  <div onClick={closeAttachMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} />
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "calc(100% + 8px)",
-                      right: 0,
-                      minWidth: 100,
-                      background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
-                      backdropFilter: "blur(20px) saturate(180%)",
-                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                      borderRadius: 12,
-                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                      boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
-                      zIndex: 6,
-                      overflow: "hidden",
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      onClick={() => {
-                        closeAttachMenu();
-                        pendingAttachTargetRef.current = "post";
-                        attachFileInputRef.current && attachFileInputRef.current.click();
-                      }}
-                      style={{
-                        width: "100%",
-                        padding: "10px 12px",
-                        border: "none",
-                        background: "transparent",
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        outline: "none",
-                        textAlign: "left",
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                    >
-                      업로드
-                    </button>
-                  </div>
-                </>
-              )}
             </div>
             <div style={{ position: "relative", marginRight: addButtonExtraInset, flexShrink: 0 }}>
               <button
@@ -7220,34 +7361,7 @@ export default function Alloy() {
               <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: "0 20px 12px 20px" }}>
                 {attachments.length > 0 && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {attachments.map((a) => (
-                      <div
-                        key={a.id}
-                        onClick={() => openAttachment(a)}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "6px 6px 6px 10px",
-                          borderRadius: 10,
-                          border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                          background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                          {a.kind === "image" ? (
-                            <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
-                          ) : (
-                            <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
-                          )}
-                        </svg>
-                        <span style={{ fontSize: 13, color: isLight ? "#14161A" : "#FFFFFF", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {a.name}{a.ext ? `.${a.ext}` : ""}
-                        </span>
-                        {renderAttachmentMenu("post", postEditorId, a)}
-                      </div>
-                    ))}
+                    {attachments.map((a) => renderAttachmentChip("post", postEditorId, a, false))}
                   </div>
                 )}
                 {addrs.length > 0 && (
