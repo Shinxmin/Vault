@@ -23,7 +23,7 @@ alter table public.vaulty_state add column if not exists trash jsonb not null de
 alter table public.vaulty_state add column if not exists storage_limit_gb numeric not null default 10;
 -- 프로필 닉네임 - 설정 탭의 "프로필" 카드에서 연필 아이콘으로 수정한다.
 alter table public.vaulty_state add column if not exists nickname text not null default '사용자';
--- 커뮤니티 게시글("자유게시판") 목록.
+-- 커뮤니티 게시글("게시판") 목록.
 alter table public.vaulty_state add column if not exists community_posts jsonb not null default '[]'::jsonb;
 
 alter table public.vaulty_state enable row level security;
