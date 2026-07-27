@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.51";
+const APP_VERSION = "0.1.52";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -276,8 +276,6 @@ export default function Alloy() {
           custom_order_active: customOrderActive,
           storage_limit_gb: storageLimitGB,
           nickname,
-          community_posts: posts,
-          imported_vaults: importedVaults,
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
@@ -285,7 +283,42 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, posts, importedVaults, dataLoaded]);
+  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, dataLoaded]);
+
+  // 커뮤니티 게시글(community_posts)도 trash와 같은 이유로 별도 컬럼에 분리해 저장한다 -
+  // 이 컬럼이 아직 없는(마이그레이션 전) 환경에서 이 upsert가 실패해도 위 핵심 데이터
+  // 저장에는 영향이 없다. 예전엔 한 번의 upsert에 같이 담겨 있어서, imported_vaults
+  // 컬럼 마이그레이션 전 환경에서는 그 upsert 전체가 실패해 게시글까지 저장되지 않았다.
+  const postsSaveTimerRef = useRef(null);
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (postsSaveTimerRef.current) clearTimeout(postsSaveTimerRef.current);
+    postsSaveTimerRef.current = setTimeout(() => {
+      supabase
+        .from("vaulty_state")
+        .upsert({ id: "default", community_posts: posts, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.error("게시글 저장 실패 (supabase/vaulty_schema.sql의 community_posts 컬럼 마이그레이션이 필요할 수 있습니다):", error);
+        });
+    }, 800);
+    return () => clearTimeout(postsSaveTimerRef.current);
+  }, [posts, dataLoaded]);
+
+  // 가져온 Vault(imported_vaults)도 같은 이유로 별도 컬럼에 분리해 저장한다.
+  const importedVaultsSaveTimerRef = useRef(null);
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (importedVaultsSaveTimerRef.current) clearTimeout(importedVaultsSaveTimerRef.current);
+    importedVaultsSaveTimerRef.current = setTimeout(() => {
+      supabase
+        .from("vaulty_state")
+        .upsert({ id: "default", imported_vaults: importedVaults, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.error("가져온 Vault 저장 실패 (supabase/vaulty_schema.sql의 imported_vaults 컬럼 마이그레이션이 필요할 수 있습니다):", error);
+        });
+    }, 800);
+    return () => clearTimeout(importedVaultsSaveTimerRef.current);
+  }, [importedVaults, dataLoaded]);
 
   // 휴지통은 별도 컬럼(trash)에 저장한다. 위 저장과 분리해 둔 이유는, 이 컬럼이 아직
   // 없는(마이그레이션 전) 환경에서 이 upsert가 실패하더라도 vaults/folders/files 등
