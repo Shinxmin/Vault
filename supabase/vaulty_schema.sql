@@ -12,6 +12,7 @@ create table if not exists public.vaulty_state (
   storage_limit_gb numeric not null default 10,
   nickname text not null default '사용자',
   community_posts jsonb not null default '[]'::jsonb,
+  imported_vaults jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 
@@ -25,6 +26,8 @@ alter table public.vaulty_state add column if not exists storage_limit_gb numeri
 alter table public.vaulty_state add column if not exists nickname text not null default '사용자';
 -- 커뮤니티 게시글("게시판") 목록.
 alter table public.vaulty_state add column if not exists community_posts jsonb not null default '[]'::jsonb;
+-- 게시글/텍스트문서의 Vaulty@주소 링크를 눌러 "가져온" Vault 참조 목록(원본은 그대로 두고 읽기 전용 접근만 기록).
+alter table public.vaulty_state add column if not exists imported_vaults jsonb not null default '[]'::jsonb;
 
 alter table public.vaulty_state enable row level security;
 
