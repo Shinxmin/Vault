@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.53";
+const APP_VERSION = "0.1.54";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -130,24 +130,12 @@ export default function Alloy() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
   const searchInputRef = useRef(null);
-  // 하단 바가 중앙 정렬이라 검색 버튼의 화면상 x좌표가 뷰포트 폭에 따라 달라진다.
-  // 상단 + / X 버튼의 가로 중심을 검색 버튼의 가로 중심에 맞추기 위해 검색 버튼 위치를
-  // 측정해서 필요한 marginRight를 계산한다.
-  const searchButtonRef = useRef(null);
-  const [addButtonExtraInset, setAddButtonExtraInset] = useState(0);
-  useEffect(() => {
-    const measure = () => {
-      if (searchButtonRef.current) {
-        const rect = searchButtonRef.current.getBoundingClientRect();
-        const searchCenter = rect.left + rect.width / 2;
-        const targetRightEdge = searchCenter + TOP_BUTTON_SIZE / 2;
-        setAddButtonExtraInset(Math.max(0, window.innerWidth - 20 - targetRightEdge));
-      }
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, []);
+  // 상단 우측 원형 버튼들(추가/닫기/첨부 등) - 예전엔 하단 검색 버튼의 화면상 x좌표에
+  // 맞추려고 marginRight를 매번 계산했는데, 하단 바가 항상 화면 중앙에 오다 보니
+  // 데스크탑처럼 넓은 화면에서는 검색 버튼이 화면 중앙 쪽에 있어서 상단 버튼도 우측
+  // 끝이 아니라 중앙 쪽으로 밀려나는 문제가 있었다. 지금은 그 계산 없이 각 헤더 자체의
+  // 우측 여백(20px보다 살짝 좁힌 값)만으로 우측 정렬해 모바일/데스크탑 어디서나 항상
+  // 화면 우측 끝에 붙는다.
 
   // Vaulty 데이터 모델: Vault(프로젝트) > Folder(폴더) > Data(이미지/문서)
   //  - vaults: 홈 화면에 카드로 보이는 최상위 프로젝트 [{id, name}]
@@ -2406,7 +2394,9 @@ export default function Alloy() {
     justifyContent: "space-between",
     minHeight: TOP_BUTTON_SIZE,
     margin: "0 -20px 24px -20px",
-    padding: "22px 20px 14px 20px",
+    // 우측 원형 버튼(추가/닫기)이 화면 우측 끝에 너무 딱 붙지 않으면서도 여백이 과하지
+    // 않도록, 좌측(제목)보다 살짝 좁힌 값을 오른쪽 패딩으로 쓴다.
+    padding: "22px 16px 14px 20px",
     background: isLight ? "rgba(255,255,255,0.45)" : "rgba(20,20,19,0.45)",
     backdropFilter: "blur(20px) saturate(180%)",
     WebkitBackdropFilter: "blur(20px) saturate(180%)",
@@ -2487,7 +2477,7 @@ export default function Alloy() {
           {/* 휴지통/태그 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게
               맞춘 리퀴드 글래스 원형 버튼. 우측 상단에 뜬다. */}
           {(tagScreenTags.length > 0 || (active === 2 && trashScreenOpen)) && (
-            <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
+            <div style={{ position: "relative" }}>
             <button
               onClick={() => { setTrashScreenOpen(false); setTrashChecked({}); closeTagScreen(); }}
               onMouseEnter={() => setTrashCloseButtonHovered(true)}
@@ -2532,10 +2522,9 @@ export default function Alloy() {
             </div>
           )}
 
-          {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션.
-              하단 바가 중앙 정렬이라 marginRight로 검색 버튼과 같은 x좌표까지 밀어 넣는다. */}
+          {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션. */}
           {active === 0 && !tagScreenTags.length && !textEditorFile && (
-            <div style={{ position: "relative", marginRight: addButtonExtraInset }}>
+            <div style={{ position: "relative" }}>
               <button
                 ref={uploadButtonRef}
                 onClick={handleAddButton}
@@ -6064,7 +6053,6 @@ export default function Alloy() {
 
         {/* 검색 버튼 (리퀴드 글래스, 탭바와 동일한 높이의 원형) - 누르면 탭바 위에 검색창 패널이 열린다 */}
         <button
-          ref={searchButtonRef}
           onClick={toggleSearch}
           onMouseEnter={() => setSearchButtonHovered(true)}
           onMouseLeave={(e) => {
@@ -6925,7 +6913,7 @@ export default function Alloy() {
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                padding: "20px 20px 12px 20px",
+                padding: "20px 16px 12px 20px",
                 paddingTop: "max(20px, env(safe-area-inset-top))",
               }}
             >
@@ -7149,8 +7137,8 @@ export default function Alloy() {
       )}
 
       {/* 텍스트 에디터 - 전체화면으로 열린다. 좌측 상단은 제목(파일 이름)을 바로 고칠 수 있는
-          입력창이고 그 아래는 본문을 그대로 편집하는 텍스트 영역이다. 우측 상단 X 버튼은
-          휴지통/구독/분류 화면 닫기 버튼과 동일한 크기·가로 좌표(addButtonExtraInset)를 쓴다. */}
+          입력창이고 그 아래는 본문을 그대로 편집하는 텍스트 영역이다. 우측 상단 체크(완료)
+          버튼은 휴지통/구독/분류 화면 닫기 버튼과 동일한 크기를 쓴다. */}
       {textEditorFile && (
         <div
           style={{
@@ -7173,7 +7161,7 @@ export default function Alloy() {
               display: "flex",
               alignItems: "center",
               gap: 10,
-              padding: "20px 20px 12px 20px",
+              padding: "20px 16px 12px 20px",
               paddingTop: "max(20px, env(safe-area-inset-top))",
             }}
           >
@@ -7234,7 +7222,7 @@ export default function Alloy() {
                 </svg>
               </button>
             </div>
-            <div style={{ position: "relative", marginRight: addButtonExtraInset, flexShrink: 0 }}>
+            <div style={{ position: "relative", flexShrink: 0 }}>
               <button
                 onClick={closeTextEditor}
                 onMouseEnter={() => setTrashCloseButtonHovered(true)}
@@ -7357,7 +7345,7 @@ export default function Alloy() {
               display: "flex",
               alignItems: "center",
               gap: 10,
-              padding: "20px 20px 12px 20px",
+              padding: "20px 16px 12px 20px",
               paddingTop: "max(20px, env(safe-area-inset-top))",
             }}
           >
@@ -7418,7 +7406,7 @@ export default function Alloy() {
                 </svg>
               </button>
             </div>
-            <div style={{ position: "relative", marginRight: addButtonExtraInset, flexShrink: 0 }}>
+            <div style={{ position: "relative", flexShrink: 0 }}>
               <button
                 onClick={closePostEditor}
                 onMouseEnter={() => setTrashCloseButtonHovered(true)}
