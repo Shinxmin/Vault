@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.56";
+const APP_VERSION = "0.1.57";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -174,10 +174,9 @@ export default function Alloy() {
   // 링크를 눌러 "가져온" Vault 참조 목록. { id, sourceVaultId, address, importedAt } 형태이며
   // 원본 vaults 배열은 그대로 두고 읽기 전용 접근 권한만 로컬에 기록한다(진짜 삭제/수정은 불가).
   const [importedVaults, setImportedVaults] = useState([]);
-  // 회원가입/로그인 - Supabase Auth(이메일/비밀번호)를 그대로 쓰되, 사용자가 입력하는
-  // "아이디"는 실제 이메일이 아니므로 "아이디@vaulty.internal" 형태의 내부용 가짜
-  // 이메일로 감싸 signUp/signInWithPassword에 넘긴다. vaulty_profiles 테이블이 아이디<->계정
-  // 매핑(및 중복 아이디 확인)을 담당하고, vaulty_state.user_id가 그 계정의 Vault
+  // 로그인 - 개인 웹사이트라 회원가입 기능은 없고, Supabase Auth에 미리 등록해 둔
+  // 계정(들)으로만 로그인할 수 있다(가입 화면이 없으니 등록 안 된 계정은 애초에
+  // signInWithPassword 자체가 실패한다). vaulty_state.user_id가 그 계정의 Vault
   // 데이터가 들어있는 행을 가리킨다. 비로그인 상태에서는 Vault/폴더/파일 등은 전혀
   // 불러오지 않고(웹드라이브 이용 불가), 게시글만 항상 공개된 'default' 행에서 읽는다.
   const [authUser, setAuthUser] = useState(null); // { id, username } | null
@@ -186,8 +185,6 @@ export default function Alloy() {
   const [authIdDraft, setAuthIdDraft] = useState("");
   const [authPasswordDraft, setAuthPasswordDraft] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
-  const AUTH_ID_RE = /^[A-Za-z0-9_]{2,20}$/;
-  const authEmailFor = (username) => `${username.toLowerCase()}@vaulty.internal`;
   const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
   const cycleSortMode = () => {
     setCustomOrderActive(false);
@@ -244,21 +241,30 @@ export default function Alloy() {
     }
   };
 
-  // 로그인 세션을 실제 앱 상태로 반영한다 - vaulty_profiles에서 아이디를 찾고, 그 계정의
-  // vaulty_state 행(없으면 새로 생성)을 읽어 Vault 데이터를 불러온다.
+  // 로그인 세션을 실제 앱 상태로 반영한다 - 이 계정의 vaulty_state 행을 찾아 Vault
+  // 데이터를 불러온다. 아직 어떤 계정에도 연결되지 않은 'default' 행이 있다면(처음
+  // 로그인하는 계정인 경우) 그동안 로그인 없이 써오던 기존 데이터를 그대로 이 계정
+  // 데이터로 이어받는다 - 회원가입 화면이 없으니 이 "최초 로그인 시 이어받기"가
+  // 유일한 연결 시점이다.
   const applySession = async (user) => {
-    const { data: profile } = await supabase.from("vaulty_profiles").select("username").eq("id", user.id).maybeSingle();
-    const username = (profile && profile.username) || (user.email || "").split("@")[0];
+    const username = (user.email || "").split("@")[0];
     let row = null;
     const byUser = await supabase.from("vaulty_state").select("*").eq("user_id", user.id).maybeSingle();
     row = byUser.data;
     if (!row) {
-      const inserted = await supabase
-        .from("vaulty_state")
-        .insert({ id: user.id, user_id: user.id, nickname: username })
-        .select("*")
-        .maybeSingle();
-      row = inserted.data;
+      const { data: legacyRow } = await supabase.from("vaulty_state").select("id, user_id").eq("id", "default").maybeSingle();
+      if (legacyRow && !legacyRow.user_id) {
+        await supabase.from("vaulty_state").update({ user_id: user.id }).eq("id", "default");
+        const claimed = await supabase.from("vaulty_state").select("*").eq("id", "default").maybeSingle();
+        row = claimed.data;
+      } else {
+        const inserted = await supabase
+          .from("vaulty_state")
+          .insert({ id: user.id, user_id: user.id, nickname: username })
+          .select("*")
+          .maybeSingle();
+        row = inserted.data;
+      }
     }
     if (row) {
       setMyRowId(row.id);
@@ -378,56 +384,17 @@ export default function Alloy() {
     return () => clearTimeout(importedVaultsSaveTimerRef.current);
   }, [importedVaults, dataLoaded, authUser, myRowId]);
 
-  // 회원가입 - 아이디 중복(vaulty_profiles 테이블) 확인 후 Supabase Auth 계정을 만든다.
-  // 이 앱에서 처음 가입하는 계정이면(아직 아무도 연결되지 않은 'default' 행이 있다면)
-  // 그동안 로그인 없이 써오던 기존 Vault 데이터를 그대로 이 계정 데이터로 이어받는다.
-  const handleSignup = async () => {
-    const id = authIdDraft.trim();
-    const pw = authPasswordDraft;
-    if (!id || !pw || authBusy) return;
-    if (!AUTH_ID_RE.test(id)) { showToast("아이디 형식이 올바르지 않습니다"); return; }
-    setAuthBusy(true);
-    try {
-      const { data: existingProfile } = await supabase.from("vaulty_profiles").select("id").eq("username", id).maybeSingle();
-      if (existingProfile) { showToast("이미 가입된 아이디입니다"); return; }
-      const email = authEmailFor(id);
-      const { data, error } = await supabase.auth.signUp({ email, password: pw });
-      if (error) {
-        showToast(/registered|exists/i.test(error.message || "") ? "이미 가입된 아이디입니다" : "회원가입에 실패했습니다");
-        return;
-      }
-      let session = data.session;
-      if (!session) {
-        const signInRes = await supabase.auth.signInWithPassword({ email, password: pw });
-        session = signInRes.data && signInRes.data.session;
-      }
-      if (!session || !data.user) { showToast("회원가입에 실패했습니다"); return; }
-      await supabase.from("vaulty_profiles").insert({ id: data.user.id, username: id });
-      const { data: legacyRow } = await supabase.from("vaulty_state").select("id, user_id").eq("id", "default").maybeSingle();
-      if (legacyRow && !legacyRow.user_id) {
-        await supabase.from("vaulty_state").update({ user_id: data.user.id }).eq("id", "default");
-      } else if (!legacyRow) {
-        await supabase.from("vaulty_state").insert({ id: data.user.id, user_id: data.user.id, nickname: id });
-      }
-      await applySession(data.user);
-      setAuthIdDraft("");
-      setAuthPasswordDraft("");
-      showToast("회원가입이 완료되었습니다");
-    } finally {
-      setAuthBusy(false);
-    }
-  };
-
-  // 로그인 - vaulty_profiles에 없는 아이디면(가입 이력 없음) 바로 안내하고, 있으면 실제 인증을 시도한다.
+  // 로그인 - 개인 웹사이트라 회원가입은 없고, Supabase Auth 대시보드에 미리 등록해 둔
+  // 계정(이메일/비밀번호)으로만 로그인할 수 있다. 등록되지 않은 이메일이거나 비밀번호가
+  // 틀리면 Supabase가 둘을 구분하지 않고 동일한 오류를 주므로, 굳이 구분해서 알려주지
+  // 않고 하나의 안내 문구로만 처리한다(등록된 계정이 무엇인지 짐작할 단서를 주지 않기 위함이기도 하다).
   const handleLogin = async () => {
-    const id = authIdDraft.trim();
+    const email = authIdDraft.trim();
     const pw = authPasswordDraft;
-    if (!id || !pw || authBusy) return;
+    if (!email || !pw || authBusy) return;
     setAuthBusy(true);
     try {
-      const { data: existingProfile } = await supabase.from("vaulty_profiles").select("id").eq("username", id).maybeSingle();
-      if (!existingProfile) { showToast("회원가입을 먼저 진행해주세요"); return; }
-      const { data, error } = await supabase.auth.signInWithPassword({ email: authEmailFor(id), password: pw });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password: pw });
       if (error || !data.session) { showToast("아이디 또는 비밀번호가 올바르지 않습니다"); return; }
       await applySession(data.user);
       setAuthIdDraft("");
@@ -4187,9 +4154,10 @@ export default function Alloy() {
               설정
             </div>
 
-            {/* 계정 카드 - 프로필 카드 바로 위, 로그아웃 상태에서만 보인다. 아이디/비밀번호
-                인풋(플레이스홀더 없음) + 우측 끝 회원가입/로그인 버튼. 회원가입이 끝나면
-                이 카드는 사라지고 버전 카드 쪽에 아이디/로그아웃이 대신 나타난다. */}
+            {/* 계정 카드 - 프로필 카드 바로 위, 로그아웃 상태에서만 보인다. 개인 웹사이트라
+                회원가입은 없고 Supabase에 미리 등록해 둔 계정(이메일/비밀번호)으로만
+                로그인할 수 있다. 로그인이 끝나면 이 카드는 사라지고 버전 카드 쪽에
+                이메일/로그아웃이 대신 나타난다. */}
             {!authUser && (
               <div
                 style={{
@@ -4206,13 +4174,14 @@ export default function Alloy() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
-                    아이디
+                    이메일
                   </span>
                   <input
                     type="text"
                     value={authIdDraft}
                     onChange={(e) => setAuthIdDraft(e.target.value)}
-                    maxLength={20}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
+                    maxLength={60}
                     autoCapitalize="off"
                     autoCorrect="off"
                     style={{
@@ -4254,24 +4223,6 @@ export default function Alloy() {
                   />
                 </div>
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                  <button
-                    onClick={handleSignup}
-                    disabled={authBusy}
-                    style={{
-                      padding: "7px 14px",
-                      borderRadius: 8,
-                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                      background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                      color: isLight ? "#14161A" : "#FFFFFF",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: authBusy ? "default" : "pointer",
-                      outline: "none",
-                      opacity: authBusy ? 0.6 : 1,
-                    }}
-                  >
-                    회원가입
-                  </button>
                   <button
                     onClick={handleLogin}
                     disabled={authBusy}
@@ -4702,8 +4653,8 @@ export default function Alloy() {
               <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
                 버전
               </div>
-              {/* 로그인 상태에서는 버전 텍스트 바로 위에 같은 글씨로 아이디를, 그 바로 밑에
-                  로그아웃을 보여준다. 회원가입 완료 시 계정 카드 대신 여기에 나타난다. */}
+              {/* 로그인 상태에서는 버전 텍스트 바로 위에 같은 글씨로 이메일을, 그 바로 밑에
+                  로그아웃을 보여준다. 로그인 성공 시 계정 카드 대신 여기에 나타난다. */}
               {authUser && (
                 <div style={{ marginBottom: 6 }}>
                   <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
