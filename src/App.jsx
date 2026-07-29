@@ -3,20 +3,9 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.57";
+const APP_VERSION = "0.1.58";
 
 export default function Alloy() {
-  const tabs = ["A", "B", "C"];
-  // 상단 바 제목 - 홈 탭과 설정 탭에 "Vaulty" 브랜드를 보여준다. 설정 탭에는 + 추가 버튼이 없다.
-  const TAB_TITLES = ["Vaulty", "Vaulty", "Vaulty"];
-  const [active, setActive] = useState(0);
-
-  // 탭 전환 시 이전 탭의 스크롤 위치가 유지되어 콘텐츠가 적은 탭에서
-  // 스크롤이 아래로 내려간 채로 보이는 문제 방지
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [active]);
-
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
   // 스크롤이 생기므로, 실제 뷰포트 높이(window.innerHeight)를 추적해 사용
   const [vh, setVh] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 800));
@@ -107,35 +96,15 @@ export default function Alloy() {
     return () => mq.removeEventListener("change", applySystemTheme);
   }, [useSystemTheme]);
 
-  const [hovered, setHovered] = useState(null);
-  const btnRefs = useRef([]);
-  const [indicator, setIndicator] = useState({ left: 0, width: 0 });
-
-  useEffect(() => {
-    const el = btnRefs.current[active];
-    if (el) {
-      setIndicator({ left: el.offsetLeft, width: el.offsetWidth });
-    }
-  }, [active, isLight]);
-
   const BAR_HEIGHT = 58;
   // 홈 탭의 추가하기(+) 버튼과 휴지통 화면의 닫기(X) 버튼 크기 - 검색 버튼(BAR_HEIGHT)의 2/3.
   const TOP_BUTTON_SIZE = Math.round((BAR_HEIGHT * 2) / 3);
 
-  // 하단 바의 원형 검색 버튼 - 누르면 탭바 위에 같은 디자인의 검색창 패널이 열린다.
-  // 검색어가 있으면 홈 탭 메인 섹션이 현재 위치와 상관없이 이름에 검색어가 포함된
-  // 전체 파일/문서/이미지 리스트로 바뀐다(아래 홈 탭 렌더링 부분 참고).
+  // 상단 헤더 중앙의 검색창 - 항상 떠 있는 인라인 입력창(예전처럼 버튼을 눌러 열고 닫는
+  // 패널이 아니다). 검색어가 있으면 홈 탭 메인 섹션이 현재 위치와 상관없이 이름에
+  // 검색어가 포함된 전체 폴더/파일/이미지 리스트로 바뀐다(아래 홈 탭 렌더링 부분 참고).
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchButtonHovered, setSearchButtonHovered] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchVisible, setSearchVisible] = useState(false);
   const searchInputRef = useRef(null);
-  // 상단 우측 원형 버튼들(추가/닫기/첨부 등) - 예전엔 하단 검색 버튼의 화면상 x좌표에
-  // 맞추려고 marginRight를 매번 계산했는데, 하단 바가 항상 화면 중앙에 오다 보니
-  // 데스크탑처럼 넓은 화면에서는 검색 버튼이 화면 중앙 쪽에 있어서 상단 버튼도 우측
-  // 끝이 아니라 중앙 쪽으로 밀려나는 문제가 있었다. 지금은 그 계산 없이 각 헤더 자체의
-  // 우측 여백(20px보다 살짝 좁힌 값)만으로 우측 정렬해 모바일/데스크탑 어디서나 항상
-  // 화면 우측 끝에 붙는다.
 
   // Vaulty 데이터 모델: Vault(프로젝트) > Folder(폴더) > Data(이미지/문서)
   //  - vaults: 홈 화면에 카드로 보이는 최상위 프로젝트 [{id, name}]
@@ -166,14 +135,6 @@ export default function Alloy() {
   const [customOrderActive, setCustomOrderActive] = useState(false);
   // storageLimitGB도 같은 이유로 여기서 미리 선언한다(저장 공간 한도, 기본 10GB).
   const [storageLimitGB, setStorageLimitGB] = useState(10);
-  // nickname도 같은 이유로 여기서 미리 선언한다(설정 탭 "프로필" 카드의 닉네임).
-  const [nickname, setNickname] = useState("사용자");
-  // posts도 같은 이유로 여기서 미리 선언한다(커뮤니티 탭 "게시판" 게시글 목록).
-  const [posts, setPosts] = useState([]);
-  // importedVaults도 같은 이유로 여기서 미리 선언한다 - 게시글/텍스트문서에 적힌 Vaulty@주소
-  // 링크를 눌러 "가져온" Vault 참조 목록. { id, sourceVaultId, address, importedAt } 형태이며
-  // 원본 vaults 배열은 그대로 두고 읽기 전용 접근 권한만 로컬에 기록한다(진짜 삭제/수정은 불가).
-  const [importedVaults, setImportedVaults] = useState([]);
   // 로그인 - 개인 웹사이트라 회원가입 기능은 없고, Supabase Auth에 미리 등록해 둔
   // 계정(들)으로만 로그인할 수 있다(가입 화면이 없으니 등록 안 된 계정은 애초에
   // signInWithPassword 자체가 실패한다). vaulty_state.user_id가 그 계정의 Vault
@@ -211,7 +172,7 @@ export default function Alloy() {
   // vaulty_state 한 행을 상태로 반영하는 공용 유틸 - 최초 비로그인 로드와 로그인 직후
   // 둘 다 이 함수를 쓴다. 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지
   // 않으므로 불러올 때마다 r2Key 기준으로 새로 발급받는다(휴지통 안 이미지도 포함).
-  const hydrateFromRow = async (row, fallbackNickname) => {
+  const hydrateFromRow = async (row) => {
     const loadedVaults = (row.vaults || []).map(withDates);
     const loadedFolders = (row.folders || []).map(withDates);
     const loadedFiles = (row.files || []).map(withDates);
@@ -220,8 +181,6 @@ export default function Alloy() {
     setFolders(loadedFolders);
     setCustomOrderActive(row.custom_order_active === true);
     setStorageLimitGB(typeof row.storage_limit_gb === "number" && row.storage_limit_gb > 0 ? row.storage_limit_gb : 10);
-    setNickname(typeof row.nickname === "string" && row.nickname ? row.nickname : (fallbackNickname || "사용자"));
-    setImportedVaults(row.imported_vaults || []);
     const trashImageKeys = loadedTrash.flatMap((t) => t.files || []).filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
     const imageKeys = [...loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key), ...trashImageKeys];
     if (imageKeys.length) {
@@ -260,7 +219,7 @@ export default function Alloy() {
       } else {
         const inserted = await supabase
           .from("vaulty_state")
-          .insert({ id: user.id, user_id: user.id, nickname: username })
+          .insert({ id: user.id, user_id: user.id })
           .select("*")
           .maybeSingle();
         row = inserted.data;
@@ -268,7 +227,7 @@ export default function Alloy() {
     }
     if (row) {
       setMyRowId(row.id);
-      await hydrateFromRow(row, username);
+      await hydrateFromRow(row);
     }
     setAuthUser({ id: user.id, username });
   };
@@ -281,25 +240,13 @@ export default function Alloy() {
     setFolders([]);
     setFiles([]);
     setTrash([]);
-    setImportedVaults([]);
     setCustomOrderActive(false);
     setStorageLimitGB(10);
-    setNickname("사용자");
     setCurrentPath([]);
   };
 
   useEffect(() => {
     (async () => {
-      // 게시글(커뮤니티 게시판)은 로그인 여부와 상관없이 항상 공개된 'default' 행에서
-      // 읽는다 - 비로그인 사용자도 게시글 읽기는 가능해야 하기 때문.
-      const { data: publicRow, error: publicError } = await supabase
-        .from("vaulty_state")
-        .select("community_posts")
-        .eq("id", "default")
-        .maybeSingle();
-      if (publicError) console.error("게시글을 불러오지 못했습니다:", publicError);
-      setPosts(((publicRow && publicRow.community_posts) || []).map(withDates));
-
       const { data: sessionData } = await supabase.auth.getSession();
       if (sessionData && sessionData.session && sessionData.session.user) {
         try {
@@ -340,7 +287,6 @@ export default function Alloy() {
           files: filesToSave,
           custom_order_active: customOrderActive,
           storage_limit_gb: storageLimitGB,
-          nickname,
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
@@ -348,41 +294,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, dataLoaded, authUser, myRowId]);
-
-  // 커뮤니티 게시글(community_posts)은 계정과 무관하게 항상 공개된 'default' 행에
-  // 저장하는 하나의 공유 게시판이다 - 다만 글쓰기(게시글 작성/수정/삭제)는 로그인해야만
-  // 가능하므로, 비로그인 상태에서는 이 저장도 시도하지 않는다.
-  const postsSaveTimerRef = useRef(null);
-  useEffect(() => {
-    if (!dataLoaded || !authUser) return;
-    if (postsSaveTimerRef.current) clearTimeout(postsSaveTimerRef.current);
-    postsSaveTimerRef.current = setTimeout(() => {
-      supabase
-        .from("vaulty_state")
-        .upsert({ id: "default", community_posts: posts, updated_at: new Date().toISOString() })
-        .then(({ error }) => {
-          if (error) console.error("게시글 저장 실패 (supabase/vaulty_schema.sql의 community_posts 컬럼 마이그레이션이 필요할 수 있습니다):", error);
-        });
-    }, 800);
-    return () => clearTimeout(postsSaveTimerRef.current);
-  }, [posts, dataLoaded, authUser]);
-
-  // 가져온 Vault(imported_vaults)도 계정별 행(myRowId)에 분리해 저장한다.
-  const importedVaultsSaveTimerRef = useRef(null);
-  useEffect(() => {
-    if (!dataLoaded || !authUser) return;
-    if (importedVaultsSaveTimerRef.current) clearTimeout(importedVaultsSaveTimerRef.current);
-    importedVaultsSaveTimerRef.current = setTimeout(() => {
-      supabase
-        .from("vaulty_state")
-        .upsert({ id: myRowId, user_id: authUser.id, imported_vaults: importedVaults, updated_at: new Date().toISOString() })
-        .then(({ error }) => {
-          if (error) console.error("가져온 Vault 저장 실패 (supabase/vaulty_schema.sql의 imported_vaults 컬럼 마이그레이션이 필요할 수 있습니다):", error);
-        });
-    }, 800);
-    return () => clearTimeout(importedVaultsSaveTimerRef.current);
-  }, [importedVaults, dataLoaded, authUser, myRowId]);
+  }, [vaults, folders, files, customOrderActive, storageLimitGB, dataLoaded, authUser, myRowId]);
 
   // 로그인 - 개인 웹사이트라 회원가입은 없고, Supabase Auth 대시보드에 미리 등록해 둔
   // 계정(이메일/비밀번호)으로만 로그인할 수 있다. 등록되지 않은 이메일이거나 비밀번호가
@@ -457,9 +369,7 @@ export default function Alloy() {
   const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "apng", "webp"];
   const getKindFromName = (name) => {
     const ext = (name.split(".").pop() || "").toLowerCase();
-    if (IMAGE_EXTS.includes(ext)) return "image";
-    if (ext === "txt") return "doc";
-    return null;
+    return IMAGE_EXTS.includes(ext) ? "image" : null;
   };
   // 파일 이름에서 확장자를 떼어낸다 - 제목(item.name)에는 확장자를 담지 않고, 확장자는
   // 항목의 ext 필드에 따로 저장해서 정보 모달의 "확장자" 행 등에서만 쓴다.
@@ -469,7 +379,6 @@ export default function Alloy() {
     return { base: fullName.slice(0, idx), ext: fullName.slice(idx + 1).toLowerCase() };
   };
 
-  const [uploadButtonHovered, setUploadButtonHovered] = useState(false);
   const [trashCloseButtonHovered, setTrashCloseButtonHovered] = useState(false);
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [uploadMenuVisible, setUploadMenuVisible] = useState(false);
@@ -498,72 +407,11 @@ export default function Alloy() {
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
 
-  // 게시글/텍스트 문서 에디터의 첨부 - 체크(완료) 버튼 바로 왼쪽의 + 버튼을 누르면 내
-  // Vaulty에 이미 올라가 있는 데이터(이미지/파일)를 고르는 탐색창이 뜬다. 컴퓨터에서
-  // 새로 업로드하는 게 아니라 "이미 있는 내 데이터를 읽게" 참조만 추가하는 것이라
-  // 원본을 복제하지 않는다(이중 업로드/다운로드 없음). attachments 배열엔 참조 대상의
-  // refFileId만 담고, 실제 이름/크기/썸네일 등은 항상 files 배열에서 그때그때 조회한다 -
-  // 그래야 원본이 이름을 바꾸거나 옮겨져도 첨부가 최신 상태를 그대로 반영한다.
-  // (여기선 항상 작성자이므로) 각 첨부에 삼점바로 "삭제"가 뜨고, 이는 이 게시글/문서에서
-  // 참조만 빼는 것이지 원본 파일에는 전혀 영향이 없다.
-  const [attachButtonHovered, setAttachButtonHovered] = useState(false);
-  const [attachPickerFor, setAttachPickerFor] = useState(null); // 'text' | 'post' | null
-  const [attachPickerVisible, setAttachPickerVisible] = useState(false);
-  const [attachPickerPath, setAttachPickerPath] = useState([]);
-  const [attachPickerSelected, setAttachPickerSelected] = useState({}); // { [fileId]: true }
-  const openAttachPicker = (target) => {
-    setAttachPickerFor(target);
-    setAttachPickerPath([]);
-    setAttachPickerSelected({});
-    requestAnimationFrame(() => setAttachPickerVisible(true));
-  };
-  const closeAttachPicker = () => {
-    setAttachPickerVisible(false);
-    setTimeout(() => {
-      setAttachPickerFor(null);
-      setAttachPickerPath([]);
-      setAttachPickerSelected({});
-    }, 200);
-  };
-  const toggleAttachPickerFile = (id) => {
-    setAttachPickerSelected((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-  // 확인(추가) - 선택한 파일들을 참조(refFileId)로 붙인다. 이미 붙어있는 참조는 중복 없이 갈아끼운다.
-  const confirmAttachPicker = () => {
-    const selectedIds = Object.keys(attachPickerSelected).filter((id) => attachPickerSelected[id]).map(Number);
-    const target = attachPickerFor;
-    const targetId = target === "text" ? textEditorFile : postEditorId;
-    if (!selectedIds.length || !target || !targetId) { closeAttachPicker(); return; }
-    const newRefs = selectedIds.map((refFileId) => ({ id: Date.now() + Math.random(), refFileId, addedAt: Date.now() }));
-    const mergeAttachments = (existing) => [...(existing || []).filter((a) => !selectedIds.includes(a.refFileId)), ...newRefs];
-    if (target === "text") {
-      setFiles((prev) => prev.map((f) => (f.id === targetId ? { ...f, attachments: mergeAttachments(f.attachments) } : f)));
-    } else {
-      setPosts((prev) => prev.map((p) => (p.id === targetId ? { ...p, attachments: mergeAttachments(p.attachments) } : p)));
-    }
-    closeAttachPicker();
-  };
-  // 탐색창 목록 - 홈에서는 Vault를, 그 안에서는 하위 폴더(들어가기)와 이 위치의 파일(선택 가능)을 보여준다.
-  const attachPickerFolders = attachPickerFor && attachPickerPath.length > 0
-    ? folders.filter(
-        (f) => f.path.length === attachPickerPath.length + 1 && f.path.slice(0, attachPickerPath.length).every((p, i) => p === attachPickerPath[i])
-      )
-    : [];
-  const attachPickerFiles = attachPickerFor && attachPickerPath.length > 0
-    ? files.filter((f) => f.path.length === attachPickerPath.length && f.path.every((p, i) => p === attachPickerPath[i]))
-    : [];
-  // 첨부 대상 파일을 열람 - 이미지는 전체화면 뷰어, R2에 실제 업로드된 파일은 새 창에서
-  // presigned GET으로, 인앱에서 만든 텍스트 문서(본문이 content 필드뿐 R2 없음)는
-  // 간단한 읽기 전용 미리보기 모달로 연다.
-  const [docPreviewId, setDocPreviewId] = useState(null);
-  const openAttachedFile = (file) => {
-    if (!file) return;
-    if (file.kind === "image") { openViewer([file], 0); return; }
-    if (file.r2Key) { openAttachment(file); return; }
-    setDocPreviewId(file.id);
-  };
 
-  // 설정 탭 > 휴지통 화면 - 탭 자체를 늘리지 않고, 설정 탭 안에서 화면을 하나 더 미는 방식.
+  // 설정 화면 - 상단 우측 설정(⚙) 버튼을 누르면 전체화면으로 열린다. 그 안에서 휴지통은
+  // 화면을 하나 더 미는 방식(별도 탭이 아니라 이 설정 화면 안의 하위 화면).
+  const [settingsScreenOpen, setSettingsScreenOpen] = useState(false);
+  const [settingsButtonHovered, setSettingsButtonHovered] = useState(false);
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
   // 요금 안내 - "모든 요금제를 확인하세요"를 누르면 하단 서브 액션바와 같은 리퀴드 글래스
   // 배경을 가진 별도의 뜬 패널이 그 텍스트 바로 밑 위치에 2초간 페이드 인/아웃으로 떴다가
@@ -656,594 +504,6 @@ export default function Alloy() {
   // 한도 표시 전용 포맷 - 1,000GB(=1TB)일 때만 "1TB"로 보여주고, 999GB 이하는 그대로 GB로 보여준다.
   const formatStorageLimitDisplay = (gb) => (gb >= 1000 ? "1TB" : formatGBShort(gb * 1024 * 1024 * 1024));
 
-  // 프로필 닉네임 편집 - 연필 아이콘을 누르면 닉네임이 인풋으로 바뀌고, 포커스를 벗어나거나
-  // Enter를 누르면 확인 버튼 없이 바로 저장된다.
-  const [nicknameEditing, setNicknameEditing] = useState(false);
-  const [nicknameDraft, setNicknameDraft] = useState("");
-  const startEditNickname = () => {
-    setNicknameDraft(nickname);
-    setNicknameEditing(true);
-  };
-  const commitNickname = async () => {
-    const trimmed = nicknameDraft.trim();
-    setNicknameEditing(false);
-    if (!trimmed || trimmed === nickname) return;
-    // 다른 계정(행)이 이미 쓰고 있는 닉네임이면 변경을 취소하고 안내한다.
-    const { data } = await supabase.from("vaulty_state").select("id").eq("nickname", trimmed).neq("id", myRowId).limit(1);
-    if (data && data.length > 0) {
-      showToast("사용중인 닉네임입니다");
-      return;
-    }
-    setNickname(trimmed);
-    showToast("변경사항이 저장되었습니다");
-  };
-
-  // 커뮤니티 - 지금은 "게시판" 하나만 있는 리스트형 게시판. 글 작성/수정은 전체화면
-  // 에디터(텍스트 에디터와 같은 패턴)를 쓴다. viewingPostId는 목록에서 글을 눌러 들어간
-  // 상세 화면(경로: 게시판 > 제목)의 글 id - null이면 목록(게시판) 화면이다.
-  const [viewingPostId, setViewingPostId] = useState(null);
-  const [postEditorId, setPostEditorId] = useState(null);
-  const [postEditorVisible, setPostEditorVisible] = useState(false);
-  const [postTitleDraft, setPostTitleDraft] = useState("");
-  const [postContentDraft, setPostContentDraft] = useState("");
-  // 새 글은 "새 문서"와 동일하게 열자마자 실제 항목을 만들어 둔다(빈 글도 목록에 남는다) -
-  // 그래야 아래 자동저장 이펙트가 글 수정 때와 똑같이 "이 id를 업데이트"만 하면 된다.
-  const openPostEditor = (post) => {
-    if (post) {
-      setPostEditorId(post.id);
-      setPostTitleDraft(post.title);
-      setPostContentDraft(post.content);
-    } else {
-      const now = Date.now();
-      setPosts((prev) => [...prev, { id: now, title: "", content: "", createdAt: now, updatedAt: now }]);
-      setPostEditorId(now);
-      setPostTitleDraft("");
-      setPostContentDraft("");
-    }
-    requestAnimationFrame(() => setPostEditorVisible(true));
-  };
-  const closePostEditor = () => {
-    setPosts((prev) => prev.map((p) => (
-      p.id === postEditorId
-        ? { ...p, title: postTitleDraft.trim() || "제목 없음", content: postContentDraft, updatedAt: Date.now() }
-        : p
-    )));
-    setPostEditorVisible(false);
-    setTimeout(() => setPostEditorId(null), 200);
-  };
-  // 게시글 에디터가 열려 있는 동안 타이핑을 멈추면 잠시 뒤 자동 저장 - 텍스트 문서 에디터와
-  // 동일한 패턴의 백그라운드 저장.
-  useEffect(() => {
-    if (!postEditorId) return;
-    const t = setTimeout(() => {
-      setPosts((prev) => prev.map((p) => (
-        p.id === postEditorId
-          ? { ...p, title: postTitleDraft.trim() || p.title, content: postContentDraft, updatedAt: Date.now() }
-          : p
-      )));
-    }, 600);
-    return () => clearTimeout(t);
-  }, [postTitleDraft, postContentDraft, postEditorId]);
-  // 삭제 - 다른 항목들과 같은 두 번 눌러 확인하는 패턴(deleteArmedKey)을 그대로 쓴다.
-  // 휴지통을 거치지 않고 바로 영구 삭제된다.
-  const deletePost = (id) => {
-    setPosts((prev) => prev.filter((p) => p.id !== id));
-    closeItemMenu();
-    showToast("데이터를 삭제했습니다");
-  };
-  // 게시글 삼점 메뉴 - 수정/삭제만 있는 간단한 버전. itemMenuOpen 등 기존 삼점 메뉴
-  // 인프라를 type: "post"로 그대로 재사용한다.
-  const renderPostMenu = (post) => {
-    // 비로그인 상태에서는 게시글 읽기만 가능해야 하므로 수정/삭제 메뉴 자체를 숨긴다.
-    if (!authUser) return null;
-    const isOpen = itemMenuOpen && itemMenuOpen.type === "post" && itemMenuOpen.id === post.id;
-    const isVisible = itemMenuVisibleKey === `post-${post.id}`;
-    return (
-      <div
-        style={{ position: "relative", margin: -5, padding: 5, flexShrink: 0 }}
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        onMouseUp={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        onTouchEnd={(e) => e.stopPropagation()}
-      >
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleItemMenu("post", post.id, e.currentTarget);
-          }}
-          onMouseDown={pressDown("scale(0.85)")}
-          onMouseUp={pressUp("scale(1)")}
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 7,
-            border: "none",
-            background: "transparent",
-            color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-            cursor: "pointer",
-            outline: "none",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            transition: "all 0.2s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)";
-            e.currentTarget.style.color = isLight ? "#14161A" : "#FFFFFF";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)";
-          }}
-          aria-label="옵션"
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="12" cy="5" r="2" />
-            <circle cx="12" cy="12" r="2" />
-            <circle cx="12" cy="19" r="2" />
-          </svg>
-        </button>
-
-        {isOpen && createPortal(
-          <>
-            <div
-              onClick={(e) => { e.stopPropagation(); closeItemMenu(); }}
-              style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 29 }}
-            />
-            <div
-              style={{
-                position: "fixed",
-                top: itemMenuAnchor.top,
-                right: itemMenuAnchor.right,
-                minWidth: 128,
-                background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
-                backdropFilter: "blur(20px) saturate(180%)",
-                WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                borderRadius: 12,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
-                zIndex: 30,
-                overflow: "hidden",
-                transformOrigin: "top right",
-                opacity: isVisible ? 1 : 0,
-                transform: isVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
-                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeItemMenu();
-                  openPostEditor(post);
-                }}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "none",
-                  background: "transparent",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  outline: "none",
-                  textAlign: "left",
-                  transition: "background 0.2s",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-              >
-                수정
-              </button>
-              <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-              {(() => {
-                const deleteKey = `post-${post.id}`;
-                const isArmed = deleteArmedKey === deleteKey;
-                return (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isArmed) {
-                        deletePost(post.id);
-                      } else {
-                        setDeleteArmedKey(deleteKey);
-                      }
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "10px 12px",
-                      border: "none",
-                      background: isArmed ? "#EF4444" : "transparent",
-                      color: isArmed ? "#FFFFFF" : "#EF4444",
-                      fontSize: 15,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      outline: "none",
-                      textAlign: "left",
-                      transition: "background 0.15s ease, color 0.15s ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isArmed) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isArmed) e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    삭제
-                  </button>
-                );
-              })()}
-            </div>
-          </>,
-          document.body
-        )}
-      </div>
-    );
-  };
-  // 첨부파일 삼점 메뉴 - "삭제" 하나뿐인 아주 단순한 버전. itemMenuOpen 인프라를
-  // type: "attachment"로 재사용하고, id는 "target:targetId:attachmentId" 형태의 합성 키다.
-  const renderAttachmentMenu = (target, targetId, attachment, overlay) => {
-    const menuId = `${target}:${targetId}:${attachment.id}`;
-    const isOpen = itemMenuOpen && itemMenuOpen.type === "attachment" && itemMenuOpen.id === menuId;
-    const isVisible = itemMenuVisibleKey === `attachment-${menuId}`;
-    return (
-      <div
-        style={{ position: "relative", flexShrink: 0 }}
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        onMouseUp={(e) => e.stopPropagation()}
-      >
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleItemMenu("attachment", menuId, e.currentTarget);
-          }}
-          onMouseDown={pressDown("scale(0.85)")}
-          onMouseUp={pressUp("scale(1)")}
-          style={overlay ? {
-            width: 30,
-            height: 30,
-            borderRadius: "50%",
-            border: "1px solid rgba(255,255,255,0.18)",
-            background: "rgba(0,0,0,0.45)",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
-            color: "#FFFFFF",
-            cursor: "pointer",
-            outline: "none",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          } : {
-            width: 22,
-            height: 22,
-            borderRadius: 6,
-            border: "none",
-            background: "transparent",
-            color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-            cursor: "pointer",
-            outline: "none",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-          aria-label="옵션"
-        >
-          <svg width={overlay ? 18 : 16} height={overlay ? 18 : 16} viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="12" cy="5" r="2" />
-            <circle cx="12" cy="12" r="2" />
-            <circle cx="12" cy="19" r="2" />
-          </svg>
-        </button>
-
-        {isOpen && createPortal(
-          <>
-            <div
-              onClick={(e) => { e.stopPropagation(); closeItemMenu(); }}
-              style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 51 }}
-            />
-            <div
-              style={{
-                position: "fixed",
-                top: itemMenuAnchor.top,
-                right: itemMenuAnchor.right,
-                minWidth: 110,
-                background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
-                backdropFilter: "blur(20px) saturate(180%)",
-                WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                borderRadius: 12,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
-                zIndex: 52,
-                overflow: "hidden",
-                transformOrigin: "top right",
-                opacity: isVisible ? 1 : 0,
-                transform: isVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
-                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {(() => {
-                const deleteKey = `attachment-${menuId}`;
-                const isArmed = deleteArmedKey === deleteKey;
-                return (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isArmed) {
-                        deleteAttachment(target, targetId, attachment.id);
-                      } else {
-                        setDeleteArmedKey(deleteKey);
-                      }
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "10px 12px",
-                      border: "none",
-                      background: isArmed ? "#EF4444" : "transparent",
-                      color: isArmed ? "#FFFFFF" : "#EF4444",
-                      fontSize: 15,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      outline: "none",
-                      textAlign: "left",
-                      transition: "background 0.15s ease, color 0.15s ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isArmed) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isArmed) e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    삭제
-                  </button>
-                );
-              })()}
-            </div>
-          </>,
-          document.body
-        )}
-      </div>
-    );
-  };
-  // 첨부 칩 - attachments 항목은 참조(refFileId)만 담고 있으므로 실제 이름/종류는
-  // 항상 files 배열에서 그때그때 찾아 그린다. 원본이 삭제/휴지통에 가 있으면 회색으로
-  // "삭제된 파일"만 보여주고 클릭도 안 되지만, 참조 자체는 삼점 메뉴로 지울 수 있다.
-  const renderAttachmentChip = (target, targetId, a, readOnly) => {
-    const source = files.find((f) => f.id === a.refFileId);
-    // 첨부 없이는 "삭제된 파일" 안내만 - 이 경우엔 이미지든 아니든 작은 안내 줄로 보여준다.
-    if (!source) {
-      return (
-        <div
-          key={a.id}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-            padding: "12px 14px",
-            borderRadius: 12,
-            border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-            opacity: 0.45,
-            boxSizing: "border-box",
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
-          </svg>
-          <span style={{ fontSize: 14, color: isLight ? "#14161A" : "#FFFFFF" }}>삭제된 파일</span>
-          {!readOnly && renderAttachmentMenu(target, targetId, a)}
-        </div>
-      );
-    }
-    // 이미지는 첨부 느낌의 작은 칩이 아니라 폭에 맞춰 실제 사진을 그대로 보여준다.
-    if (source.kind === "image") {
-      return (
-        <div
-          key={a.id}
-          onClick={() => openAttachedFile(source)}
-          style={{
-            position: "relative",
-            width: "100%",
-            borderRadius: 14,
-            overflow: "hidden",
-            background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
-            cursor: "pointer",
-          }}
-        >
-          {source.url ? (
-            <img src={source.url} alt={source.name} style={{ width: "100%", height: "auto", display: "block" }} />
-          ) : (
-            <div style={{ width: "100%", aspectRatio: "4 / 3" }} />
-          )}
-          {!readOnly && (
-            <div style={{ position: "absolute", top: 8, right: 8 }}>
-              {renderAttachmentMenu(target, targetId, a, true)}
-            </div>
-          )}
-        </div>
-      );
-    }
-    // 이미지가 아닌 파일은 폭 전체를 쓰는 카드형 행으로 - 작은 칩이 아니라 본문 요소처럼 보이게 한다.
-    return (
-      <div
-        key={a.id}
-        onClick={() => openAttachedFile(source)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          width: "100%",
-          padding: "14px 16px",
-          borderRadius: 14,
-          border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-          background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-          cursor: "pointer",
-          boxSizing: "border-box",
-        }}
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
-        </svg>
-        <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {source.name}{source.ext ? `.${source.ext}` : ""}
-        </span>
-        {!readOnly && renderAttachmentMenu(target, targetId, a)}
-      </div>
-    );
-  };
-  // 가져온 Vaulty 삼점 메뉴 - "정보"/"삭제"만 있다. 삭제해도 원본 Vault는 지워지지 않고
-  // importedVaults에서 이 참조만 빠져서 접근 권한이 비활성화된다.
-  const renderImportedVaultMenu = (entry) => {
-    const isOpen = itemMenuOpen && itemMenuOpen.type === "importedVault" && itemMenuOpen.id === entry.id;
-    const isVisible = itemMenuVisibleKey === `importedVault-${entry.id}`;
-    return (
-      <div
-        style={{ position: "relative", margin: -5, padding: 5, flexShrink: 0 }}
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        onMouseUp={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        onTouchEnd={(e) => e.stopPropagation()}
-      >
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleItemMenu("importedVault", entry.id, e.currentTarget);
-          }}
-          onMouseDown={pressDown("scale(0.85)")}
-          onMouseUp={pressUp("scale(1)")}
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 7,
-            border: "none",
-            background: "transparent",
-            color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-            cursor: "pointer",
-            outline: "none",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            transition: "all 0.2s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)";
-            e.currentTarget.style.color = isLight ? "#14161A" : "#FFFFFF";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)";
-          }}
-          aria-label="옵션"
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="12" cy="5" r="2" />
-            <circle cx="12" cy="12" r="2" />
-            <circle cx="12" cy="19" r="2" />
-          </svg>
-        </button>
-
-        {isOpen && createPortal(
-          <>
-            <div
-              onClick={(e) => { e.stopPropagation(); closeItemMenu(); }}
-              style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 29 }}
-            />
-            <div
-              style={{
-                position: "fixed",
-                top: itemMenuAnchor.top,
-                right: itemMenuAnchor.right,
-                minWidth: 128,
-                background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
-                backdropFilter: "blur(20px) saturate(180%)",
-                WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                borderRadius: 12,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
-                zIndex: 30,
-                overflow: "hidden",
-                transformOrigin: "top right",
-                opacity: isVisible ? 1 : 0,
-                transform: isVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
-                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeItemMenu();
-                  openInfoModal("importedVault", entry.id);
-                }}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  border: "none",
-                  background: "transparent",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  outline: "none",
-                  textAlign: "left",
-                  transition: "background 0.2s",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-              >
-                정보
-              </button>
-              <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-              {(() => {
-                const deleteKey = `importedVault-${entry.id}`;
-                const isArmed = deleteArmedKey === deleteKey;
-                return (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isArmed) {
-                        revokeImportedVault(entry.id);
-                      } else {
-                        setDeleteArmedKey(deleteKey);
-                      }
-                    }}
-                    style={{
-                      width: "100%",
-                      padding: "10px 12px",
-                      border: "none",
-                      background: isArmed ? "#EF4444" : "transparent",
-                      color: isArmed ? "#FFFFFF" : "#EF4444",
-                      fontSize: 15,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      outline: "none",
-                      textAlign: "left",
-                      transition: "background 0.15s ease, color 0.15s ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isArmed) e.currentTarget.style.background = isLight ? "rgba(239,68,68,0.06)" : "rgba(239,68,68,0.1)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isArmed) e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    삭제
-                  </button>
-                );
-              })()}
-            </div>
-          </>,
-          document.body
-        )}
-      </div>
-    );
-  };
   // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 기본 10GB를
   // 초과한 만큼만 GB당 $0.02를 곱한다.
   const usedStorageGB = usedStorageBytes / (1024 * 1024 * 1024);
@@ -1266,36 +526,6 @@ export default function Alloy() {
       toastShowTimerRef.current = setTimeout(() => setToastMessage(null), 300);
     }, 1700);
   };
-
-  const toggleSearch = () => {
-    if (searchOpen) {
-      if (document.activeElement && document.activeElement.blur) {
-        document.activeElement.blur();
-      }
-      setSearchVisible(false);
-      setTimeout(() => {
-        setSearchOpen(false);
-        setSearchQuery("");
-      }, 300);
-    } else {
-      setSearchOpen(true);
-      requestAnimationFrame(() => {
-        setSearchVisible(true);
-        searchInputRef.current && searchInputRef.current.focus();
-      });
-    }
-  };
-
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === "Escape" && searchOpen) {
-        e.preventDefault();
-        toggleSearch();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [searchOpen]);
 
   // 경로 세그먼트 버튼 클릭 시 그 세그먼트 자신까지 포함해서 이동해야 한다.
   // slice(0, index)로 자기 자신을 빼먹으면 A>B에서 A를 눌러도 A 화면이 아니라
@@ -1368,12 +598,7 @@ export default function Alloy() {
     if (vaultNameInput.trim()) {
       const now = Date.now();
       const trimmedName = vaultNameInput.trim();
-      // 최초 주소는 Vault 이름을 그대로 쓴다 - 이름이 주소 형식(영문 2~10자)에 맞고
-      // 다른 Vault가 이미 쓰고 있지 않을 때만 자동 설정하고, 아니면 비워 둔 채로
-      // 만들어 나중에 설정(잠금/주소) 모달에서 직접 정할 수 있게 한다.
-      const initialAddress =
-        ADDRESS_RE.test(trimmedName) && !vaults.some((v) => v.address === trimmedName) ? trimmedName : "";
-      setVaults((prev) => [...prev, { id: now, name: trimmedName, address: initialAddress, createdAt: now, updatedAt: now }]);
+      setVaults((prev) => [...prev, { id: now, name: trimmedName, createdAt: now, updatedAt: now }]);
     }
     closeVaultModal();
   };
@@ -1398,133 +623,6 @@ export default function Alloy() {
     setFiles((prev) => prev.filter((f) => f.path[0] !== vault.name));
     closeItemMenu();
     showToast("데이터를 삭제했습니다");
-  };
-
-  // 암호화 - Vault 카드의 삼점바에서만 노출된다. 이름 아래 주소(추후 Vaulty 커뮤니티에서
-  // 클릭하면 이 Vault를 내려받아 연결하게 될 공개 식별자) / 열쇠(비밀번호, 비워두면 잠금 없음)를
-  // 함께 관리한다. 주소는 영문 대소문자 혼용 2~10자, 열쇠는 영문 대소문자+숫자 혼용 2~10자만 허용한다.
-  const ADDRESS_RE = /^[A-Za-z]{2,10}$/;
-  const KEY_RE = /^[A-Za-z0-9]{2,10}$/;
-  const [encryptModalTarget, setEncryptModalTarget] = useState(null); // vault id
-  const [encryptModalVisible, setEncryptModalVisible] = useState(false);
-  const [addressDraft, setAddressDraft] = useState("");
-  const [keyDraft, setKeyDraft] = useState("");
-  // 이미 다른 Vault가 쓰고 있는 주소로 저장을 시도하면 토스트가 아니라 주소 설명란 2열에
-  // 빨간 글씨로 표시하고, 모달이 열려있는 동안(또는 입력을 다시 고칠 때까지) 유지된다.
-  const [addressDuplicateError, setAddressDuplicateError] = useState(false);
-  const openEncryptModal = (vault) => {
-    setEncryptModalTarget(vault.id);
-    setAddressDraft(vault.address || "");
-    setKeyDraft(vault.password || "");
-    setAddressDuplicateError(false);
-    requestAnimationFrame(() => setEncryptModalVisible(true));
-  };
-  const closeEncryptModal = () => {
-    setEncryptModalVisible(false);
-    setTimeout(() => setEncryptModalTarget(null), 200);
-  };
-  const handleEncryptSave = () => {
-    const vault = vaults.find((v) => v.id === encryptModalTarget);
-    if (!vault) { closeEncryptModal(); return; }
-    const trimmedAddress = addressDraft.trim();
-    const trimmedKey = keyDraft.trim();
-    if (trimmedKey && !KEY_RE.test(trimmedKey)) {
-      showToast("열쇠 형식이 올바르지 않습니다");
-      return;
-    }
-    if (trimmedAddress) {
-      if (!ADDRESS_RE.test(trimmedAddress)) {
-        showToast("연결되지 않은 주소입니다");
-        return;
-      }
-      const isDuplicate = vaults.some((v) => v.id !== vault.id && v.address === trimmedAddress);
-      if (isDuplicate) {
-        setAddressDuplicateError(true);
-        return;
-      }
-      const retired = vault.retiredAddresses || [];
-      const isRetired = trimmedAddress !== vault.address && retired.includes(trimmedAddress);
-      if (isRetired) {
-        showToast("연결되지 않은 주소입니다");
-        return;
-      }
-    }
-    setVaults((prev) => prev.map((v) => {
-      if (v.id !== vault.id) return v;
-      const nextRetired = v.address && v.address !== trimmedAddress
-        ? [...(v.retiredAddresses || []), v.address]
-        : (v.retiredAddresses || []);
-      return { ...v, address: trimmedAddress, password: trimmedKey, retiredAddresses: nextRetired, updatedAt: Date.now() };
-    }));
-    closeEncryptModal();
-  };
-
-  // Vaulty@주소 가져오기 - 게시글/텍스트문서 본문에 적힌 "Vaulty@ABCDE" 형태를 찾아 링크
-  // 칩으로 보여주고, 누르면 그 주소를 가진 Vault를 로컬 vaults 배열에서 찾아 importedVaults에
-  // 참조만 추가한다(원본 vaults/folders/files는 전혀 건드리지 않는다 - 읽기 전용 접근 권한만 부여).
-  const VAULTY_LINK_RE = /Vaulty@([A-Za-z]{2,10})/g;
-  const extractVaultyAddresses = (text) => {
-    if (!text) return [];
-    const found = [...text.matchAll(VAULTY_LINK_RE)].map((m) => m[1]);
-    return [...new Set(found)];
-  };
-  // 게시글 읽기 화면처럼 읽기 전용으로 본문을 보여줄 때, 본문 속 "Vaulty@ABCDE"를
-  // 실제 클릭 가능한 링크 조각으로 바꿔 끼워넣는다.
-  const renderLinkedContent = (text) => {
-    if (!text) return null;
-    const parts = text.split(/(Vaulty@[A-Za-z]{2,10})/g);
-    return parts.map((part, i) => {
-      const m = part.match(/^Vaulty@([A-Za-z]{2,10})$/);
-      if (!m) return part;
-      return (
-        <span
-          key={i}
-          onClick={(e) => { e.stopPropagation(); importVaultByAddress(m[1]); }}
-          style={{ color: isLight ? "#2563EB" : "#60A5FA", fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
-        >
-          {part}
-        </span>
-      );
-    });
-  };
-  const importVaultByAddress = (address) => {
-    const source = vaults.find((v) => v.address === address);
-    if (!source) { showToast("존재하지 않는 주소입니다"); return; }
-    if (importedVaults.some((iv) => iv.address === address)) { showToast("이미 가져온 Vault입니다"); return; }
-    setImportedVaults((prev) => [...prev, { id: Date.now(), sourceVaultId: source.id, address, importedAt: Date.now() }]);
-    showToast(`Vaulty@${address}를 가져왔습니다`);
-  };
-  // 삭제 = 로컬 접근 권한만 비활성화. 원본 Vault(및 그 안의 폴더/파일)는 그대로 남는다.
-  const revokeImportedVault = (id) => {
-    setImportedVaults((prev) => prev.filter((iv) => iv.id !== id));
-    closeItemMenu();
-    showToast("접근 권한을 삭제했습니다");
-  };
-  const [viewingImportedVaultId, setViewingImportedVaultId] = useState(null);
-  const [importedBrowsePath, setImportedBrowsePath] = useState([]); // 가져온 Vault 안에서의 하위 폴더 경로(읽기 전용 탐색용)
-
-  // Vault 잠금 해제 - 암호(열쇠)가 설정된 Vault를 열려면 먼저 열쇠를 맞게 입력해야 한다.
-  const [unlockVaultId, setUnlockVaultId] = useState(null);
-  const [unlockModalVisible, setUnlockModalVisible] = useState(false);
-  const [unlockKeyInput, setUnlockKeyInput] = useState("");
-  const openUnlockModal = (vault) => {
-    setUnlockVaultId(vault.id);
-    setUnlockKeyInput("");
-    requestAnimationFrame(() => setUnlockModalVisible(true));
-  };
-  const closeUnlockModal = () => {
-    setUnlockModalVisible(false);
-    setTimeout(() => setUnlockVaultId(null), 200);
-  };
-  const handleUnlockSubmit = () => {
-    const vault = vaults.find((v) => v.id === unlockVaultId);
-    if (!vault) { closeUnlockModal(); return; }
-    if (unlockKeyInput === vault.password) {
-      setCurrentPath([vault.name]);
-      closeUnlockModal();
-    } else {
-      showToast("열쇠가 올바르지 않습니다");
-    }
   };
 
   // 홈에서는 + 가 Vault 생성 모달을, Vault/폴더 안에서는 업로드 메뉴를 연다.
@@ -1565,72 +663,6 @@ export default function Alloy() {
     }
     closeFolderModal();
   };
-
-  // 텍스트 문서 - 업로드 메뉴의 "텍스트"로 즉시 빈 문서를 만들고 바로 전체화면
-  // 에디터를 연다. 실제 파일 업로드가 아니라 파일 객체의 content 필드에 텍스트를 직접
-  // 저장하므로(R2 불필요) 기존 vaults/folders/files 저장 경로에 그대로 얹혀 저장된다.
-  const [textEditorFile, setTextEditorFile] = useState(null); // 편집 중인 file id
-  const [textEditorVisible, setTextEditorVisible] = useState(false);
-  const [textTitleDraft, setTextTitleDraft] = useState("");
-  const [textContentDraft, setTextContentDraft] = useState("");
-
-  const openTextEditor = (file) => {
-    setTextEditorFile(file.id);
-    setTextTitleDraft(file.name);
-    setTextContentDraft(file.content || "");
-    requestAnimationFrame(() => setTextEditorVisible(true));
-  };
-  const closeTextEditor = () => {
-    // 닫기 직전 마지막 입력까지 확실히 반영한다(디바운스 저장을 기다리지 않고 즉시 커밋).
-    setFiles((prev) => prev.map((f) => (
-      f.id === textEditorFile
-        ? { ...f, name: textTitleDraft.trim() || f.name, content: textContentDraft, size: new Blob([textContentDraft]).size, updatedAt: Date.now() }
-        : f
-    )));
-    setTextEditorVisible(false);
-    setTimeout(() => setTextEditorFile(null), 200);
-  };
-  const createTextFile = () => {
-    const now = Date.now();
-    const siblingNames = files
-      .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
-      .map((f) => f.name);
-    let name = "새 문서";
-    let n = 1;
-    while (siblingNames.includes(name)) {
-      name = `새 문서(${n})`;
-      n++;
-    }
-    const newFile = {
-      id: now,
-      name,
-      ext: "txt",
-      size: 0,
-      mimeType: "text/plain",
-      kind: "text",
-      content: "",
-      tags: [],
-      path: currentPath,
-      createdAt: now,
-      updatedAt: now,
-    };
-    setFiles((prev) => [...prev, newFile]);
-    openTextEditor(newFile);
-  };
-
-  // 에디터가 열려 있는 동안 타이핑을 멈추면 잠시 뒤 자동 저장 - 닫을 때의 즉시 커밋과 별개로,
-  // 오래 켜 두거나 새로고침 등에 대비한 백그라운드 저장.
-  useEffect(() => {
-    if (!textEditorFile) return;
-    const t = setTimeout(() => {
-      setFiles((prev) => prev.map((f) => (
-        f.id === textEditorFile
-          ? { ...f, name: textTitleDraft.trim() || f.name, content: textContentDraft, size: new Blob([textContentDraft]).size, updatedAt: Date.now() }
-          : f
-      )));
-    }, 600);
-    return () => clearTimeout(t);
-  }, [textTitleDraft, textContentDraft, textEditorFile]);
 
   // 폴더를 지우면 그 안의 하위 폴더/파일도 통째로 하나의 휴지통 항목으로 담는다.
   const deleteFolder = (folderId) => {
@@ -2295,26 +1327,6 @@ export default function Alloy() {
     if (accepted.length) setFiles((prev) => [...prev, ...accepted]);
   };
 
-  // 첨부(참조) 대상 파일 열기 - persist 해두지 않고 열 때마다 새 presigned GET url을 받아온다.
-  const openAttachment = async (attachment) => {
-    try {
-      const { url } = await r2Presign({ action: "get", key: attachment.r2Key });
-      window.open(url, "_blank", "noopener");
-    } catch (err) {
-      console.error("첨부파일 열기 실패:", err);
-    }
-  };
-  // 첨부파일 삭제 - 게시글/문서의 attachments 배열에서만 제거한다. r2Presign delete를
-  // 호출하지 않으므로 R2에 올라간 원본 파일은 그대로 남는다.
-  const deleteAttachment = (target, targetId, attachmentId) => {
-    if (target === "text") {
-      setFiles((prev) => prev.map((f) => (f.id === targetId ? { ...f, attachments: (f.attachments || []).filter((a) => a.id !== attachmentId) } : f)));
-    } else {
-      setPosts((prev) => prev.map((p) => (p.id === targetId ? { ...p, attachments: (p.attachments || []).filter((a) => a.id !== attachmentId) } : p)));
-    }
-    closeItemMenu();
-  };
-
   const deleteFile = (fileId) => {
     const target = files.find((f) => f.id === fileId);
     if (!target) { closeItemMenu(); return; }
@@ -2442,13 +1454,6 @@ export default function Alloy() {
     ? vaults.find((v) => v.id === infoTarget.id)
     : infoTarget.type === "folder"
     ? folders.find((f) => f.id === infoTarget.id)
-    : infoTarget.type === "importedVault"
-    ? (() => {
-        const entry = importedVaults.find((iv) => iv.id === infoTarget.id);
-        if (!entry) return null;
-        const source = vaults.find((v) => v.id === entry.sourceVaultId);
-        return { name: source ? source.name : "삭제된 Vault", createdAt: entry.importedAt, updatedAt: entry.importedAt, address: entry.address };
-      })()
     : files.find((f) => f.id === infoTarget.id);
   const infoItemSize =
     !infoTarget || !infoItem
@@ -2457,8 +1462,6 @@ export default function Alloy() {
       ? vaultTotalBytes(infoItem.name)
       : infoTarget.type === "folder"
       ? files.filter((f) => pathStartsWith(f.path, infoItem.path)).reduce((s, f) => s + (f.size || 0), 0)
-      : infoTarget.type === "importedVault"
-      ? 0
       : infoItem.size || 0;
 
   const getFileIcon = (mimeType) => {
@@ -2567,274 +1570,140 @@ export default function Alloy() {
           padding: "0 20px 140px 20px",
         }}
       >
-        {/* 상단 헤더 */}
+        {/* 상단 헤더 - "분류" 화면일 때만 제목("분류") + 닫기(X)를 보여주고, 그 외에는
+            중앙에 검색창을 항상 띄우고 우측에 설정(⚙) 버튼을 둔다. 왼쪽에 오른쪽 버튼과
+            같은 폭의 빈 여백을 둬서 검색창이 화면 정중앙에 오도록 맞춘다. 예전 + 버튼
+            (Vault 생성/업로드 메뉴 트리거)은 "마법사" 옆 "업로드" 버튼으로 옮겨갔다. */}
         <div style={stickyHeaderStyle}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <h1
-              onClick={() => {
-                if (active === 0) setCurrentPath([]);
-              }}
-              style={{
-                margin: 0,
-                fontSize: 26,
-                fontWeight: 700,
-                color: isLight ? "#14161A" : "#FFFFFF",
-                letterSpacing: 0.2,
-                minHeight: "1em",
-                cursor: active === 0 ? "pointer" : "default",
-              }}
-            >
-              {tagScreenTags.length ? "분류" : active === 2 && trashScreenOpen ? "휴지통" : TAB_TITLES[active]}
-            </h1>
-          </div>
-
-          {/* 휴지통/태그 화면 닫기(X) 버튼 - 기존 추가하기(+) 버튼과 크기·디자인을 동일하게
-              맞춘 리퀴드 글래스 원형 버튼. 우측 상단에 뜬다. */}
-          {(tagScreenTags.length > 0 || (active === 2 && trashScreenOpen)) && (
-            <div style={{ position: "relative" }}>
-            <button
-              onClick={() => { setTrashScreenOpen(false); setTrashChecked({}); closeTagScreen(); }}
-              onMouseEnter={() => setTrashCloseButtonHovered(true)}
-              onMouseLeave={(e) => {
-                setTrashCloseButtonHovered(false);
-                e.currentTarget.style.transform = "scale(1)";
-              }}
-              onMouseDown={pressDown("scale(0.9)")}
-              onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
-              onTouchStart={pressDown("scale(0.9)")}
-              onTouchEnd={pressUp("scale(1)")}
-              style={{
-                width: TOP_BUTTON_SIZE,
-                height: TOP_BUTTON_SIZE,
-                flexShrink: 0,
-                borderRadius: "50%",
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                background: trashCloseButtonHovered
-                  ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
-                  : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
-                backdropFilter: "blur(20px) saturate(180%)",
-                WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                boxShadow: trashCloseButtonHovered
-                  ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
-                  : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                color: isLight ? "#14161A" : "#FFFFFF",
-                outline: "none",
-                transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-                transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
-              }}
-              aria-label="닫기"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="6" y1="6" x2="18" y2="18" />
-                <line x1="18" y1="6" x2="6" y2="18" />
-              </svg>
-            </button>
-            </div>
-          )}
-
-          {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션. */}
-          {active === 0 && !tagScreenTags.length && !textEditorFile && authUser && (
-            <div style={{ position: "relative" }}>
-              <button
-                ref={uploadButtonRef}
-                onClick={handleAddButton}
-                onMouseEnter={() => setUploadButtonHovered(true)}
-                onMouseLeave={(e) => {
-                  setUploadButtonHovered(false);
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-                onMouseDown={pressDown("scale(0.9)")}
-                onMouseUp={pressUp(uploadButtonHovered ? "scale(1.08)" : "scale(1)")}
-                onTouchStart={pressDown("scale(0.9)")}
-                onTouchEnd={pressUp("scale(1)")}
-                style={{
-                  width: TOP_BUTTON_SIZE,
-                  height: TOP_BUTTON_SIZE,
-                  flexShrink: 0,
-                  borderRadius: "50%",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: uploadMenuOpen || uploadButtonHovered
-                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
-                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                  boxShadow: uploadButtonHovered
-                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
-                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  outline: "none",
-                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-                  transform: uploadButtonHovered ? "scale(1.08)" : "scale(1)",
-                }}
-                aria-label="추가하기"
-              >
-                {uploadingCount > 0 ? (
-                  <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    style={{ animation: "vaulty-spin 0.8s linear infinite" }}
-                  >
-                    <path d="M12 3a9 9 0 1 0 9 9" />
+          {tagScreenTags.length ? (
+            <>
+              <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF", letterSpacing: 0.2, minHeight: "1em" }}>
+                분류
+              </h1>
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={closeTagScreen}
+                  onMouseEnter={() => setTrashCloseButtonHovered(true)}
+                  onMouseLeave={(e) => {
+                    setTrashCloseButtonHovered(false);
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                  onMouseDown={pressDown("scale(0.9)")}
+                  onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
+                  onTouchStart={pressDown("scale(0.9)")}
+                  onTouchEnd={pressUp("scale(1)")}
+                  style={{
+                    width: TOP_BUTTON_SIZE,
+                    height: TOP_BUTTON_SIZE,
+                    flexShrink: 0,
+                    borderRadius: "50%",
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: trashCloseButtonHovered
+                      ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                      : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                    backdropFilter: "blur(20px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                    boxShadow: trashCloseButtonHovered
+                      ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                      : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    outline: "none",
+                    transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                    transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
+                  }}
+                  aria-label="닫기"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                    <line x1="18" y1="6" x2="6" y2="18" />
                   </svg>
-                ) : (
-                  <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    style={{
-                      transition: "transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
-                      transform: uploadMenuOpen ? "rotate(45deg)" : "rotate(0deg)",
-                    }}
-                  >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ width: TOP_BUTTON_SIZE, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0, margin: "0 12px" }}>
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="검색"
+                  aria-label="검색"
+                  style={{
+                    width: "100%",
+                    height: TOP_BUTTON_SIZE,
+                    boxSizing: "border-box",
+                    padding: "0 18px",
+                    borderRadius: TOP_BUTTON_SIZE / 2,
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)",
+                    backdropFilter: "blur(20px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    fontSize: 15,
+                    fontWeight: 500,
+                    outline: "none",
+                    textAlign: "center",
+                  }}
+                />
+              </div>
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={() => setSettingsScreenOpen(true)}
+                  onMouseEnter={() => setSettingsButtonHovered(true)}
+                  onMouseLeave={(e) => {
+                    setSettingsButtonHovered(false);
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                  onMouseDown={pressDown("scale(0.9)")}
+                  onMouseUp={pressUp(settingsButtonHovered ? "scale(1.08)" : "scale(1)")}
+                  onTouchStart={pressDown("scale(0.9)")}
+                  onTouchEnd={pressUp("scale(1)")}
+                  aria-label="설정"
+                  style={{
+                    width: TOP_BUTTON_SIZE,
+                    height: TOP_BUTTON_SIZE,
+                    flexShrink: 0,
+                    borderRadius: "50%",
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: settingsButtonHovered
+                      ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                      : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                    backdropFilter: "blur(20px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                    boxShadow: settingsButtonHovered
+                      ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                      : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    outline: "none",
+                    transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                    transform: settingsButtonHovered ? "scale(1.08)" : "scale(1)",
+                  }}
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                   </svg>
-                )}
-              </button>
-
-              {/* 숨겨진 파일 입력 - 이미지·움짤만 받는다 */}
-              <input
-                ref={galleryInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/gif,image/apng,image/webp,.jpg,.jpeg,.png,.gif,.apng,.webp"
-                multiple
-                onChange={handleFilesPicked}
-                style={{ display: "none" }}
-              />
-
-              {/* 업로드 메뉴 - 부드러운 페이드 + 슬라이드 애니메이션. 상단 헤더에 backdropFilter가
-                  걸려 있어 position:fixed 자손의 컨테이닝 블록이 헤더로 제한되므로, 헤더 바깥
-                  document.body로 포탈하고 버튼의 화면 좌표를 계산한 고정 위치로 띄운다. */}
-              {uploadMenuOpen && createPortal(
-                <>
-                  <div onClick={closeUploadMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 19 }} />
-                  <div
-                    style={{
-                      position: "fixed",
-                      top: uploadMenuAnchor.top,
-                      right: uploadMenuAnchor.right,
-                      minWidth: 140,
-                      background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
-                      backdropFilter: "blur(20px) saturate(180%)",
-                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                      borderRadius: 12,
-                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                      boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
-                      zIndex: 20,
-                      overflow: "hidden",
-                      transformOrigin: "top right",
-                      opacity: uploadMenuVisible ? 1 : 0,
-                      transform: uploadMenuVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
-                      transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      onClick={() => {
-                        closeUploadMenu();
-                        galleryInputRef.current && galleryInputRef.current.click();
-                      }}
-                      onMouseDown={pressDown("scale(0.97)")}
-                      onMouseUp={pressUp("scale(1)")}
-                      style={{
-                        width: "100%",
-                        padding: "10px 12px",
-                        border: "none",
-                        background: "transparent",
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        outline: "none",
-                        textAlign: "left",
-                        transition: "background 0.2s, transform 0.15s ease",
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                    >
-                      업로드
-                    </button>
-                    <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-                    <button
-                      onClick={() => {
-                        closeUploadMenu();
-                        openFolderModal();
-                      }}
-                      onMouseDown={pressDown("scale(0.97)")}
-                      onMouseUp={pressUp("scale(1)")}
-                      style={{
-                        width: "100%",
-                        padding: "10px 12px",
-                        border: "none",
-                        background: "transparent",
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        outline: "none",
-                        textAlign: "left",
-                        transition: "background 0.2s, transform 0.15s ease",
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                    >
-                      폴더
-                    </button>
-                    <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-                    <button
-                      onClick={() => {
-                        closeUploadMenu();
-                        createTextFile();
-                      }}
-                      onMouseDown={pressDown("scale(0.97)")}
-                      onMouseUp={pressUp("scale(1)")}
-                      style={{
-                        width: "100%",
-                        padding: "10px 12px",
-                        border: "none",
-                        background: "transparent",
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        outline: "none",
-                        textAlign: "left",
-                        transition: "background 0.2s, transform 0.15s ease",
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                    >
-                      텍스트
-                    </button>
-                  </div>
-                </>,
-                document.body
-              )}
-            </div>
+                </button>
+              </div>
+            </>
           )}
         </div>
 
         {/* 로그인 게이트 - 웹드라이브(Vault/폴더/파일)는 로그인 계정 전용 데이터라
             로그인하지 않은 상태에서는 홈 탭 콘텐츠 전체 대신 안내만 보여준다.
             로딩이 끝나기 전(authLoading)에는 깜빡임을 피하려 아무것도 보여주지 않는다. */}
-        {active === 0 && !textEditorFile && !authLoading && !authUser && (
+        {!authLoading && !authUser && (
           <div
             style={{
               padding: "64px 0",
@@ -2845,7 +1714,7 @@ export default function Alloy() {
           >
             로그인이 필요합니다
             <div style={{ marginTop: 6, fontSize: 12, color: isLight ? "rgba(20,22,26,0.32)" : "rgba(255,255,255,0.32)" }}>
-              설정 탭에서 로그인해주세요
+              설정에서 로그인해주세요
             </div>
           </div>
         )}
@@ -2855,7 +1724,7 @@ export default function Alloy() {
             위해 이 블록 안에 둔다). 텍스트 에디터가 열려 있는 동안은 전체화면 오버레이에
             완전히 가려지는 데다, 매 타이핑마다 이 무거운 목록 전체가 다시 계산/렌더되면서
             입력이 밀리는 원인이 되므로 아예 렌더링을 건너뛴다. */}
-        {active === 0 && !textEditorFile && authUser && (
+        {authUser && (
           <>
             {/* 경로 표기 및 정렬/보기 방식 아이콘 영역 - "분류" 화면에서는 마법사 버튼,
                 경로 표시 텍스트, 구분선 없이 곧바로 목록만 보여준다. */}
@@ -3096,6 +1965,144 @@ export default function Alloy() {
                   </>,
                   document.body
                 )}
+
+                {/* 업로드 - 예전엔 상단 헤더 우측의 + 버튼이었는데, 그 자리를 설정(⚙) 버튼에
+                    내주면서 마법사 버튼 옆으로 옮겨왔다. 기존 + 버튼과 동일한 동작(홈에서는
+                    Vault 생성 모달, Vault/폴더 안에서는 업로드 메뉴)을 그대로 쓰되, 다른
+                    버튼들과 대비되도록 다크모드에서는 흰 배경, 라이트모드에서는 검은 배경을 쓴다. */}
+                <button
+                  ref={uploadButtonRef}
+                  onClick={handleAddButton}
+                  onMouseDown={pressDown("scale(0.9)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="업로드"
+                  title="업로드"
+                  style={{
+                    minWidth: 36,
+                    height: 30,
+                    padding: "0 10px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: isLight ? "#14161A" : "#FFFFFF",
+                    color: isLight ? "#FFFFFF" : "#14161A",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    letterSpacing: 0.2,
+                    cursor: "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                    transition: "transform 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+                >
+                  {uploadingCount > 0 ? (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: "vaulty-spin 0.8s linear infinite" }}>
+                      <path d="M12 3a9 9 0 1 0 9 9" />
+                    </svg>
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  )}
+                  업로드
+                </button>
+
+                {/* 숨겨진 파일 입력 - 이미지·움짤만 받는다 */}
+                <input
+                  ref={galleryInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/apng,image/webp,.jpg,.jpeg,.png,.gif,.apng,.webp"
+                  multiple
+                  onChange={handleFilesPicked}
+                  style={{ display: "none" }}
+                />
+
+                {/* 업로드 메뉴 - Vault/폴더 안에서 업로드 버튼을 누르면 뜬다(홈에서는 버튼이
+                    바로 Vault 생성 모달을 연다). 텍스트 문서 생성 옵션은 더 이상 없다. */}
+                {uploadMenuOpen && createPortal(
+                  <>
+                    <div onClick={closeUploadMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 19 }} />
+                    <div
+                      style={{
+                        position: "fixed",
+                        top: uploadMenuAnchor.top,
+                        right: uploadMenuAnchor.right,
+                        minWidth: 140,
+                        background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
+                        backdropFilter: "blur(20px) saturate(180%)",
+                        WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                        borderRadius: 12,
+                        border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                        boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+                        zIndex: 20,
+                        overflow: "hidden",
+                        transformOrigin: "top right",
+                        opacity: uploadMenuVisible ? 1 : 0,
+                        transform: uploadMenuVisible ? "scale(1) translateY(0)" : "scale(0.92) translateY(-6px)",
+                        transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() => {
+                          closeUploadMenu();
+                          galleryInputRef.current && galleryInputRef.current.click();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        업로드
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      <button
+                        onClick={() => {
+                          closeUploadMenu();
+                          openFolderModal();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        폴더
+                      </button>
+                    </div>
+                  </>,
+                  document.body
+                )}
               </div>
             </div>
             )}
@@ -3212,39 +2219,6 @@ export default function Alloy() {
                           >
                             이름 바꾸기
                           </button>
-                          {type === "vault" && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                closeItemMenu();
-                                openEncryptModal(item);
-                              }}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                border: "none",
-                                background: "transparent",
-                                color: isLight ? "#14161A" : "#FFFFFF",
-                                fontSize: 15,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                outline: "none",
-                                textAlign: "left",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                transition: "background 0.2s",
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                            >
-                              암호화
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <circle cx="8" cy="15" r="4" />
-                                <path d="M11 12l9-9M17 3l3 3M14 6l2 2" />
-                              </svg>
-                            </button>
-                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -3432,7 +2406,6 @@ export default function Alloy() {
                       return;
                     }
                     if (type === "folder") setCurrentPath([...currentPath, item.name]);
-                    else if (item.kind === "text") openTextEditor(item);
                   }}
                   onPointerDown={rowPointerDown(rowDragType, item.id)}
                   onPointerMove={rowPointerMove}
@@ -3459,7 +2432,7 @@ export default function Alloy() {
                         ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
                         : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
                     }`,
-                    cursor: type === "folder" || onNavigate || item.kind === "text" ? "pointer" : "default",
+                    cursor: type === "folder" || onNavigate ? "pointer" : "default",
                     touchAction: "manipulation",
                     userSelect: "none",
                     WebkitUserSelect: "none",
@@ -3660,7 +2633,7 @@ export default function Alloy() {
                         item.path.slice(0, -1).join(" / ") || "홈",
                         () => {
                           setCurrentPath(item.path);
-                          toggleSearch();
+                          setSearchQuery("");
                         }
                       )
                     )}
@@ -3672,7 +2645,7 @@ export default function Alloy() {
                         item.path.join(" / ") || "홈",
                         () => {
                           setCurrentPath(item.path);
-                          toggleSearch();
+                          setSearchQuery("");
                         }
                       )
                     )}
@@ -3683,76 +2656,18 @@ export default function Alloy() {
               // ── 홈: Vault(프로젝트) 카드 목록 (2열, 세로 여백 넉넉히) ──
               if (currentPath.length === 0) {
                 const visibleVaults = sortItems(vaults);
-                // 가져온 Vaulty(읽기 전용 참조) - 내 Vault 목록 아래에 별도 섹션으로 보여준다.
-                // 정렬/분류/태그/변환 대상이 아니므로 sortItems를 거치지 않는다.
-                const importedSection = importedVaults.length > 0 && (
-                  <>
-                    <div style={{ marginTop: 14, marginBottom: 2, fontSize: 13, fontWeight: 600, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)" }}>
-                      가져온 Vaulty
-                    </div>
-                    {importedVaults.map((entry) => {
-                      const source = vaults.find((v) => v.id === entry.sourceVaultId);
-                      return (
-                        <div
-                          key={`imported-${entry.id}`}
-                          onClick={() => { setViewingImportedVaultId(entry.id); setImportedBrowsePath([]); }}
-                          onMouseDown={pressDown("scale(0.98)")}
-                          onMouseUp={pressUp("none")}
-                          style={{
-                            position: "relative",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 20,
-                            padding: "48px 18px",
-                            borderRadius: 16,
-                            background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                            backdropFilter: "blur(20px) saturate(180%)",
-                            WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                            border: `1px dashed ${isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)"}`,
-                            cursor: "pointer",
-                            touchAction: "manipulation",
-                          }}
-                        >
-                          <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                            <rect x="3" y="3" width="20" height="20" rx="2.5" />
-                            <circle cx="12" cy="12" r="4.5" />
-                            <circle cx="12" cy="12" r="1" fill={isLight ? "#14161A" : "#FFFFFF"} stroke="none" />
-                            <path d="M12 7.5v1M12 15.5v1M7.5 12h1M15.5 12h1" />
-                          </svg>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ color: isLight ? "#14161A" : "#FFFFFF", fontSize: 17, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {source ? source.name : "삭제된 Vault"}
-                            </div>
-                            <div style={{ marginTop: 5, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {source ? vaultStatsText(source.name) : "-"}
-                            </div>
-                            <div style={{ marginTop: 3, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13 }}>
-                              읽기 전용
-                            </div>
-                          </div>
-                          {renderImportedVaultMenu(entry)}
-                        </div>
-                      );
-                    })}
-                  </>
-                );
                 if (visibleVaults.length === 0) {
                   return (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {!importedSection && (
-                        <div
-                          style={{
-                            padding: "56px 0",
-                            textAlign: "center",
-                            color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
-                            fontSize: 14,
-                            lineHeight: 1.7,
-                          }}
-                        >
-                          아직 프로젝트가 없습니다
-                        </div>
-                      )}
-                      {importedSection}
+                    <div
+                      style={{
+                        padding: "56px 0",
+                        textAlign: "center",
+                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                        fontSize: 14,
+                        lineHeight: 1.7,
+                      }}
+                    >
+                      아직 프로젝트가 없습니다
                     </div>
                   );
                 }
@@ -3767,8 +2682,7 @@ export default function Alloy() {
                         data-drag-id={vault.id}
                         onClick={() => {
                           if (justDraggedRef.current) return;
-                          if (vault.password) openUnlockModal(vault);
-                          else setCurrentPath([vault.name]);
+                          setCurrentPath([vault.name]);
                         }}
                         onPointerDown={rowPointerDown("vault", vault.id)}
                         onPointerMove={rowPointerMove}
@@ -3853,7 +2767,6 @@ export default function Alloy() {
                       </div>
                       );
                     })}
-                    {importedSection}
                   </div>
                 );
               }
@@ -3920,240 +2833,87 @@ export default function Alloy() {
           </>
         )}
 
-        {/* 커뮤니티 탭 콘텐츠 - 지금은 "게시판" 하나만 있는 리스트형 게시판. 홈 탭과 동일하게
-            구분선 위에 경로를 보여준다(목록에서는 "게시판", 글을 누르면 "게시판 > 제목").
-            오른쪽엔 마법사 대신 "작성" 버튼이 있다. 게시글은 전부 내가 쓴 것이라 목록에서
-            항상 삼점 메뉴를 보여준다. */}
-        {active === 1 && (() => {
-          const viewingPost = viewingPostId ? posts.find((p) => p.id === viewingPostId) : null;
-          return (
-          <>
+        {/* 설정 화면 - 상단 우측 설정(⚙) 버튼을 누르면 전체화면으로 열린다. 홈 탭 콘텐츠와
+            같은 트리 안에 있지만 position:fixed 전체화면 오버레이라 실제로는 별도 화면처럼
+            보인다(텍스트 에디터 등 다른 전체화면 화면들과 동일한 패턴). */}
+        {settingsScreenOpen && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: isLight ? "#FFFFFF" : "#141413",
+              zIndex: 49,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
             <div
               style={{
+                flexShrink: 0,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                paddingBottom: 12,
-                marginBottom: 16,
-                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                gap: 10,
+                padding: "20px 16px 12px 20px",
+                paddingTop: "max(20px, env(safe-area-inset-top))",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-                <button
-                  onClick={() => setViewingPostId(null)}
-                  onMouseDown={pressDown("scale(0.92)")}
-                  onMouseUp={pressUp("scale(1)")}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 15,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    padding: 0,
-                    outline: "none",
-                    flexShrink: 0,
-                    opacity: viewingPost ? 0.7 : 1,
-                    transition: "opacity 0.2s ease, transform 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.opacity = viewingPost ? "0.7" : "1";
-                    e.currentTarget.style.transform = "scale(1)";
-                  }}
-                >
-                  게시판
-                </button>
-                {viewingPost && (
-                  <>
-                    <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 15, flexShrink: 0 }}>
-                      &gt;
-                    </span>
-                    <span
-                      style={{
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {viewingPost.title || "제목 없음"}
-                    </span>
-                  </>
-                )}
-              </div>
-
+              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                {trashScreenOpen ? "휴지통" : "설정"}
+              </h1>
               <button
                 onClick={() => {
-                  if (!authUser) { showToast("로그인이 필요합니다"); return; }
-                  openPostEditor(null);
+                  if (trashScreenOpen) {
+                    setTrashScreenOpen(false);
+                    setTrashChecked({});
+                  } else {
+                    setSettingsScreenOpen(false);
+                  }
+                }}
+                onMouseEnter={() => setTrashCloseButtonHovered(true)}
+                onMouseLeave={(e) => {
+                  setTrashCloseButtonHovered(false);
+                  e.currentTarget.style.transform = "scale(1)";
                 }}
                 onMouseDown={pressDown("scale(0.9)")}
-                onMouseUp={pressUp("scale(1)")}
-                aria-label="게시글 작성"
-                title="게시글 작성"
+                onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
+                aria-label="닫기"
                 style={{
-                  minWidth: 36,
-                  height: 30,
-                  padding: "0 10px",
+                  width: TOP_BUTTON_SIZE,
+                  height: TOP_BUTTON_SIZE,
                   flexShrink: 0,
-                  borderRadius: 8,
+                  borderRadius: "50%",
                   border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  letterSpacing: 0.2,
-                  cursor: "pointer",
-                  outline: "none",
+                  background: trashCloseButtonHovered
+                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  boxShadow: trashCloseButtonHovered
+                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  whiteSpace: "nowrap",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.12)"}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
-                  e.currentTarget.style.transform = "scale(1)";
+                  cursor: "pointer",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  outline: "none",
+                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                  transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
                 }}
               >
-                작성
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
               </button>
             </div>
-
-            {viewingPost ? (
-              /* 게시글 상세 화면 - 읽기 전용. 수정/삭제는 목록의 삼점 메뉴에서 한다. */
-              <div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
-                  {viewingPost.title || "제목 없음"}
-                </div>
-                <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginBottom: 20 }}>
-                  {formatDate(viewingPost.createdAt)}
-                </div>
-                <div style={{ fontSize: 15, lineHeight: 1.7, color: isLight ? "#14161A" : "#FFFFFF", whiteSpace: "pre-wrap" }}>
-                  {renderLinkedContent(viewingPost.content)}
-                </div>
-                {(viewingPost.attachments || []).length > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 20 }}>
-                    {viewingPost.attachments.map((a) => renderAttachmentChip(null, null, a, true))}
-                  </div>
-                )}
-              </div>
-            ) : (() => {
-              // 검색 - 홈 탭과 같은 로직: 검색어가 있으면 지금 목록 대신 그 게시글
-              // 제목에 검색어가 포함된 게시글만 보여준다. 누르면 검색을 닫고 바로 그
-              // 글 상세로 들어간다(홈 탭에서 항목을 눌러 위치로 이동하는 것과 동일).
-              const trimmedQuery = searchQuery.trim().toLowerCase();
-              const source = trimmedQuery
-                ? posts.filter((p) => (p.title || "").toLowerCase().includes(trimmedQuery))
-                : posts;
-              if (trimmedQuery && source.length === 0) {
-                return (
-                  <div
-                    style={{
-                      padding: "48px 0",
-                      textAlign: "center",
-                      color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
-                      fontSize: 14,
-                    }}
-                  >
-                    검색 결과가 없습니다
-                  </div>
-                );
-              }
-              if (!trimmedQuery && source.length === 0) {
-                return (
-                  <div
-                    style={{
-                      padding: "48px 0",
-                      textAlign: "center",
-                      color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
-                      fontSize: 14,
-                    }}
-                  >
-                    아직 게시글이 없습니다
-                  </div>
-                );
-              }
-              // 검색 패널이 열려 있는 동안 화면 전체를 덮는 백드롭(zIndex 9)이 결과 목록
-              // 위를 가로막지 않도록, 검색 중일 때만 그보다 높은 zIndex의 별도 쌓임
-              // 맥락으로 렌더링한다(홈 탭 검색 결과와 동일한 패턴).
-              return (
-                <div style={trimmedQuery ? { position: "relative", zIndex: 11 } : undefined}>
-                  {source
-                    .slice()
-                    .sort((a, b) => b.createdAt - a.createdAt)
-                    .map((post) => (
-                      <div
-                        key={post.id}
-                        onClick={() => { setViewingPostId(post.id); if (trimmedQuery) toggleSearch(); }}
-                    onMouseDown={pressDown("scale(0.98)")}
-                    onMouseUp={pressUp("none")}
-                    onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)"}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "18px 18px",
-                      marginBottom: 8,
-                      borderRadius: 10,
-                      background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                      backdropFilter: "blur(20px) saturate(180%)",
-                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                      border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                      cursor: "pointer",
-                      touchAction: "manipulation",
-                      userSelect: "none",
-                      WebkitUserSelect: "none",
-                      WebkitTouchCallout: "none",
-                      transition: "background 0.2s ease, transform 0.15s ease",
-                    }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 15,
-                          fontWeight: 500,
-                          color: isLight ? "#14161A" : "#FFFFFF",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {post.title || "제목 없음"}
-                      </div>
-                      <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 4 }}>
-                        {formatDate(post.createdAt)}
-                      </div>
-                    </div>
-                    {renderPostMenu(post)}
-                  </div>
-                    ))}
-                </div>
-              );
-            })()}
-          </>
-          );
-        })()}
-
-        {/* 설정 탭 콘텐츠 - "설정" 섹션(테마/저장 공간/휴지통) + 휴지통 화면 */}
-        {active === 2 && !trashScreenOpen && !tagScreenTags.length && (
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 24px 20px" }}>
+            {!trashScreenOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div
-              style={{
-                fontSize: 20,
-                fontWeight: 800,
-                color: isLight ? "#14161A" : "#FFFFFF",
-                padding: "0 4px",
-              }}
-            >
-              설정
-            </div>
-
             {/* 계정 카드 - 프로필 카드 바로 위, 로그아웃 상태에서만 보인다. 개인 웹사이트라
                 회원가입은 없고 Supabase에 미리 등록해 둔 계정(이메일/비밀번호)으로만
                 로그인할 수 있다. 로그인이 끝나면 이 카드는 사라지고 버전 카드 쪽에
@@ -4244,92 +3004,6 @@ export default function Alloy() {
                 </div>
               </div>
             )}
-
-            {/* 프로필 카드 - 테마 카드 바로 위, 별도 테두리. 닉네임 오른쪽 연필 아이콘을
-                누르면 인풋으로 바뀌고, 포커스를 벗어나거나 Enter를 누르면 확인 버튼 없이
-                바로 저장된다(서브 액션바 안내 + DB 반영). */}
-            <div
-              style={{
-                borderRadius: 14,
-                background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                backdropFilter: "blur(20px) saturate(180%)",
-                WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                padding: "14px 18px",
-              }}
-            >
-              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
-                프로필
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0 }}>
-                  닉네임
-                </span>
-                {nicknameEditing ? (
-                  <input
-                    type="text"
-                    value={nicknameDraft}
-                    onChange={(e) => setNicknameDraft(e.target.value)}
-                    onBlur={commitNickname}
-                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                    autoFocus
-                    maxLength={20}
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      padding: 0,
-                      border: "none",
-                      borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
-                      background: "transparent",
-                      color: isLight ? "#14161A" : "#FFFFFF",
-                      fontSize: 16,
-                      fontWeight: 500,
-                      outline: "none",
-                    }}
-                  />
-                ) : (
-                  <span
-                    style={{
-                      fontSize: 16,
-                      fontWeight: 500,
-                      color: isLight ? "#14161A" : "#FFFFFF",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {nickname}
-                  </span>
-                )}
-                {!nicknameEditing && (
-                  <button
-                    onClick={startEditNickname}
-                    aria-label="닉네임 수정"
-                    style={{
-                      flexShrink: 0,
-                      width: 22,
-                      height: 22,
-                      padding: 0,
-                      border: "none",
-                      background: "transparent",
-                      color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)",
-                      cursor: "pointer",
-                      outline: "none",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"}
-                    onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)"}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 20h9" />
-                      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            </div>
 
             <div
               style={{
@@ -4638,59 +3312,47 @@ export default function Alloy() {
               )}
             </div>
 
-            {/* 앱 버전 표기 - 테마/저장 공간/휴지통 카드 바로 아래에 별도 테두리로 구분.
-                제목 "버전" 아래에 좌측 정렬로 버전 텍스트를 보여준다. */}
-            <div
-              style={{
-                borderRadius: 14,
-                background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                backdropFilter: "blur(20px) saturate(180%)",
-                WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                padding: "14px 18px",
-              }}
-            >
-              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
-                버전
+            {/* 계정(로그인 상태) 카드 - 위쪽 로그인 카드는 로그아웃 상태에서만 보이고,
+                로그인 상태에서는 여기에 로그아웃 버튼만 보여준다(아이디/버전 표기는 없다). */}
+            {authUser && (
+              <div
+                style={{
+                  borderRadius: 14,
+                  background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                  padding: "14px 18px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>계정</span>
+                <button
+                  onClick={handleLogout}
+                  style={{
+                    padding: "7px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    outline: "none",
+                  }}
+                >
+                  로그아웃
+                </button>
               </div>
-              {/* 로그인 상태에서는 버전 텍스트 바로 위에 같은 글씨로 이메일을, 그 바로 밑에
-                  로그아웃을 보여준다. 로그인 성공 시 계정 카드 대신 여기에 나타난다. */}
-              {authUser && (
-                <div style={{ marginBottom: 6 }}>
-                  <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
-                    {authUser.username}
-                  </div>
-                  <button
-                    onClick={handleLogout}
-                    style={{
-                      marginTop: 2,
-                      padding: 0,
-                      border: "none",
-                      background: "none",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                      cursor: "pointer",
-                      outline: "none",
-                      textDecoration: "underline",
-                    }}
-                  >
-                    로그아웃
-                  </button>
-                </div>
-              )}
-              <div style={{ textAlign: "left" }}>
-                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
-                  Vaulty v{APP_VERSION}
-                </span>
-              </div>
-            </div>
+            )}
           </div>
-        )}
+            )}
 
-        {/* 휴지통 화면 - 삭제된 Vault/폴더/파일이 삭제된 시점으로부터 7일간 여기 담긴다.
-            복구를 누르면 원래 위치로 돌아가고, 삭제를 누르면 확인 절차 없이 바로 영구 삭제된다. */}
-        {active === 2 && trashScreenOpen && !tagScreenTags.length && (
+            {/* 휴지통 화면 - 삭제된 Vault/폴더/파일이 삭제된 시점으로부터 7일간 여기 담긴다.
+                복구를 누르면 원래 위치로 돌아가고, 삭제를 누르면 확인 절차 없이 바로 영구 삭제된다. */}
+            {trashScreenOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {/* 제목 바로 밑 - 체크 아이콘 "전체 선택" 텍스트(좌, 변환/태그 모달과 동일한
                 토글: 전부 체크돼 있으면 전체 해제, 아니면 전체 선택) + 삭제/복구 버튼(우측 정렬).
@@ -4961,6 +3623,9 @@ export default function Alloy() {
                 })
             )}
           </div>
+            )}
+            </div>
+          </div>
         )}
 
       </div>
@@ -5200,9 +3865,6 @@ export default function Alloy() {
                       return parts.length > 1 ? `.${parts.pop().toLowerCase()}` : "-";
                     })() }]
                   : []),
-                ...(infoTarget && infoTarget.type === "importedVault"
-                  ? [{ label: "주소", value: infoItem?.address ? `Vaulty@${infoItem.address}` : "-" }]
-                  : []),
               ].map((row) => (
                 <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>
@@ -5227,328 +3889,6 @@ export default function Alloy() {
           </div>
         </>
       )}
-
-      {/* 암호화 모달 - Vault 카드의 삼점바 "암호화"를 누르면 뜬다. 이름(읽기전용) 아래 주소,
-          그 아래 열쇠(비밀번호) 순으로 배치. 취소 버튼은 없고 우상단 X로 대체, 하단에 저장 버튼만 있다. */}
-      {encryptModalTarget !== null && (() => {
-        const vault = vaults.find((v) => v.id === encryptModalTarget);
-        if (!vault) return null;
-        return (
-          <>
-            <div
-              onClick={closeEncryptModal}
-              style={{
-                position: "fixed",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: "rgba(0,0,0,0.45)",
-                zIndex: 39,
-                opacity: encryptModalVisible ? 1 : 0,
-                transition: "opacity 0.2s ease",
-              }}
-            />
-            <div
-              style={{
-                position: "fixed",
-                top: "50%",
-                left: "50%",
-                transform: encryptModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-                opacity: encryptModalVisible ? 1 : 0,
-                background: isLight ? "#FFFFFF" : "#1a1918",
-                borderRadius: 20,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                padding: "32px 30px",
-                width: "84vw",
-                boxSizing: "border-box",
-                zIndex: 40,
-                boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
-                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
-                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                  암호화
-                </h2>
-                <button
-                  onClick={closeEncryptModal}
-                  onMouseDown={pressDown("scale(0.85)")}
-                  onMouseUp={pressUp("scale(1)")}
-                  aria-label="닫기"
-                  style={{
-                    flexShrink: 0,
-                    width: 30,
-                    height: 30,
-                    borderRadius: 7,
-                    border: "none",
-                    background: "transparent",
-                    color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                    cursor: "pointer",
-                    outline: "none",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    transition: "background 0.2s ease, transform 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* 이름 (읽기 전용) */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-                <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>이름</span>
-                <span
-                  style={{
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 15,
-                    fontWeight: 600,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    maxWidth: "70%",
-                  }}
-                >
-                  {vault.name}
-                </span>
-              </div>
-
-              {/* 주소 */}
-              <div style={{ marginBottom: 6, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 13 }}>
-                주소
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  borderRadius: 8,
-                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                  padding: "0 12px",
-                  marginBottom: 6,
-                }}
-              >
-                <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 15, flexShrink: 0 }}>
-                  Vaulty@
-                </span>
-                <input
-                  type="text"
-                  value={addressDraft}
-                  onChange={(e) => {
-                    setAddressDraft(e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 10));
-                    setAddressDuplicateError(false);
-                  }}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    padding: "12px 0",
-                    fontSize: 15,
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                  }}
-                />
-              </div>
-              <div style={{ marginBottom: addressDuplicateError ? 4 : 20, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
-                영문 대/소문자 (2~10자)
-              </div>
-              {addressDuplicateError && (
-                <div style={{ marginBottom: 20, color: "#EF4444", fontSize: 12 }}>
-                  이미 사용중인 주소입니다
-                </div>
-              )}
-
-              {/* 열쇠 */}
-              <div style={{ marginBottom: 6, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 13 }}>
-                열쇠
-              </div>
-              <input
-                type="text"
-                value={keyDraft}
-                onChange={(e) => setKeyDraft(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 10))}
-                style={{
-                  width: "100%",
-                  padding: 12,
-                  marginBottom: 6,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  borderRadius: 8,
-                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 15,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  transition: "border-color 0.2s ease",
-                }}
-              />
-              <div style={{ marginBottom: 4, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
-                영문 대/소문자, 숫자 (2~10자)
-              </div>
-              <div style={{ marginBottom: 24, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 12 }}>
-                비워두면 암호가 없습니다
-              </div>
-
-              <button
-                onClick={handleEncryptSave}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  width: "100%",
-                  padding: 10,
-                  border: "none",
-                  borderRadius: 8,
-                  background: isLight ? "#14161A" : "#FFFFFF",
-                  color: isLight ? "#FFFFFF" : "#14161A",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  outline: "none",
-                  transition: "transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-              >
-                저장
-              </button>
-            </div>
-          </>
-        );
-      })()}
-
-      {/* Vault 잠금 해제 모달 - 암호(열쇠)가 설정된 Vault 카드를 누르면 뜬다. */}
-      {unlockVaultId !== null && (() => {
-        const vault = vaults.find((v) => v.id === unlockVaultId);
-        if (!vault) return null;
-        return (
-          <>
-            <div
-              onClick={closeUnlockModal}
-              style={{
-                position: "fixed",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: "rgba(0,0,0,0.45)",
-                zIndex: 39,
-                opacity: unlockModalVisible ? 1 : 0,
-                transition: "opacity 0.2s ease",
-              }}
-            />
-            <div
-              style={{
-                position: "fixed",
-                top: "50%",
-                left: "50%",
-                transform: unlockModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-                opacity: unlockModalVisible ? 1 : 0,
-                background: isLight ? "#FFFFFF" : "#1a1918",
-                borderRadius: 16,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                padding: "24px 30px",
-                width: "84vw",
-                boxSizing: "border-box",
-                zIndex: 40,
-                boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
-                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                  {vault.name}
-                </h2>
-                <button
-                  onClick={closeUnlockModal}
-                  onMouseDown={pressDown("scale(0.85)")}
-                  onMouseUp={pressUp("scale(1)")}
-                  aria-label="닫기"
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 6,
-                    border: "none",
-                    background: "transparent",
-                    color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                    cursor: "pointer",
-                    outline: "none",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    transition: "background 0.2s ease, transform 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                  </svg>
-                </button>
-              </div>
-
-              <div style={{ marginBottom: 8, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 14 }}>
-                암호화된 Vault입니다. 열쇠를 입력하세요
-              </div>
-
-              <div style={{ display: "flex", gap: 10 }}>
-                <input
-                  type="text"
-                  value={unlockKeyInput}
-                  onChange={(e) => setUnlockKeyInput(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 10))}
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleUnlockSubmit();
-                    if (e.key === "Escape") closeUnlockModal();
-                  }}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    padding: 12,
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    borderRadius: 8,
-                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 17,
-                    outline: "none",
-                    boxSizing: "border-box",
-                    transition: "border-color 0.2s ease",
-                  }}
-                />
-                <button
-                  onClick={handleUnlockSubmit}
-                  onMouseDown={pressDown("scale(0.95)")}
-                  onMouseUp={pressUp("scale(1)")}
-                  style={{
-                    flexShrink: 0,
-                    padding: "0 16px",
-                    border: "none",
-                    borderRadius: 8,
-                    background: isLight ? "#14161A" : "#FFFFFF",
-                    color: isLight ? "#FFFFFF" : "#14161A",
-                    fontSize: 15,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    outline: "none",
-                    transition: "transform 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-                  onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-                >
-                  열기
-                </button>
-              </div>
-            </div>
-          </>
-        );
-      })()}
 
       {/* 폴더 생성 모달 - 배경 페이드 + 카드 스케일 인/아웃 애니메이션 */}
       {folderModalOpen && (
@@ -5888,258 +4228,6 @@ export default function Alloy() {
           </div>
         </>
       )}
-
-      {/* 첨부 탐색창 - 이동 모달과 같은 패턴(홈에서 Vault, 그 안에서 폴더/파일)으로 내
-          Vaulty에 이미 있는 데이터를 찾아 참조로 붙인다. 컴퓨터에서 새로 업로드하는 게
-          아니므로 파일 입력(input[type=file])이 전혀 없다. */}
-      {attachPickerFor && (() => {
-        const selectedCount = Object.values(attachPickerSelected).filter(Boolean).length;
-        return (
-          <>
-            <div
-              onClick={closeAttachPicker}
-              style={{
-                position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-                background: "rgba(0,0,0,0.4)", zIndex: 59,
-                opacity: attachPickerVisible ? 1 : 0, transition: "opacity 0.2s ease",
-              }}
-            />
-            <div
-              style={{
-                position: "fixed",
-                top: "50%",
-                left: "50%",
-                transform: attachPickerVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-                opacity: attachPickerVisible ? 1 : 0,
-                background: isLight ? "#FFFFFF" : "#1a1918",
-                borderRadius: 20,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                padding: "32px 30px",
-                width: "84vw",
-                boxSizing: "border-box",
-                zIndex: 60,
-                boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
-                transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
-                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                  가져오기
-                </h2>
-                <button
-                  onClick={closeAttachPicker}
-                  onMouseDown={pressDown("scale(0.85)")}
-                  onMouseUp={pressUp("scale(1)")}
-                  aria-label="닫기"
-                  style={{
-                    flexShrink: 0, width: 30, height: 30, borderRadius: 7, border: "none",
-                    background: "transparent", color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                    cursor: "pointer", outline: "none", display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "background 0.2s ease, transform 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
-                  </svg>
-                </button>
-              </div>
-              <div
-                style={{
-                  display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4,
-                  margin: "12px 0", paddingBottom: 12,
-                  borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                }}
-              >
-                <button
-                  onClick={() => setAttachPickerPath([])}
-                  style={{
-                    background: "none", border: "none", color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 14, fontWeight: 500, cursor: "pointer", padding: 0, outline: "none",
-                    opacity: attachPickerPath.length === 0 ? 1 : 0.7,
-                  }}
-                >
-                  홈
-                </button>
-                {attachPickerPath.map((seg, index) => (
-                  <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 14 }}>&gt;</span>
-                    <button
-                      onClick={() => setAttachPickerPath(attachPickerPath.slice(0, index + 1))}
-                      style={{
-                        background: "none", border: "none", color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 14, fontWeight: 500, cursor: "pointer", padding: 0, outline: "none",
-                        opacity: index === attachPickerPath.length - 1 ? 1 : 0.7,
-                      }}
-                    >
-                      {seg}
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ maxHeight: 320, overflowY: "auto", marginBottom: 16 }}>
-                {attachPickerPath.length === 0 ? (
-                  vaults.length === 0 ? (
-                    <div style={{ padding: "24px 0", textAlign: "center", color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 14 }}>
-                      Vault가 없습니다
-                    </div>
-                  ) : (
-                    vaults.map((v) => (
-                      <div
-                        key={`v-${v.id}`}
-                        onClick={() => setAttachPickerPath([v.name])}
-                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderRadius: 8, cursor: "pointer", transition: "background 0.2s ease" }}
-                      >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                          <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="12" cy="12" r="4" />
-                        </svg>
-                        <div style={{ flex: 1, color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {v.name}
-                        </div>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="m9 6 6 6-6 6" />
-                        </svg>
-                      </div>
-                    ))
-                  )
-                ) : attachPickerFolders.length === 0 && attachPickerFiles.length === 0 ? (
-                  <div style={{ padding: "24px 0", textAlign: "center", color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 14 }}>
-                    비어 있습니다
-                  </div>
-                ) : (
-                  <>
-                    {attachPickerFolders.map((folder) => (
-                      <div
-                        key={`f-${folder.id}`}
-                        onClick={() => setAttachPickerPath([...attachPickerPath, folder.name])}
-                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderRadius: 8, cursor: "pointer", transition: "background 0.2s ease" }}
-                      >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"} style={{ flexShrink: 0 }}>
-                          <path d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5z" />
-                        </svg>
-                        <div style={{ flex: 1, color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {folder.name}
-                        </div>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="m9 6 6 6-6 6" />
-                        </svg>
-                      </div>
-                    ))}
-                    {attachPickerFiles.map((file) => {
-                      const checked = !!attachPickerSelected[file.id];
-                      return (
-                        <div
-                          key={`file-${file.id}`}
-                          onClick={() => toggleAttachPickerFile(file.id)}
-                          onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderRadius: 8, cursor: "pointer", transition: "background 0.2s ease" }}
-                        >
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                            {file.kind === "image" ? (
-                              <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></>
-                            ) : (
-                              <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>
-                            )}
-                          </svg>
-                          <div style={{ flex: 1, color: isLight ? "#14161A" : "#FFFFFF", fontSize: 15, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {file.name}{file.ext ? `.${file.ext}` : ""}
-                          </div>
-                          <div
-                            style={{
-                              width: 20, height: 20, borderRadius: 6, flexShrink: 0,
-                              border: `1.5px solid ${checked ? (isLight ? "#14161A" : "#FFFFFF") : (isLight ? "rgba(20,22,26,0.3)" : "rgba(255,255,255,0.3)")}`,
-                              background: checked ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
-                              display: "flex", alignItems: "center", justifyContent: "center",
-                            }}
-                          >
-                            {checked && (
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#FFFFFF" : "#14161A"} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M20 6 9 17l-5-5" />
-                              </svg>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </>
-                )}
-              </div>
-
-              <button
-                onClick={confirmAttachPicker}
-                disabled={selectedCount === 0}
-                onMouseDown={selectedCount > 0 ? pressDown("scale(0.95)") : undefined}
-                onMouseUp={selectedCount > 0 ? pressUp("scale(1)") : undefined}
-                style={{
-                  width: "100%", padding: 10, border: "none", borderRadius: 8,
-                  background: isLight ? "#14161A" : "#FFFFFF", color: isLight ? "#FFFFFF" : "#14161A",
-                  fontSize: 15, fontWeight: 600,
-                  cursor: selectedCount > 0 ? "pointer" : "not-allowed",
-                  opacity: selectedCount > 0 ? 1 : 0.4,
-                  outline: "none", transition: "transform 0.15s ease, opacity 0.2s ease",
-                }}
-                onMouseEnter={(e) => { if (selectedCount > 0) e.currentTarget.style.transform = "translateY(-1px)"; }}
-                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-              >
-                {selectedCount > 0 ? `추가 (${selectedCount})` : "추가"}
-              </button>
-            </div>
-          </>
-        );
-      })()}
-
-      {/* 첨부(참조) 파일 중 인앱에서 만든 텍스트 문서(R2 없이 content 필드만 있는 경우) 읽기
-          전용 미리보기 - 별도의 "열기" 방식이 없어 간단한 모달로 본문을 보여준다. */}
-      {docPreviewId !== null && (() => {
-        const doc = files.find((f) => f.id === docPreviewId);
-        if (!doc) return null;
-        return (
-          <>
-            <div onClick={() => setDocPreviewId(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.45)", zIndex: 59 }} />
-            <div
-              style={{
-                position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-                background: isLight ? "#FFFFFF" : "#1a1918", borderRadius: 20,
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                padding: "28px 26px", width: "84vw", maxHeight: "70vh", overflowY: "auto",
-                boxSizing: "border-box", zIndex: 60, boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                  {doc.name}{doc.ext ? `.${doc.ext}` : ""}
-                </h2>
-                <button
-                  onClick={() => setDocPreviewId(null)}
-                  aria-label="닫기"
-                  style={{
-                    flexShrink: 0, width: 30, height: 30, borderRadius: 7, border: "none",
-                    background: "transparent", color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                    cursor: "pointer", outline: "none", display: "flex", alignItems: "center", justifyContent: "center",
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
-                  </svg>
-                </button>
-              </div>
-              <div style={{ fontSize: 14, lineHeight: 1.7, color: isLight ? "#14161A" : "#FFFFFF", whiteSpace: "pre-wrap" }}>
-                {doc.content}
-              </div>
-            </div>
-          </>
-        );
-      })()}
-
       {/* 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다" 같은 짧은 안내를
           하단 탭바 바로 위에 2초간 페이드 인/아웃으로 보여준다. */}
       {toastMessage && (
@@ -6201,256 +4289,6 @@ export default function Alloy() {
           </div>
         </div>,
         document.body
-      )}
-
-      {/* 하단 컨트롤 영역 - 탭바 + 검색 버튼을 화면 중앙에 정렬한다.
-          상단 + 버튼은 위쪽 useEffect에서 측정한 marginRight로 이 검색 버튼과 x좌표를 맞춘다. */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: 24,
-          left: "50%",
-          transform: "translateX(-50%)",
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-        }}
-      >
-        {/* 리퀴드 글래스 탭바 */}
-        <div
-          style={{
-            position: "relative",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            height: BAR_HEIGHT,
-            padding: "0 8px",
-            borderRadius: 999,
-            flexShrink: 0,
-            background: isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)",
-            backdropFilter: "blur(20px) saturate(180%)",
-            WebkitBackdropFilter: "blur(20px) saturate(180%)",
-            border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-            boxShadow:
-              "0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-          }}
-        >
-          {/* 이동하는 선택 인디케이터 */}
-          <div
-            style={{
-              position: "absolute",
-              top: 8,
-              left: indicator.left,
-              width: indicator.width,
-              height: BAR_HEIGHT - 16,
-              borderRadius: 999,
-              background: isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)",
-              boxShadow:
-                "0 2px 12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.25)",
-              transition: "left 0.45s cubic-bezier(0.22, 1, 0.36, 1), width 0.45s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-          />
-
-          {tabs.map((tab, i) => {
-            const isActive = active === i;
-            const isHovered = hovered === i;
-            return (
-              <button
-                key={tab}
-                ref={(el) => (btnRefs.current[i] = el)}
-                onClick={() => {
-                  // 다른 탭에 있다가 홈 탭으로 "넘어올" 때는 위치를 그대로 둬서 최근에 열어본
-                  // 곳(Vault/폴더)이 보이게 한다. 이미 그 탭에 있는데 같은 아이콘을 다시
-                  // 누르면(흔한 모바일 탭바 관례대로) 루트로 초기화한다.
-                  if (i === 0 && active === 0) setCurrentPath([]);
-                  // 커뮤니티 탭은 다른 탭에 갔다가 돌아올 때도 항상 게시글 상세에서
-                  // 나가져서 게시판(목록) 화면으로 돌아간다.
-                  if (i === 1) setViewingPostId(null);
-                  setActive(i);
-                  if (i !== 2) {
-                    setTrashScreenOpen(false);
-                    setTrashChecked({});
-                    setPricingInfoOpen(false);
-                  }
-                  closeTagScreen();
-                }}
-                onMouseEnter={() => setHovered(i)}
-                onMouseLeave={(e) => {
-                  setHovered(null);
-                  e.currentTarget.style.transform = "translateY(0) scale(1)";
-                }}
-                onMouseDown={(e) => e.currentTarget.style.transform = "translateY(0) scale(0.93)"}
-                onMouseUp={pressUp(isHovered && !isActive ? "translateY(-1px) scale(1)" : "translateY(0) scale(1)")}
-                onTouchStart={(e) => e.currentTarget.style.transform = "translateY(0) scale(0.93)"}
-                onTouchEnd={pressUp("translateY(0) scale(1)")}
-                aria-label={i === 0 ? "홈" : i === 1 ? "커뮤니티" : "설정"}
-                style={{
-                  position: "relative",
-                  zIndex: 1,
-                  minWidth: 76,
-                  height: BAR_HEIGHT - 16,
-                  padding: "0 28px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: "none",
-                  background: isHovered && !isActive
-                    ? (isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)")
-                    : "transparent",
-                  borderRadius: 999,
-                  color: isActive
-                    ? (isLight ? "#14161A" : "#FFFFFF")
-                    : isHovered
-                    ? (isLight ? "rgba(20,22,26,0.85)" : "rgba(255,255,255,0.85)")
-                    : (isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)"),
-                  fontSize: 15,
-                  fontWeight: isActive ? 600 : 500,
-                  letterSpacing: 0.2,
-                  cursor: "pointer",
-                  transition:
-                    "color 0.3s ease, background 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-                  transform: isHovered && !isActive ? "translateY(-1px) scale(1)" : "translateY(0) scale(1)",
-                  outline: "none",
-                }}
-              >
-                {i === 0 ? (
-                  // 홈 탭
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 3.2 3 10.5V20a1 1 0 0 0 1 1h5.5v-6.5h5V21H19a1 1 0 0 0 1-1v-9.5L12 3.2z" />
-                  </svg>
-                ) : i === 1 ? (
-                  // 커뮤니티 탭
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4.4 3.7A0.6 0.6 0 0 1 3.6 20V6a1 1 0 0 1 1-1z" />
-                  </svg>
-                ) : (
-                  // 설정 탭
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <circle cx="12" cy="8" r="3.6" />
-                    <path d="M4.5 20c0-3.6 3.4-6 7.5-6s7.5 2.4 7.5 6a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1z" />
-                  </svg>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* 검색 버튼 (리퀴드 글래스, 탭바와 동일한 높이의 원형) - 누르면 탭바 위에 검색창 패널이 열린다 */}
-        <button
-          onClick={toggleSearch}
-          onMouseEnter={() => setSearchButtonHovered(true)}
-          onMouseLeave={(e) => {
-            setSearchButtonHovered(false);
-            e.currentTarget.style.transform = "scale(1)";
-          }}
-          onMouseDown={pressDown("scale(0.9)")}
-          onMouseUp={pressUp(searchButtonHovered ? "scale(1.08)" : "scale(1)")}
-          onTouchStart={pressDown("scale(0.9)")}
-          onTouchEnd={pressUp("scale(1)")}
-          aria-label="검색창 열기"
-          style={{
-            width: BAR_HEIGHT,
-            height: BAR_HEIGHT,
-            flexShrink: 0,
-            borderRadius: "50%",
-            border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-            background: searchButtonHovered
-              ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
-              : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
-            backdropFilter: "blur(20px) saturate(180%)",
-            WebkitBackdropFilter: "blur(20px) saturate(180%)",
-            boxShadow: searchButtonHovered
-              ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
-              : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-            color: isLight ? "#14161A" : "#FFFFFF",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            outline: "none",
-            transition:
-              "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-            transform: searchButtonHovered ? "scale(1.08)" : "scale(1)",
-          }}
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m21 21-4.3-4.3" />
-          </svg>
-        </button>
-      </div>
-
-      {/* 검색창 패널 (리퀴드 글래스) - 탭바와 동일한 디자인 위에 검색 플레이스홀더 입력창 하나만 있다.
-          입력창 폰트 크기를 16px 이상으로 둬야 iOS 사파리가 포커스 시 화면을 자동 확대하지 않는다. */}
-      {searchOpen && (
-        <>
-          <div onClick={toggleSearch} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9 }} />
-          <div
-            style={{
-              position: "fixed",
-              bottom: 24 + BAR_HEIGHT + 14,
-              left: "50%",
-              zIndex: 10,
-              width: "min(360px, 88vw)",
-              opacity: searchVisible ? 1 : 0,
-              transform: searchVisible
-                ? "translate(-50%, 0)"
-                : "translate(-50%, 16px)",
-              transition:
-                "opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: 12,
-                borderRadius: 26,
-                background: isLight ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.08)",
-                backdropFilter: "blur(28px) saturate(180%)",
-                WebkitBackdropFilter: "blur(28px) saturate(180%)",
-                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                boxShadow:
-                  "0 20px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.12)",
-              }}
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, marginLeft: 4 }}
-              >
-                <circle cx="11" cy="11" r="7" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="검색"
-                aria-label="검색"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  fontSize: 17,
-                  fontWeight: 500,
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                }}
-              />
-            </div>
-          </div>
-        </>
       )}
 
       {/* 변환(일괄 이름 변경) 모달 - 체크한 항목들의 이름을 한 번에 바꾼다.
@@ -7159,188 +4997,6 @@ export default function Alloy() {
         </>
       )}
 
-      {/* 가져온 Vaulty 읽기 전용 브라우저 - Vaulty@주소로 가져온 Vault 내부를 탐색만 할 수 있다.
-          업로드/이름 바꾸기/삭제/이동/정렬/분류/태그/변환이 전부 없고, 폴더 들어가기와
-          이미지/문서 열기(읽기)만 된다. 원본 vaults/folders/files는 절대 건드리지 않는다. */}
-      {viewingImportedVaultId !== null && (() => {
-        const entry = importedVaults.find((iv) => iv.id === viewingImportedVaultId);
-        const source = entry && vaults.find((v) => v.id === entry.sourceVaultId);
-        const closeImportedViewer = () => { setViewingImportedVaultId(null); setImportedBrowsePath([]); };
-        if (!entry || !source) return null;
-        const fullPath = [source.name, ...importedBrowsePath];
-        const visibleFolders = folders.filter(
-          (f) => f.path.length === fullPath.length + 1 && f.path.slice(0, fullPath.length).every((p, i) => p === fullPath[i])
-        );
-        const filesHere = files.filter(
-          (f) => f.path.length === fullPath.length && f.path.every((p, i) => p === fullPath[i])
-        );
-        const visibleDocs = filesHere.filter((f) => f.kind !== "image");
-        const visibleImages = filesHere.filter((f) => f.kind === "image");
-        const isEmpty = visibleFolders.length === 0 && visibleDocs.length === 0 && visibleImages.length === 0;
-        return (
-          <div
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: isLight ? "#FFFFFF" : "#141413",
-              zIndex: 48,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div
-              style={{
-                flexShrink: 0,
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "20px 16px 12px 20px",
-                paddingTop: "max(20px, env(safe-area-inset-top))",
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span
-                  onClick={() => setImportedBrowsePath([])}
-                  style={{ cursor: "pointer", fontSize: 16, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}
-                >
-                  {source.name}
-                </span>
-                {importedBrowsePath.map((seg, i) => (
-                  <React.Fragment key={i}>
-                    <span style={{ color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 16 }}>›</span>
-                    <span
-                      onClick={() => setImportedBrowsePath(importedBrowsePath.slice(0, i + 1))}
-                      style={{ cursor: "pointer", fontSize: 16, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}
-                    >
-                      {seg}
-                    </span>
-                  </React.Fragment>
-                ))}
-                <span
-                  style={{
-                    marginLeft: 4,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    padding: "2px 8px",
-                    borderRadius: 999,
-                    background: isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.1)",
-                    color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)",
-                  }}
-                >
-                  읽기 전용
-                </span>
-              </div>
-              <button
-                onClick={closeImportedViewer}
-                onMouseDown={pressDown("scale(0.9)")}
-                onMouseUp={pressUp("scale(1)")}
-                aria-label="닫기"
-                style={{
-                  width: TOP_BUTTON_SIZE,
-                  height: TOP_BUTTON_SIZE,
-                  flexShrink: 0,
-                  borderRadius: "50%",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)",
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                  boxShadow: "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  outline: "none",
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 24px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
-              {isEmpty && (
-                <div style={{ padding: "48px 0", textAlign: "center", color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)", fontSize: 14 }}>
-                  비어 있습니다
-                </div>
-              )}
-              {visibleFolders.map((folder) => (
-                <div
-                  key={folder.id}
-                  onClick={() => setImportedBrowsePath((prev) => [...prev, folder.name])}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 14,
-                    padding: "14px 16px",
-                    borderRadius: 14,
-                    background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
-                    cursor: "pointer",
-                  }}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
-                    <path d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5z" />
-                  </svg>
-                  <span style={{ fontSize: 15, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {folder.name}
-                  </span>
-                </div>
-              ))}
-              {visibleDocs.map((doc) => (
-                <div
-                  key={doc.id}
-                  onClick={() => openAttachment(doc)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 14,
-                    padding: "14px 16px",
-                    borderRadius: 14,
-                    background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.14)" : "rgba(255,255,255,0.14)"}`,
-                    cursor: "pointer",
-                  }}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#14161A" : "#FFFFFF"} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <path d="M14 2v6h6" />
-                  </svg>
-                  <span style={{ fontSize: 15, fontWeight: 600, color: isLight ? "#14161A" : "#FFFFFF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {doc.name}{doc.ext ? `.${doc.ext}` : ""}
-                  </span>
-                </div>
-              ))}
-              {visibleImages.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  {visibleImages.map((img, idx) => (
-                    <div
-                      key={img.id}
-                      onClick={() => openViewer(visibleImages, idx)}
-                      style={{
-                        aspectRatio: "1",
-                        borderRadius: 12,
-                        overflow: "hidden",
-                        background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {img.url && (
-                        <img src={img.url} alt={img.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
-
       {/* 이미지/움짤 전체화면 뷰어 - 배경 페이드로 열리고, 좌우 드래그(스와이프)로
           같은 목록 안의 이전/다음 사진으로 넘어간다. 우측 상단 리퀴드 글래스 X로 닫는다. */}
       {viewerOpen && (
@@ -7420,373 +5076,6 @@ export default function Alloy() {
         </>
       )}
 
-      {/* 텍스트 에디터 - 전체화면으로 열린다. 좌측 상단은 제목(파일 이름)을 바로 고칠 수 있는
-          입력창이고 그 아래는 본문을 그대로 편집하는 텍스트 영역이다. 우측 상단 체크(완료)
-          버튼은 휴지통/구독/분류 화면 닫기 버튼과 동일한 크기를 쓴다. */}
-      {textEditorFile && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: isLight ? "#FFFFFF" : "#141413",
-            zIndex: 49,
-            display: "flex",
-            flexDirection: "column",
-            opacity: textEditorVisible ? 1 : 0,
-            transition: "opacity 0.25s ease",
-          }}
-        >
-          <div
-            style={{
-              flexShrink: 0,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "20px 16px 12px 20px",
-              paddingTop: "max(20px, env(safe-area-inset-top))",
-            }}
-          >
-            <input
-              type="text"
-              value={textTitleDraft}
-              onChange={(e) => setTextTitleDraft(e.target.value)}
-              placeholder="제목 없음"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                border: "none",
-                outline: "none",
-                background: "transparent",
-                fontSize: 22,
-                fontWeight: 700,
-                color: isLight ? "#14161A" : "#FFFFFF",
-              }}
-            />
-            <div style={{ position: "relative", flexShrink: 0 }}>
-              <button
-                onClick={(e) => { e.stopPropagation(); openAttachPicker("text"); }}
-                onMouseEnter={() => setAttachButtonHovered(true)}
-                onMouseLeave={(e) => {
-                  setAttachButtonHovered(false);
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-                onMouseDown={pressDown("scale(0.9)")}
-                onMouseUp={pressUp(attachButtonHovered ? "scale(1.08)" : "scale(1)")}
-                aria-label="첨부"
-                style={{
-                  width: TOP_BUTTON_SIZE,
-                  height: TOP_BUTTON_SIZE,
-                  flexShrink: 0,
-                  borderRadius: "50%",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: attachButtonHovered
-                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
-                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                  boxShadow: attachButtonHovered
-                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
-                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  outline: "none",
-                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-                  transform: attachButtonHovered ? "scale(1.08)" : "scale(1)",
-                }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-            </div>
-            <div style={{ position: "relative", flexShrink: 0 }}>
-              <button
-                onClick={closeTextEditor}
-                onMouseEnter={() => setTrashCloseButtonHovered(true)}
-                onMouseLeave={(e) => {
-                  setTrashCloseButtonHovered(false);
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-                onMouseDown={pressDown("scale(0.9)")}
-                onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
-                aria-label="완료"
-                style={{
-                  width: TOP_BUTTON_SIZE,
-                  height: TOP_BUTTON_SIZE,
-                  flexShrink: 0,
-                  borderRadius: "50%",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: trashCloseButtonHovered
-                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
-                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                  boxShadow: trashCloseButtonHovered
-                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
-                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  outline: "none",
-                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-                  transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          {(() => {
-            const attachments = (files.find((f) => f.id === textEditorFile) || {}).attachments || [];
-            const addrs = extractVaultyAddresses(textContentDraft);
-            if (!attachments.length && !addrs.length) return null;
-            return (
-              <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: "0 20px 12px 20px" }}>
-                {attachments.length > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {attachments.map((a) => renderAttachmentChip("text", textEditorFile, a, false))}
-                  </div>
-                )}
-                {addrs.length > 0 && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {addrs.map((addr) => (
-                      <button
-                        key={addr}
-                        onClick={() => importVaultByAddress(addr)}
-                        style={{
-                          padding: "6px 12px",
-                          borderRadius: 999,
-                          border: `1px solid ${isLight ? "rgba(37,99,235,0.35)" : "rgba(96,165,250,0.35)"}`,
-                          background: isLight ? "rgba(37,99,235,0.08)" : "rgba(96,165,250,0.12)",
-                          color: isLight ? "#2563EB" : "#60A5FA",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          outline: "none",
-                        }}
-                      >
-                        🔗 Vaulty@{addr}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-          <textarea
-            value={textContentDraft}
-            onChange={(e) => setTextContentDraft(e.target.value)}
-            placeholder="내용을 입력하세요"
-            style={{
-              flex: 1,
-              minHeight: 0,
-              border: "none",
-              outline: "none",
-              resize: "none",
-              background: "transparent",
-              padding: "0 20px 24px 20px",
-              fontSize: 15,
-              lineHeight: 1.7,
-              color: isLight ? "#14161A" : "#FFFFFF",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-            }}
-          />
-        </div>
-      )}
-
-      {/* 게시글 작성/수정 - 텍스트 에디터와 동일한 전체화면 패턴(좌측 제목 인풋 + 우측 X 닫기).
-          닫으면(X, 뒤로가기 등) 초안이 바로 저장/생성된다 - 별도 저장 버튼 없음. */}
-      {postEditorId && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: isLight ? "#FFFFFF" : "#141413",
-            zIndex: 49,
-            display: "flex",
-            flexDirection: "column",
-            opacity: postEditorVisible ? 1 : 0,
-            transition: "opacity 0.25s ease",
-          }}
-        >
-          <div
-            style={{
-              flexShrink: 0,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "20px 16px 12px 20px",
-              paddingTop: "max(20px, env(safe-area-inset-top))",
-            }}
-          >
-            <input
-              type="text"
-              value={postTitleDraft}
-              onChange={(e) => setPostTitleDraft(e.target.value)}
-              placeholder="제목 없음"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                border: "none",
-                outline: "none",
-                background: "transparent",
-                fontSize: 22,
-                fontWeight: 700,
-                color: isLight ? "#14161A" : "#FFFFFF",
-              }}
-            />
-            <div style={{ position: "relative", flexShrink: 0 }}>
-              <button
-                onClick={(e) => { e.stopPropagation(); openAttachPicker("post"); }}
-                onMouseEnter={() => setAttachButtonHovered(true)}
-                onMouseLeave={(e) => {
-                  setAttachButtonHovered(false);
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-                onMouseDown={pressDown("scale(0.9)")}
-                onMouseUp={pressUp(attachButtonHovered ? "scale(1.08)" : "scale(1)")}
-                aria-label="첨부"
-                style={{
-                  width: TOP_BUTTON_SIZE,
-                  height: TOP_BUTTON_SIZE,
-                  flexShrink: 0,
-                  borderRadius: "50%",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: attachButtonHovered
-                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
-                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                  boxShadow: attachButtonHovered
-                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
-                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  outline: "none",
-                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-                  transform: attachButtonHovered ? "scale(1.08)" : "scale(1)",
-                }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-            </div>
-            <div style={{ position: "relative", flexShrink: 0 }}>
-              <button
-                onClick={closePostEditor}
-                onMouseEnter={() => setTrashCloseButtonHovered(true)}
-                onMouseLeave={(e) => {
-                  setTrashCloseButtonHovered(false);
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-                onMouseDown={pressDown("scale(0.9)")}
-                onMouseUp={pressUp(trashCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
-                aria-label="완료"
-                style={{
-                  width: TOP_BUTTON_SIZE,
-                  height: TOP_BUTTON_SIZE,
-                  flexShrink: 0,
-                  borderRadius: "50%",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  background: trashCloseButtonHovered
-                    ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
-                    : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                  boxShadow: trashCloseButtonHovered
-                    ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
-                    : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  outline: "none",
-                  transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-                  transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          {(() => {
-            const attachments = (posts.find((p) => p.id === postEditorId) || {}).attachments || [];
-            const addrs = extractVaultyAddresses(postContentDraft);
-            if (!attachments.length && !addrs.length) return null;
-            return (
-              <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, padding: "0 20px 12px 20px" }}>
-                {attachments.length > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {attachments.map((a) => renderAttachmentChip("post", postEditorId, a, false))}
-                  </div>
-                )}
-                {addrs.length > 0 && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {addrs.map((addr) => (
-                      <button
-                        key={addr}
-                        onClick={() => importVaultByAddress(addr)}
-                        style={{
-                          padding: "6px 12px",
-                          borderRadius: 999,
-                          border: `1px solid ${isLight ? "rgba(37,99,235,0.35)" : "rgba(96,165,250,0.35)"}`,
-                          background: isLight ? "rgba(37,99,235,0.08)" : "rgba(96,165,250,0.12)",
-                          color: isLight ? "#2563EB" : "#60A5FA",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          outline: "none",
-                        }}
-                      >
-                        🔗 Vaulty@{addr}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-          <textarea
-            value={postContentDraft}
-            onChange={(e) => setPostContentDraft(e.target.value)}
-            placeholder="내용을 입력하세요"
-            style={{
-              flex: 1,
-              minHeight: 0,
-              border: "none",
-              outline: "none",
-              resize: "none",
-              background: "transparent",
-              padding: "0 20px 24px 20px",
-              fontSize: 15,
-              lineHeight: 1.7,
-              color: isLight ? "#14161A" : "#FFFFFF",
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 }
