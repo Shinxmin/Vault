@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.58";
+const APP_VERSION = "0.1.59";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -505,10 +505,10 @@ export default function Alloy() {
   const formatStorageLimitDisplay = (gb) => (gb >= 1000 ? "1TB" : formatGBShort(gb * 1024 * 1024 * 1024));
 
   // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 기본 10GB를
-  // 초과한 만큼만 GB당 $0.02를 곱한다.
+  // 초과한 만큼만 GB당 $0.015를 곱한다.
   const usedStorageGB = usedStorageBytes / (1024 * 1024 * 1024);
   const billingOverageGB = Math.max(0, usedStorageGB - 10);
-  const billingAmount = billingOverageGB * 0.02;
+  const billingAmount = billingOverageGB * 0.015;
 
   // 하단 탭바 바로 위에 뜨는 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다"처럼
   // 짧은 안내 문구를 2초간 페이드 인/아웃으로 보여주고 사라진다.
@@ -1571,9 +1571,9 @@ export default function Alloy() {
         }}
       >
         {/* 상단 헤더 - "분류" 화면일 때만 제목("분류") + 닫기(X)를 보여주고, 그 외에는
-            중앙에 검색창을 항상 띄우고 우측에 설정(⚙) 버튼을 둔다. 왼쪽에 오른쪽 버튼과
-            같은 폭의 빈 여백을 둬서 검색창이 화면 정중앙에 오도록 맞춘다. 예전 + 버튼
-            (Vault 생성/업로드 메뉴 트리거)은 "마법사" 옆 "업로드" 버튼으로 옮겨갔다. */}
+            좌측에 "Vaulty" 제목, 중앙에 검색창(가운데 남는 공간의 2/3 폭), 우측에
+            사람 아이콘 버튼(설정 화면 열기)을 둔다. 예전 + 버튼(Vault 생성/업로드 메뉴
+            트리거)은 "마법사" 옆 "업로드" 버튼으로 옮겨갔다. */}
         <div style={stickyHeaderStyle}>
           {tagScreenTags.length ? (
             <>
@@ -1626,8 +1626,22 @@ export default function Alloy() {
             </>
           ) : (
             <>
-              <div style={{ width: TOP_BUTTON_SIZE, flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0, margin: "0 12px" }}>
+              <h1
+                onClick={() => setCurrentPath([])}
+                style={{
+                  margin: 0,
+                  fontSize: 26,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  letterSpacing: 0.2,
+                  minHeight: "1em",
+                  flexShrink: 0,
+                  cursor: "pointer",
+                }}
+              >
+                Vaulty
+              </h1>
+              <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "center", padding: "0 12px" }}>
                 <input
                   ref={searchInputRef}
                   type="text"
@@ -1636,7 +1650,7 @@ export default function Alloy() {
                   placeholder="검색"
                   aria-label="검색"
                   style={{
-                    width: "100%",
+                    width: "66%",
                     height: TOP_BUTTON_SIZE,
                     boxSizing: "border-box",
                     padding: "0 18px",
@@ -1691,8 +1705,8 @@ export default function Alloy() {
                   }}
                 >
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
                   </svg>
                 </button>
               </div>
@@ -2906,8 +2920,8 @@ export default function Alloy() {
                 }}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <circle cx="12" cy="8" r="4" />
+                  <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
                 </svg>
               </button>
             </div>
@@ -3203,32 +3217,6 @@ export default function Alloy() {
                     }}
                   />
                 </div>
-                {/* 저장 공간 2열 - 누르면 이 버튼 바로 밑 위치에 서브 액션바 스타일의
-                    안내 패널이 2초간 떴다가 사라진다(별도 포탈, 아래 참고). 떠 있는 동안엔
-                    이 버튼 자체는 비활성화되고 흐려진다. */}
-                <button
-                  ref={pricingButtonRef}
-                  onClick={showPricingInfo}
-                  disabled={pricingInfoOpen}
-                  style={{
-                    marginTop: 8,
-                    padding: 0,
-                    border: "none",
-                    background: "transparent",
-                    fontSize: 12,
-                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-                    cursor: pricingInfoOpen ? "default" : "pointer",
-                    outline: "none",
-                    textDecoration: "underline",
-                    textUnderlineOffset: 2,
-                    opacity: pricingInfoOpen ? 0.4 : 1,
-                    transition: "opacity 0.3s ease, color 0.2s ease",
-                  }}
-                  onMouseEnter={(e) => { if (!pricingInfoOpen) e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
-                  onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
-                >
-                  모든 요금제를 확인하세요
-                </button>
                 {/* 한도 설정 - 누르면 위 "0.0GB/10GB"의 10GB 부분이 인풋으로 바뀌어 직접
                     저장 공간 한도를 설정할 수 있다(10~1,000GB). */}
                 <button
@@ -3286,8 +3274,9 @@ export default function Alloy() {
             </div>
 
             {/* 청구 금액 - 저장 공간 카드 바로 아래. 설정한 한도가 아니라 지금 실제로 쓰고
-                있는 용량 기준이다. 사용량이 기본 10GB 이하면 청구액이 없다는 안내만, 넘으면
-                초과분 × $0.02로 예상 청구 금액을 보여준다. */}
+                있는 용량 기준이다. 제목("청구 금액") 자체를 누르면 요금 안내 패널이 뜬다
+                (예전 "모든 요금제를 확인하세요" 링크 텍스트는 없애고 이 제목으로 기능을
+                옮겼다). 사용량이 기본 10GB 이하면 아무 텍스트도 보여주지 않는다. */}
             <div
               style={{
                 borderRadius: 14,
@@ -3298,16 +3287,30 @@ export default function Alloy() {
                 padding: "14px 18px",
               }}
             >
-              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
+              <button
+                ref={pricingButtonRef}
+                onClick={showPricingInfo}
+                disabled={pricingInfoOpen}
+                style={{
+                  display: "block",
+                  padding: 0,
+                  marginBottom: 6,
+                  border: "none",
+                  background: "transparent",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  cursor: pricingInfoOpen ? "default" : "pointer",
+                  outline: "none",
+                  opacity: pricingInfoOpen ? 0.5 : 1,
+                  transition: "opacity 0.3s ease",
+                }}
+              >
                 청구 금액
-              </div>
-              {billingOverageGB > 0 ? (
+              </button>
+              {billingOverageGB > 0 && (
                 <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "#14161A" : "#FFFFFF" }}>
                   {billingOverageGB % 1 === 0 ? billingOverageGB : billingOverageGB.toFixed(1)}GB ({billingAmount.toFixed(2)}$/월)
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
-                  청구 금액이 없습니다
                 </div>
               )}
             </div>
@@ -3332,15 +3335,21 @@ export default function Alloy() {
                 <button
                   onClick={handleLogout}
                   style={{
-                    padding: "7px 14px",
+                    minWidth: 36,
+                    height: 30,
+                    padding: "0 10px",
                     borderRadius: 8,
                     border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
                     background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
                     color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 13,
-                    fontWeight: 600,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    letterSpacing: 0.2,
                     cursor: "pointer",
                     outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
                   로그아웃
@@ -4285,7 +4294,7 @@ export default function Alloy() {
             Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
           </div>
           <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 4 }}>
-            기본 저장 공간 10GB를 초과하면 $0.02/GB 가 청구됩니다
+            기본 저장 공간 10GB를 초과하면 $0.015/GB 가 청구됩니다
           </div>
         </div>,
         document.body
