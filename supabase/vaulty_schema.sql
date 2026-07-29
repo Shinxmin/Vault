@@ -56,25 +56,29 @@ create unique index if not exists vaulty_state_user_id_key on public.vaulty_stat
 
 -- 아이디(username) <-> 로그인 계정 매핑. username에 유니크 제약이 걸려 있어
 -- 회원가입 시 중복 아이디를 이 테이블로 바로 확인할 수 있다.
-create table if not exists public.profiles (
+-- 이름을 "profiles"가 아니라 "vaulty_profiles"로 둔 이유 - Supabase 프로젝트에
+-- 이미 다른 용도의(다른 컬럼 구조를 가진) "profiles" 테이블/뷰가 있는 경우가 흔해서,
+-- 이름이 겹치면 create table if not exists가 기존 것을 그대로 두고 넘어가버려
+-- 뒤 정책(policy)에서 컬럼이 없다는 에러(42703)가 난다. 겹칠 일이 없는 이름을 쓴다.
+create table if not exists public.vaulty_profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   username text not null unique,
   created_at timestamptz not null default now()
 );
 
-alter table public.profiles enable row level security;
+alter table public.vaulty_profiles enable row level security;
 
-drop policy if exists "Anyone can read profiles" on public.profiles;
-create policy "Anyone can read profiles"
-  on public.profiles for select
+drop policy if exists "Anyone can read vaulty profiles" on public.vaulty_profiles;
+create policy "Anyone can read vaulty profiles"
+  on public.vaulty_profiles for select
   using (true);
 
-drop policy if exists "Users can insert own profile" on public.profiles;
-create policy "Users can insert own profile"
-  on public.profiles for insert
+drop policy if exists "Users can insert own vaulty profile" on public.vaulty_profiles;
+create policy "Users can insert own vaulty profile"
+  on public.vaulty_profiles for insert
   with check (auth.uid() = id);
 
-drop policy if exists "Users can update own profile" on public.profiles;
-create policy "Users can update own profile"
-  on public.profiles for update
+drop policy if exists "Users can update own vaulty profile" on public.vaulty_profiles;
+create policy "Users can update own vaulty profile"
+  on public.vaulty_profiles for update
   using (auth.uid() = id);
