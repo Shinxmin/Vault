@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.55";
+const APP_VERSION = "0.1.56";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -176,7 +176,7 @@ export default function Alloy() {
   const [importedVaults, setImportedVaults] = useState([]);
   // 회원가입/로그인 - Supabase Auth(이메일/비밀번호)를 그대로 쓰되, 사용자가 입력하는
   // "아이디"는 실제 이메일이 아니므로 "아이디@vaulty.internal" 형태의 내부용 가짜
-  // 이메일로 감싸 signUp/signInWithPassword에 넘긴다. profiles 테이블이 아이디<->계정
+  // 이메일로 감싸 signUp/signInWithPassword에 넘긴다. vaulty_profiles 테이블이 아이디<->계정
   // 매핑(및 중복 아이디 확인)을 담당하고, vaulty_state.user_id가 그 계정의 Vault
   // 데이터가 들어있는 행을 가리킨다. 비로그인 상태에서는 Vault/폴더/파일 등은 전혀
   // 불러오지 않고(웹드라이브 이용 불가), 게시글만 항상 공개된 'default' 행에서 읽는다.
@@ -244,10 +244,10 @@ export default function Alloy() {
     }
   };
 
-  // 로그인 세션을 실제 앱 상태로 반영한다 - profiles에서 아이디를 찾고, 그 계정의
+  // 로그인 세션을 실제 앱 상태로 반영한다 - vaulty_profiles에서 아이디를 찾고, 그 계정의
   // vaulty_state 행(없으면 새로 생성)을 읽어 Vault 데이터를 불러온다.
   const applySession = async (user) => {
-    const { data: profile } = await supabase.from("profiles").select("username").eq("id", user.id).maybeSingle();
+    const { data: profile } = await supabase.from("vaulty_profiles").select("username").eq("id", user.id).maybeSingle();
     const username = (profile && profile.username) || (user.email || "").split("@")[0];
     let row = null;
     const byUser = await supabase.from("vaulty_state").select("*").eq("user_id", user.id).maybeSingle();
@@ -378,7 +378,7 @@ export default function Alloy() {
     return () => clearTimeout(importedVaultsSaveTimerRef.current);
   }, [importedVaults, dataLoaded, authUser, myRowId]);
 
-  // 회원가입 - 아이디 중복(profiles 테이블) 확인 후 Supabase Auth 계정을 만든다.
+  // 회원가입 - 아이디 중복(vaulty_profiles 테이블) 확인 후 Supabase Auth 계정을 만든다.
   // 이 앱에서 처음 가입하는 계정이면(아직 아무도 연결되지 않은 'default' 행이 있다면)
   // 그동안 로그인 없이 써오던 기존 Vault 데이터를 그대로 이 계정 데이터로 이어받는다.
   const handleSignup = async () => {
@@ -388,7 +388,7 @@ export default function Alloy() {
     if (!AUTH_ID_RE.test(id)) { showToast("아이디 형식이 올바르지 않습니다"); return; }
     setAuthBusy(true);
     try {
-      const { data: existingProfile } = await supabase.from("profiles").select("id").eq("username", id).maybeSingle();
+      const { data: existingProfile } = await supabase.from("vaulty_profiles").select("id").eq("username", id).maybeSingle();
       if (existingProfile) { showToast("이미 가입된 아이디입니다"); return; }
       const email = authEmailFor(id);
       const { data, error } = await supabase.auth.signUp({ email, password: pw });
@@ -402,7 +402,7 @@ export default function Alloy() {
         session = signInRes.data && signInRes.data.session;
       }
       if (!session || !data.user) { showToast("회원가입에 실패했습니다"); return; }
-      await supabase.from("profiles").insert({ id: data.user.id, username: id });
+      await supabase.from("vaulty_profiles").insert({ id: data.user.id, username: id });
       const { data: legacyRow } = await supabase.from("vaulty_state").select("id, user_id").eq("id", "default").maybeSingle();
       if (legacyRow && !legacyRow.user_id) {
         await supabase.from("vaulty_state").update({ user_id: data.user.id }).eq("id", "default");
@@ -418,14 +418,14 @@ export default function Alloy() {
     }
   };
 
-  // 로그인 - profiles에 없는 아이디면(가입 이력 없음) 바로 안내하고, 있으면 실제 인증을 시도한다.
+  // 로그인 - vaulty_profiles에 없는 아이디면(가입 이력 없음) 바로 안내하고, 있으면 실제 인증을 시도한다.
   const handleLogin = async () => {
     const id = authIdDraft.trim();
     const pw = authPasswordDraft;
     if (!id || !pw || authBusy) return;
     setAuthBusy(true);
     try {
-      const { data: existingProfile } = await supabase.from("profiles").select("id").eq("username", id).maybeSingle();
+      const { data: existingProfile } = await supabase.from("vaulty_profiles").select("id").eq("username", id).maybeSingle();
       if (!existingProfile) { showToast("회원가입을 먼저 진행해주세요"); return; }
       const { data, error } = await supabase.auth.signInWithPassword({ email: authEmailFor(id), password: pw });
       if (error || !data.session) { showToast("아이디 또는 비밀번호가 올바르지 않습니다"); return; }
