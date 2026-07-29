@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.54";
+const APP_VERSION = "0.1.55";
 
 export default function Alloy() {
   const tabs = ["A", "B", "C"];
@@ -174,6 +174,20 @@ export default function Alloy() {
   // 링크를 눌러 "가져온" Vault 참조 목록. { id, sourceVaultId, address, importedAt } 형태이며
   // 원본 vaults 배열은 그대로 두고 읽기 전용 접근 권한만 로컬에 기록한다(진짜 삭제/수정은 불가).
   const [importedVaults, setImportedVaults] = useState([]);
+  // 회원가입/로그인 - Supabase Auth(이메일/비밀번호)를 그대로 쓰되, 사용자가 입력하는
+  // "아이디"는 실제 이메일이 아니므로 "아이디@vaulty.internal" 형태의 내부용 가짜
+  // 이메일로 감싸 signUp/signInWithPassword에 넘긴다. profiles 테이블이 아이디<->계정
+  // 매핑(및 중복 아이디 확인)을 담당하고, vaulty_state.user_id가 그 계정의 Vault
+  // 데이터가 들어있는 행을 가리킨다. 비로그인 상태에서는 Vault/폴더/파일 등은 전혀
+  // 불러오지 않고(웹드라이브 이용 불가), 게시글만 항상 공개된 'default' 행에서 읽는다.
+  const [authUser, setAuthUser] = useState(null); // { id, username } | null
+  const [authLoading, setAuthLoading] = useState(true);
+  const [myRowId, setMyRowId] = useState("default"); // 로그인 계정의 vaulty_state 행 id
+  const [authIdDraft, setAuthIdDraft] = useState("");
+  const [authPasswordDraft, setAuthPasswordDraft] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const AUTH_ID_RE = /^[A-Za-z0-9_]{2,20}$/;
+  const authEmailFor = (username) => `${username.toLowerCase()}@vaulty.internal`;
   const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
   const cycleSortMode = () => {
     setCustomOrderActive(false);
@@ -188,68 +202,124 @@ export default function Alloy() {
     return { ...item, createdAt, updatedAt: item.updatedAt || createdAt };
   };
 
-  // Vaulty 상태(Vault/폴더/파일 목록) 영구 저장 - 로그인이 없는 개인용 앱이라
-  // Supabase 단일 행(id='default')에 전체 상태를 그대로 저장한다.
-  // 파일의 실제 바이트는 R2에 있고 files[].r2Key로 R2 객체를 가리킨다.
+  // Vaulty 상태(Vault/폴더/파일 목록) 영구 저장 - 계정별로 vaulty_state의 한 행(row)에
+  // 저장한다. 파일의 실제 바이트는 R2에 있고 files[].r2Key로 R2 객체를 가리킨다.
   const [dataLoaded, setDataLoaded] = useState(false);
   // 휴지통 - 삭제된 Vault/폴더/파일(이미지)은 바로 지워지지 않고 여기 담겨 7일간
   // 보관된다. trash 컬럼은 이후에 추가된 것이라 아직 마이그레이션을 안 돌린 환경에서는
   // 없을 수 있으므로, select("*")로 있으면 읽고 없으면 빈 배열로 취급한다.
   const [trash, setTrash] = useState([]);
   const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+  // vaulty_state 한 행을 상태로 반영하는 공용 유틸 - 최초 비로그인 로드와 로그인 직후
+  // 둘 다 이 함수를 쓴다. 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지
+  // 않으므로 불러올 때마다 r2Key 기준으로 새로 발급받는다(휴지통 안 이미지도 포함).
+  const hydrateFromRow = async (row, fallbackNickname) => {
+    const loadedVaults = (row.vaults || []).map(withDates);
+    const loadedFolders = (row.folders || []).map(withDates);
+    const loadedFiles = (row.files || []).map(withDates);
+    const loadedTrash = row.trash || [];
+    setVaults(loadedVaults);
+    setFolders(loadedFolders);
+    setCustomOrderActive(row.custom_order_active === true);
+    setStorageLimitGB(typeof row.storage_limit_gb === "number" && row.storage_limit_gb > 0 ? row.storage_limit_gb : 10);
+    setNickname(typeof row.nickname === "string" && row.nickname ? row.nickname : (fallbackNickname || "사용자"));
+    setImportedVaults(row.imported_vaults || []);
+    const trashImageKeys = loadedTrash.flatMap((t) => t.files || []).filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
+    const imageKeys = [...loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key), ...trashImageKeys];
+    if (imageKeys.length) {
+      try {
+        const { urls } = await r2Presign({ action: "get-batch", keys: imageKeys });
+        const withUrl = (f) => (f.kind === "image" && f.r2Key ? { ...f, url: urls[f.r2Key] || null } : f);
+        setFiles(loadedFiles.map(withUrl));
+        setTrash(loadedTrash.map((t) => ({ ...t, files: (t.files || []).map(withUrl) })));
+      } catch (e) {
+        console.error("이미지 URL 발급 실패:", e);
+        setFiles(loadedFiles);
+        setTrash(loadedTrash);
+      }
+    } else {
+      setFiles(loadedFiles);
+      setTrash(loadedTrash);
+    }
+  };
+
+  // 로그인 세션을 실제 앱 상태로 반영한다 - profiles에서 아이디를 찾고, 그 계정의
+  // vaulty_state 행(없으면 새로 생성)을 읽어 Vault 데이터를 불러온다.
+  const applySession = async (user) => {
+    const { data: profile } = await supabase.from("profiles").select("username").eq("id", user.id).maybeSingle();
+    const username = (profile && profile.username) || (user.email || "").split("@")[0];
+    let row = null;
+    const byUser = await supabase.from("vaulty_state").select("*").eq("user_id", user.id).maybeSingle();
+    row = byUser.data;
+    if (!row) {
+      const inserted = await supabase
+        .from("vaulty_state")
+        .insert({ id: user.id, user_id: user.id, nickname: username })
+        .select("*")
+        .maybeSingle();
+      row = inserted.data;
+    }
+    if (row) {
+      setMyRowId(row.id);
+      await hydrateFromRow(row, username);
+    }
+    setAuthUser({ id: user.id, username });
+  };
+
+  // 로그아웃/비로그인 상태로 되돌린다 - Vault 데이터는 화면에서 완전히 사라진다.
+  const clearMyData = () => {
+    setAuthUser(null);
+    setMyRowId("default");
+    setVaults([]);
+    setFolders([]);
+    setFiles([]);
+    setTrash([]);
+    setImportedVaults([]);
+    setCustomOrderActive(false);
+    setStorageLimitGB(10);
+    setNickname("사용자");
+    setCurrentPath([]);
+  };
+
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase
+      // 게시글(커뮤니티 게시판)은 로그인 여부와 상관없이 항상 공개된 'default' 행에서
+      // 읽는다 - 비로그인 사용자도 게시글 읽기는 가능해야 하기 때문.
+      const { data: publicRow, error: publicError } = await supabase
         .from("vaulty_state")
-        .select("*")
+        .select("community_posts")
         .eq("id", "default")
         .maybeSingle();
-      if (error) {
-        console.error("Vaulty 상태를 불러오지 못했습니다:", error);
-      } else if (data) {
-        const loadedVaults = (data.vaults || []).map(withDates);
-        const loadedFolders = (data.folders || []).map(withDates);
-        const loadedFiles = (data.files || []).map(withDates);
-        const loadedTrash = data.trash || [];
-        setVaults(loadedVaults);
-        setFolders(loadedFolders);
-        setCustomOrderActive(data.custom_order_active === true);
-        setStorageLimitGB(typeof data.storage_limit_gb === "number" && data.storage_limit_gb > 0 ? data.storage_limit_gb : 10);
-        setNickname(typeof data.nickname === "string" && data.nickname ? data.nickname : "사용자");
-        setPosts((data.community_posts || []).map(withDates));
-        setImportedVaults(data.imported_vaults || []);
-        // 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지 않으므로
-        // 불러올 때마다 r2Key 기준으로 새로 발급받는다. 휴지통 안의 이미지도 복구/미리보기를
-        // 위해 함께 새로 발급받는다.
-        const trashImageKeys = loadedTrash.flatMap((t) => t.files || []).filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
-        const imageKeys = [...loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key), ...trashImageKeys];
-        if (imageKeys.length) {
-          try {
-            const { urls } = await r2Presign({ action: "get-batch", keys: imageKeys });
-            const withUrl = (f) => (f.kind === "image" && f.r2Key ? { ...f, url: urls[f.r2Key] || null } : f);
-            setFiles(loadedFiles.map(withUrl));
-            setTrash(loadedTrash.map((t) => ({ ...t, files: (t.files || []).map(withUrl) })));
-          } catch (e) {
-            console.error("이미지 URL 발급 실패:", e);
-            setFiles(loadedFiles);
-            setTrash(loadedTrash);
-          }
-        } else {
-          setFiles(loadedFiles);
-          setTrash(loadedTrash);
+      if (publicError) console.error("게시글을 불러오지 못했습니다:", publicError);
+      setPosts(((publicRow && publicRow.community_posts) || []).map(withDates));
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData && sessionData.session && sessionData.session.user) {
+        try {
+          await applySession(sessionData.session.user);
+        } catch (e) {
+          console.error("로그인 정보를 불러오지 못했습니다:", e);
         }
       }
       setDataLoaded(true);
+      setAuthLoading(false);
     })();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") clearMyData();
+    });
+    return () => authListener.subscription.unsubscribe();
   }, []);
 
   // 초기 로드가 끝난 뒤부터 vaults/folders/files/customOrderActive가 바뀔 때마다 살짝
-  // 지연을 두고(짧은 시간 내 연속 변경을 한 번으로 묶어) Supabase에 전체 상태를 저장한다.
-  // customOrderActive를 저장하지 않으면 꾹 눌러 바꾼 순서(배열 자체는 저장됨)가 새로고침 시
-  // 다시 ABC 정렬로 보여서 마치 순서가 저장 안 된 것처럼 보이는 문제가 있었다.
+  // 지연을 두고(짧은 시간 내 연속 변경을 한 번으로 묶어) Supabase에 저장한다. 로그인
+  // 상태가 아니면 애초에 보여줄 Vault 데이터가 없으므로(웹드라이브는 로그인 전용) 절대
+  // 저장을 시도하지 않는다 - 이 가드가 없으면 로그인 전 빈 상태가 실제 계정 데이터가
+  // 든 행을 빈 배열로 덮어써버리는 사고로 이어진다.
   const saveTimerRef = useRef(null);
   useEffect(() => {
-    if (!dataLoaded) return;
+    if (!dataLoaded || !authUser) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       // url은 만료되는 presigned URL이라 저장하지 않고 r2Key만 저장한다.
@@ -257,7 +327,8 @@ export default function Alloy() {
       supabase
         .from("vaulty_state")
         .upsert({
-          id: "default",
+          id: myRowId,
+          user_id: authUser.id,
           vaults,
           folders,
           files: filesToSave,
@@ -271,15 +342,14 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, dataLoaded]);
+  }, [vaults, folders, files, customOrderActive, storageLimitGB, nickname, dataLoaded, authUser, myRowId]);
 
-  // 커뮤니티 게시글(community_posts)도 trash와 같은 이유로 별도 컬럼에 분리해 저장한다 -
-  // 이 컬럼이 아직 없는(마이그레이션 전) 환경에서 이 upsert가 실패해도 위 핵심 데이터
-  // 저장에는 영향이 없다. 예전엔 한 번의 upsert에 같이 담겨 있어서, imported_vaults
-  // 컬럼 마이그레이션 전 환경에서는 그 upsert 전체가 실패해 게시글까지 저장되지 않았다.
+  // 커뮤니티 게시글(community_posts)은 계정과 무관하게 항상 공개된 'default' 행에
+  // 저장하는 하나의 공유 게시판이다 - 다만 글쓰기(게시글 작성/수정/삭제)는 로그인해야만
+  // 가능하므로, 비로그인 상태에서는 이 저장도 시도하지 않는다.
   const postsSaveTimerRef = useRef(null);
   useEffect(() => {
-    if (!dataLoaded) return;
+    if (!dataLoaded || !authUser) return;
     if (postsSaveTimerRef.current) clearTimeout(postsSaveTimerRef.current);
     postsSaveTimerRef.current = setTimeout(() => {
       supabase
@@ -290,23 +360,87 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(postsSaveTimerRef.current);
-  }, [posts, dataLoaded]);
+  }, [posts, dataLoaded, authUser]);
 
-  // 가져온 Vault(imported_vaults)도 같은 이유로 별도 컬럼에 분리해 저장한다.
+  // 가져온 Vault(imported_vaults)도 계정별 행(myRowId)에 분리해 저장한다.
   const importedVaultsSaveTimerRef = useRef(null);
   useEffect(() => {
-    if (!dataLoaded) return;
+    if (!dataLoaded || !authUser) return;
     if (importedVaultsSaveTimerRef.current) clearTimeout(importedVaultsSaveTimerRef.current);
     importedVaultsSaveTimerRef.current = setTimeout(() => {
       supabase
         .from("vaulty_state")
-        .upsert({ id: "default", imported_vaults: importedVaults, updated_at: new Date().toISOString() })
+        .upsert({ id: myRowId, user_id: authUser.id, imported_vaults: importedVaults, updated_at: new Date().toISOString() })
         .then(({ error }) => {
           if (error) console.error("가져온 Vault 저장 실패 (supabase/vaulty_schema.sql의 imported_vaults 컬럼 마이그레이션이 필요할 수 있습니다):", error);
         });
     }, 800);
     return () => clearTimeout(importedVaultsSaveTimerRef.current);
-  }, [importedVaults, dataLoaded]);
+  }, [importedVaults, dataLoaded, authUser, myRowId]);
+
+  // 회원가입 - 아이디 중복(profiles 테이블) 확인 후 Supabase Auth 계정을 만든다.
+  // 이 앱에서 처음 가입하는 계정이면(아직 아무도 연결되지 않은 'default' 행이 있다면)
+  // 그동안 로그인 없이 써오던 기존 Vault 데이터를 그대로 이 계정 데이터로 이어받는다.
+  const handleSignup = async () => {
+    const id = authIdDraft.trim();
+    const pw = authPasswordDraft;
+    if (!id || !pw || authBusy) return;
+    if (!AUTH_ID_RE.test(id)) { showToast("아이디 형식이 올바르지 않습니다"); return; }
+    setAuthBusy(true);
+    try {
+      const { data: existingProfile } = await supabase.from("profiles").select("id").eq("username", id).maybeSingle();
+      if (existingProfile) { showToast("이미 가입된 아이디입니다"); return; }
+      const email = authEmailFor(id);
+      const { data, error } = await supabase.auth.signUp({ email, password: pw });
+      if (error) {
+        showToast(/registered|exists/i.test(error.message || "") ? "이미 가입된 아이디입니다" : "회원가입에 실패했습니다");
+        return;
+      }
+      let session = data.session;
+      if (!session) {
+        const signInRes = await supabase.auth.signInWithPassword({ email, password: pw });
+        session = signInRes.data && signInRes.data.session;
+      }
+      if (!session || !data.user) { showToast("회원가입에 실패했습니다"); return; }
+      await supabase.from("profiles").insert({ id: data.user.id, username: id });
+      const { data: legacyRow } = await supabase.from("vaulty_state").select("id, user_id").eq("id", "default").maybeSingle();
+      if (legacyRow && !legacyRow.user_id) {
+        await supabase.from("vaulty_state").update({ user_id: data.user.id }).eq("id", "default");
+      } else if (!legacyRow) {
+        await supabase.from("vaulty_state").insert({ id: data.user.id, user_id: data.user.id, nickname: id });
+      }
+      await applySession(data.user);
+      setAuthIdDraft("");
+      setAuthPasswordDraft("");
+      showToast("회원가입이 완료되었습니다");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  // 로그인 - profiles에 없는 아이디면(가입 이력 없음) 바로 안내하고, 있으면 실제 인증을 시도한다.
+  const handleLogin = async () => {
+    const id = authIdDraft.trim();
+    const pw = authPasswordDraft;
+    if (!id || !pw || authBusy) return;
+    setAuthBusy(true);
+    try {
+      const { data: existingProfile } = await supabase.from("profiles").select("id").eq("username", id).maybeSingle();
+      if (!existingProfile) { showToast("회원가입을 먼저 진행해주세요"); return; }
+      const { data, error } = await supabase.auth.signInWithPassword({ email: authEmailFor(id), password: pw });
+      if (error || !data.session) { showToast("아이디 또는 비밀번호가 올바르지 않습니다"); return; }
+      await applySession(data.user);
+      setAuthIdDraft("");
+      setAuthPasswordDraft("");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    clearMyData();
+  };
 
   // 휴지통은 별도 컬럼(trash)에 저장한다. 위 저장과 분리해 둔 이유는, 이 컬럼이 아직
   // 없는(마이그레이션 전) 환경에서 이 upsert가 실패하더라도 vaults/folders/files 등
@@ -563,13 +697,18 @@ export default function Alloy() {
     setNicknameDraft(nickname);
     setNicknameEditing(true);
   };
-  const commitNickname = () => {
+  const commitNickname = async () => {
     const trimmed = nicknameDraft.trim();
     setNicknameEditing(false);
-    if (trimmed && trimmed !== nickname) {
-      setNickname(trimmed);
-      showToast("변경사항이 저장되었습니다");
+    if (!trimmed || trimmed === nickname) return;
+    // 다른 계정(행)이 이미 쓰고 있는 닉네임이면 변경을 취소하고 안내한다.
+    const { data } = await supabase.from("vaulty_state").select("id").eq("nickname", trimmed).neq("id", myRowId).limit(1);
+    if (data && data.length > 0) {
+      showToast("사용중인 닉네임입니다");
+      return;
     }
+    setNickname(trimmed);
+    showToast("변경사항이 저장되었습니다");
   };
 
   // 커뮤니티 - 지금은 "게시판" 하나만 있는 리스트형 게시판. 글 작성/수정은 전체화면
@@ -628,6 +767,8 @@ export default function Alloy() {
   // 게시글 삼점 메뉴 - 수정/삭제만 있는 간단한 버전. itemMenuOpen 등 기존 삼점 메뉴
   // 인프라를 type: "post"로 그대로 재사용한다.
   const renderPostMenu = (post) => {
+    // 비로그인 상태에서는 게시글 읽기만 가능해야 하므로 수정/삭제 메뉴 자체를 숨긴다.
+    if (!authUser) return null;
     const isOpen = itemMenuOpen && itemMenuOpen.type === "post" && itemMenuOpen.id === post.id;
     const isVisible = itemMenuVisibleKey === `post-${post.id}`;
     return (
@@ -1259,7 +1400,13 @@ export default function Alloy() {
   const createVault = () => {
     if (vaultNameInput.trim()) {
       const now = Date.now();
-      setVaults((prev) => [...prev, { id: now, name: vaultNameInput.trim(), createdAt: now, updatedAt: now }]);
+      const trimmedName = vaultNameInput.trim();
+      // 최초 주소는 Vault 이름을 그대로 쓴다 - 이름이 주소 형식(영문 2~10자)에 맞고
+      // 다른 Vault가 이미 쓰고 있지 않을 때만 자동 설정하고, 아니면 비워 둔 채로
+      // 만들어 나중에 설정(잠금/주소) 모달에서 직접 정할 수 있게 한다.
+      const initialAddress =
+        ADDRESS_RE.test(trimmedName) && !vaults.some((v) => v.address === trimmedName) ? trimmedName : "";
+      setVaults((prev) => [...prev, { id: now, name: trimmedName, address: initialAddress, createdAt: now, updatedAt: now }]);
     }
     closeVaultModal();
   };
@@ -2523,7 +2670,7 @@ export default function Alloy() {
           )}
 
           {/* 업로드 버튼 - 하단 검색 버튼과 동일한 크기(BAR_HEIGHT)의 리퀴드 글래스 원형 + 애니메이션. */}
-          {active === 0 && !tagScreenTags.length && !textEditorFile && (
+          {active === 0 && !tagScreenTags.length && !textEditorFile && authUser && (
             <div style={{ position: "relative" }}>
               <button
                 ref={uploadButtonRef}
@@ -2717,12 +2864,31 @@ export default function Alloy() {
           )}
         </div>
 
+        {/* 로그인 게이트 - 웹드라이브(Vault/폴더/파일)는 로그인 계정 전용 데이터라
+            로그인하지 않은 상태에서는 홈 탭 콘텐츠 전체 대신 안내만 보여준다.
+            로딩이 끝나기 전(authLoading)에는 깜빡임을 피하려 아무것도 보여주지 않는다. */}
+        {active === 0 && !textEditorFile && !authLoading && !authUser && (
+          <div
+            style={{
+              padding: "64px 0",
+              textAlign: "center",
+              color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+              fontSize: 14,
+            }}
+          >
+            로그인이 필요합니다
+            <div style={{ marginTop: 6, fontSize: 12, color: isLight ? "rgba(20,22,26,0.32)" : "rgba(255,255,255,0.32)" }}>
+              설정 탭에서 로그인해주세요
+            </div>
+          </div>
+        )}
+
         {/* 홈 탭 콘텐츠 - tagScreenTags가 설정돼 있으면(태그 팔레트/분류 모달에서 고른 상태) 아래
             IIFE 안에서 "분류" 화면을 최우선으로 렌더링한다(renderRow 등을 그대로 재사용하기
             위해 이 블록 안에 둔다). 텍스트 에디터가 열려 있는 동안은 전체화면 오버레이에
             완전히 가려지는 데다, 매 타이핑마다 이 무거운 목록 전체가 다시 계산/렌더되면서
             입력이 밀리는 원인이 되므로 아예 렌더링을 건너뛴다. */}
-        {active === 0 && !textEditorFile && (
+        {active === 0 && !textEditorFile && authUser && (
           <>
             {/* 경로 표기 및 정렬/보기 방식 아이콘 영역 - "분류" 화면에서는 마법사 버튼,
                 경로 표시 텍스트, 구분선 없이 곧바로 목록만 보여준다. */}
@@ -3853,7 +4019,10 @@ export default function Alloy() {
               </div>
 
               <button
-                onClick={() => openPostEditor(null)}
+                onClick={() => {
+                  if (!authUser) { showToast("로그인이 필요합니다"); return; }
+                  openPostEditor(null);
+                }}
                 onMouseDown={pressDown("scale(0.9)")}
                 onMouseUp={pressUp("scale(1)")}
                 aria-label="게시글 작성"
@@ -3906,25 +4075,54 @@ export default function Alloy() {
                   </div>
                 )}
               </div>
-            ) : posts.length === 0 ? (
-              <div
-                style={{
-                  padding: "48px 0",
-                  textAlign: "center",
-                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
-                  fontSize: 14,
-                }}
-              >
-                아직 게시글이 없습니다
-              </div>
-            ) : (
-              posts
-                .slice()
-                .sort((a, b) => b.createdAt - a.createdAt)
-                .map((post) => (
+            ) : (() => {
+              // 검색 - 홈 탭과 같은 로직: 검색어가 있으면 지금 목록 대신 그 게시글
+              // 제목에 검색어가 포함된 게시글만 보여준다. 누르면 검색을 닫고 바로 그
+              // 글 상세로 들어간다(홈 탭에서 항목을 눌러 위치로 이동하는 것과 동일).
+              const trimmedQuery = searchQuery.trim().toLowerCase();
+              const source = trimmedQuery
+                ? posts.filter((p) => (p.title || "").toLowerCase().includes(trimmedQuery))
+                : posts;
+              if (trimmedQuery && source.length === 0) {
+                return (
                   <div
-                    key={post.id}
-                    onClick={() => setViewingPostId(post.id)}
+                    style={{
+                      padding: "48px 0",
+                      textAlign: "center",
+                      color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                      fontSize: 14,
+                    }}
+                  >
+                    검색 결과가 없습니다
+                  </div>
+                );
+              }
+              if (!trimmedQuery && source.length === 0) {
+                return (
+                  <div
+                    style={{
+                      padding: "48px 0",
+                      textAlign: "center",
+                      color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                      fontSize: 14,
+                    }}
+                  >
+                    아직 게시글이 없습니다
+                  </div>
+                );
+              }
+              // 검색 패널이 열려 있는 동안 화면 전체를 덮는 백드롭(zIndex 9)이 결과 목록
+              // 위를 가로막지 않도록, 검색 중일 때만 그보다 높은 zIndex의 별도 쌓임
+              // 맥락으로 렌더링한다(홈 탭 검색 결과와 동일한 패턴).
+              return (
+                <div style={trimmedQuery ? { position: "relative", zIndex: 11 } : undefined}>
+                  {source
+                    .slice()
+                    .sort((a, b) => b.createdAt - a.createdAt)
+                    .map((post) => (
+                      <div
+                        key={post.id}
+                        onClick={() => { setViewingPostId(post.id); if (trimmedQuery) toggleSearch(); }}
                     onMouseDown={pressDown("scale(0.98)")}
                     onMouseUp={pressUp("none")}
                     onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
@@ -3967,8 +4165,10 @@ export default function Alloy() {
                     </div>
                     {renderPostMenu(post)}
                   </div>
-                ))
-            )}
+                    ))}
+                </div>
+              );
+            })()}
           </>
           );
         })()}
@@ -3986,6 +4186,113 @@ export default function Alloy() {
             >
               설정
             </div>
+
+            {/* 계정 카드 - 프로필 카드 바로 위, 로그아웃 상태에서만 보인다. 아이디/비밀번호
+                인풋(플레이스홀더 없음) + 우측 끝 회원가입/로그인 버튼. 회원가입이 끝나면
+                이 카드는 사라지고 버전 카드 쪽에 아이디/로그아웃이 대신 나타난다. */}
+            {!authUser && (
+              <div
+                style={{
+                  borderRadius: 14,
+                  background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                  padding: "14px 18px",
+                }}
+              >
+                <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 10 }}>
+                  계정
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
+                    아이디
+                  </span>
+                  <input
+                    type="text"
+                    value={authIdDraft}
+                    onChange={(e) => setAuthIdDraft(e.target.value)}
+                    maxLength={20}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: 0,
+                      border: "none",
+                      borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
+                      background: "transparent",
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 16,
+                      fontWeight: 500,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
+                    비밀번호
+                  </span>
+                  <input
+                    type="password"
+                    value={authPasswordDraft}
+                    onChange={(e) => setAuthPasswordDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
+                    maxLength={40}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: 0,
+                      border: "none",
+                      borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
+                      background: "transparent",
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 16,
+                      fontWeight: 500,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button
+                    onClick={handleSignup}
+                    disabled={authBusy}
+                    style={{
+                      padding: "7px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                      background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: authBusy ? "default" : "pointer",
+                      outline: "none",
+                      opacity: authBusy ? 0.6 : 1,
+                    }}
+                  >
+                    회원가입
+                  </button>
+                  <button
+                    onClick={handleLogin}
+                    disabled={authBusy}
+                    style={{
+                      padding: "7px 14px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: isLight ? "#14161A" : "#FFFFFF",
+                      color: isLight ? "#FFFFFF" : "#14161A",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: authBusy ? "default" : "pointer",
+                      outline: "none",
+                      opacity: authBusy ? 0.6 : 1,
+                    }}
+                  >
+                    로그인
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* 프로필 카드 - 테마 카드 바로 위, 별도 테두리. 닉네임 오른쪽 연필 아이콘을
                 누르면 인풋으로 바뀌고, 포커스를 벗어나거나 Enter를 누르면 확인 버튼 없이
@@ -4395,6 +4702,32 @@ export default function Alloy() {
               <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
                 버전
               </div>
+              {/* 로그인 상태에서는 버전 텍스트 바로 위에 같은 글씨로 아이디를, 그 바로 밑에
+                  로그아웃을 보여준다. 회원가입 완료 시 계정 카드 대신 여기에 나타난다. */}
+              {authUser && (
+                <div style={{ marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
+                    {authUser.username}
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      marginTop: 2,
+                      padding: 0,
+                      border: "none",
+                      background: "none",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                      cursor: "pointer",
+                      outline: "none",
+                      textDecoration: "underline",
+                    }}
+                  >
+                    로그아웃
+                  </button>
+                </div>
+              )}
               <div style={{ textAlign: "left" }}>
                 <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)" }}>
                   Vaulty v{APP_VERSION}
@@ -5641,7 +5974,7 @@ export default function Alloy() {
             >
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
                 <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                  내 Vaulty에서 가져오기
+                  가져오기
                 </h2>
                 <button
                   onClick={closeAttachPicker}

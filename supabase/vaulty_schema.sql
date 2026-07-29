@@ -46,3 +46,35 @@ drop policy if exists "Anyone can update vaulty state" on public.vaulty_state;
 create policy "Anyone can update vaulty state"
   on public.vaulty_state for update
   using (true);
+
+-- ── 회원가입/로그인(v0.1.55) ──────────────────────────────────────────────
+-- 계정(로그인)이 생기면서 vaulty_state의 각 행이 특정 로그인 계정(auth.users)에
+-- 연결된다. 기존에 로그인 없이 쓰던 'default' 행은 그대로 두고, 그 계정이
+-- 처음 회원가입하는 순간 앱 코드가 이 컬럼을 채워 "내 데이터"로 이어받는다.
+alter table public.vaulty_state add column if not exists user_id uuid references auth.users(id);
+create unique index if not exists vaulty_state_user_id_key on public.vaulty_state(user_id) where user_id is not null;
+
+-- 아이디(username) <-> 로그인 계정 매핑. username에 유니크 제약이 걸려 있어
+-- 회원가입 시 중복 아이디를 이 테이블로 바로 확인할 수 있다.
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  username text not null unique,
+  created_at timestamptz not null default now()
+);
+
+alter table public.profiles enable row level security;
+
+drop policy if exists "Anyone can read profiles" on public.profiles;
+create policy "Anyone can read profiles"
+  on public.profiles for select
+  using (true);
+
+drop policy if exists "Users can insert own profile" on public.profiles;
+create policy "Users can insert own profile"
+  on public.profiles for insert
+  with check (auth.uid() = id);
+
+drop policy if exists "Users can update own profile" on public.profiles;
+create policy "Users can update own profile"
+  on public.profiles for update
+  using (auth.uid() = id);
