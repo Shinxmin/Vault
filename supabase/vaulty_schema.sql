@@ -47,38 +47,17 @@ create policy "Anyone can update vaulty state"
   on public.vaulty_state for update
   using (true);
 
--- ── 회원가입/로그인(v0.1.55) ──────────────────────────────────────────────
--- 계정(로그인)이 생기면서 vaulty_state의 각 행이 특정 로그인 계정(auth.users)에
--- 연결된다. 기존에 로그인 없이 쓰던 'default' 행은 그대로 두고, 그 계정이
--- 처음 회원가입하는 순간 앱 코드가 이 컬럼을 채워 "내 데이터"로 이어받는다.
+-- ── 로그인(v0.1.57) ──────────────────────────────────────────────────────
+-- 개인 웹사이트라 회원가입 화면은 없다 - Supabase 대시보드(Authentication > Users)에
+-- 미리 등록해 둔 계정으로만 로그인할 수 있다. vaulty_state의 각 행이 로그인 계정
+-- (auth.users)에 연결되며, 기존에 로그인 없이 쓰던 'default' 행은 그대로 두고 그
+-- 계정이 처음 로그인하는 순간 앱 코드가 이 컬럼을 채워 "내 데이터"로 자동으로
+-- 이어받는다(수동으로 연결해야 한다면 아래 UPDATE 문 참고).
 alter table public.vaulty_state add column if not exists user_id uuid references auth.users(id);
 create unique index if not exists vaulty_state_user_id_key on public.vaulty_state(user_id) where user_id is not null;
 
--- 아이디(username) <-> 로그인 계정 매핑. username에 유니크 제약이 걸려 있어
--- 회원가입 시 중복 아이디를 이 테이블로 바로 확인할 수 있다.
--- 이름을 "profiles"가 아니라 "vaulty_profiles"로 둔 이유 - Supabase 프로젝트에
--- 이미 다른 용도의(다른 컬럼 구조를 가진) "profiles" 테이블/뷰가 있는 경우가 흔해서,
--- 이름이 겹치면 create table if not exists가 기존 것을 그대로 두고 넘어가버려
--- 뒤 정책(policy)에서 컬럼이 없다는 에러(42703)가 난다. 겹칠 일이 없는 이름을 쓴다.
-create table if not exists public.vaulty_profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
-  username text not null unique,
-  created_at timestamptz not null default now()
-);
-
-alter table public.vaulty_profiles enable row level security;
-
-drop policy if exists "Anyone can read vaulty profiles" on public.vaulty_profiles;
-create policy "Anyone can read vaulty profiles"
-  on public.vaulty_profiles for select
-  using (true);
-
-drop policy if exists "Users can insert own vaulty profile" on public.vaulty_profiles;
-create policy "Users can insert own vaulty profile"
-  on public.vaulty_profiles for insert
-  with check (auth.uid() = id);
-
-drop policy if exists "Users can update own vaulty profile" on public.vaulty_profiles;
-create policy "Users can update own vaulty profile"
-  on public.vaulty_profiles for update
-  using (auth.uid() = id);
+-- 참고 - 'default' 행을 특정 계정에 수동으로 즉시 연결하고 싶다면(자동 연결을 기다리지
+-- 않고) 아래처럼 실행할 수 있습니다. YOUR_EMAIL 부분만 실제 등록한 이메일로 바꾸세요.
+-- update public.vaulty_state
+--   set user_id = (select id from auth.users where email = 'YOUR_EMAIL')
+--   where id = 'default';
