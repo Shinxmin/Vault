@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.60";
+const APP_VERSION = "0.1.61";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1630,11 +1630,13 @@ export default function Alloy() {
                 onClick={() => setCurrentPath([])}
                 style={{
                   margin: 0,
+                  height: TOP_BUTTON_SIZE,
+                  display: "flex",
+                  alignItems: "center",
                   fontSize: 26,
                   fontWeight: 700,
                   color: isLight ? "#14161A" : "#FFFFFF",
                   letterSpacing: 0.2,
-                  minHeight: "1em",
                   flexShrink: 0,
                   cursor: "pointer",
                 }}
@@ -2928,97 +2930,6 @@ export default function Alloy() {
             <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 24px 20px" }}>
             {!trashScreenOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {/* 계정 카드 - 프로필 카드 바로 위, 로그아웃 상태에서만 보인다. 개인 웹사이트라
-                회원가입은 없고 Supabase에 미리 등록해 둔 계정(이메일/비밀번호)으로만
-                로그인할 수 있다. 로그인이 끝나면 이 카드는 사라지고 버전 카드 쪽에
-                이메일/로그아웃이 대신 나타난다. */}
-            {!authUser && (
-              <div
-                style={{
-                  borderRadius: 14,
-                  background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                  backdropFilter: "blur(20px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                  padding: "14px 18px",
-                }}
-              >
-                <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 10 }}>
-                  계정
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
-                    이메일
-                  </span>
-                  <input
-                    type="text"
-                    value={authIdDraft}
-                    onChange={(e) => setAuthIdDraft(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
-                    maxLength={60}
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      padding: 0,
-                      border: "none",
-                      borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
-                      background: "transparent",
-                      color: isLight ? "#14161A" : "#FFFFFF",
-                      fontSize: 16,
-                      fontWeight: 500,
-                      outline: "none",
-                    }}
-                  />
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
-                    비밀번호
-                  </span>
-                  <input
-                    type="password"
-                    value={authPasswordDraft}
-                    onChange={(e) => setAuthPasswordDraft(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
-                    maxLength={40}
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      padding: 0,
-                      border: "none",
-                      borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
-                      background: "transparent",
-                      color: isLight ? "#14161A" : "#FFFFFF",
-                      fontSize: 16,
-                      fontWeight: 500,
-                      outline: "none",
-                    }}
-                  />
-                </div>
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                  <button
-                    onClick={handleLogin}
-                    disabled={authBusy}
-                    style={{
-                      padding: "7px 14px",
-                      borderRadius: 8,
-                      border: "none",
-                      background: isLight ? "#14161A" : "#FFFFFF",
-                      color: isLight ? "#FFFFFF" : "#14161A",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: authBusy ? "default" : "pointer",
-                      outline: "none",
-                      opacity: authBusy ? 0.6 : 1,
-                    }}
-                  >
-                    로그인
-                  </button>
-                </div>
-              </div>
-            )}
-
             <div
               style={{
                 borderRadius: 14,
@@ -3274,9 +3185,8 @@ export default function Alloy() {
             </div>
 
             {/* 청구 금액 - 저장 공간 카드 바로 아래. 설정한 한도가 아니라 지금 실제로 쓰고
-                있는 용량 기준이다. 제목("청구 금액") 자체를 누르면 요금 안내 패널이 뜬다
-                (예전 "모든 요금제를 확인하세요" 링크 텍스트는 없애고 이 제목으로 기능을
-                옮겼다). 사용량이 기본 10GB 이하면 아무 텍스트도 보여주지 않는다. */}
+                있는 용량 기준이다. 제목 밑의 "요금 안내" 작은 링크를 누르면 요금 안내
+                패널이 뜬다. 사용량이 기본 10GB 이하면 금액 텍스트를 보여주지 않는다. */}
             <div
               style={{
                 borderRadius: 14,
@@ -3287,38 +3197,43 @@ export default function Alloy() {
                 padding: "14px 18px",
               }}
             >
+              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
+                청구 금액
+              </div>
+              {billingOverageGB > 0 && (
+                <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                  {billingOverageGB % 1 === 0 ? billingOverageGB : billingOverageGB.toFixed(1)}GB ({billingAmount.toFixed(2)}$/월)
+                </div>
+              )}
               <button
                 ref={pricingButtonRef}
                 onClick={showPricingInfo}
                 disabled={pricingInfoOpen}
                 style={{
                   display: "block",
+                  marginTop: 4,
                   padding: 0,
-                  marginBottom: 6,
                   border: "none",
                   background: "transparent",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 12,
+                  color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
                   cursor: pricingInfoOpen ? "default" : "pointer",
                   outline: "none",
-                  opacity: pricingInfoOpen ? 0.5 : 1,
                   textDecoration: "underline",
                   textUnderlineOffset: 2,
-                  transition: "opacity 0.3s ease",
+                  opacity: pricingInfoOpen ? 0.5 : 1,
+                  transition: "opacity 0.3s ease, color 0.2s ease",
                 }}
+                onMouseEnter={(e) => { if (!pricingInfoOpen) e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"; }}
               >
-                청구 금액
+                요금 안내
               </button>
-              {billingOverageGB > 0 && (
-                <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                  {billingOverageGB % 1 === 0 ? billingOverageGB : billingOverageGB.toFixed(1)}GB ({billingAmount.toFixed(2)}$/월)
-                </div>
-              )}
             </div>
 
-            {/* 계정(로그인 상태) 카드 - 위쪽 로그인 카드는 로그아웃 상태에서만 보이고,
-                로그인 상태에서는 여기에 로그아웃 버튼만 보여준다(아이디/버전 표기는 없다). */}
+            {/* 계정 카드 - 로그인 상태에서는 로그아웃 버튼, 로그아웃 상태에서는 로그인 폼을
+                같은 위치(청구 금액 카드 바로 아래)에 보여준다. 개인 웹사이트라 회원가입은
+                없고 Supabase에 미리 등록해 둔 계정(이메일/비밀번호)으로만 로그인할 수 있다. */}
             {authUser && (
               <div
                 style={{
@@ -3356,6 +3271,93 @@ export default function Alloy() {
                 >
                   로그아웃
                 </button>
+              </div>
+            )}
+
+            {!authUser && (
+              <div
+                style={{
+                  borderRadius: 14,
+                  background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                  backdropFilter: "blur(20px) saturate(180%)",
+                  WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                  padding: "14px 18px",
+                }}
+              >
+                <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 10 }}>
+                  계정
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
+                    이메일
+                  </span>
+                  <input
+                    type="text"
+                    value={authIdDraft}
+                    onChange={(e) => setAuthIdDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
+                    maxLength={60}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    style={{
+                      flex: "0 0 50%",
+                      minWidth: 0,
+                      padding: 0,
+                      border: "none",
+                      borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
+                      background: "transparent",
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 16,
+                      fontWeight: 500,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
+                    비밀번호
+                  </span>
+                  <input
+                    type="password"
+                    value={authPasswordDraft}
+                    onChange={(e) => setAuthPasswordDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
+                    maxLength={40}
+                    style={{
+                      flex: "0 0 50%",
+                      minWidth: 0,
+                      padding: 0,
+                      border: "none",
+                      borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"}`,
+                      background: "transparent",
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 16,
+                      fontWeight: 500,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button
+                    onClick={handleLogin}
+                    disabled={authBusy}
+                    style={{
+                      padding: "7px 14px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: isLight ? "#14161A" : "#FFFFFF",
+                      color: isLight ? "#FFFFFF" : "#14161A",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: authBusy ? "default" : "pointer",
+                      outline: "none",
+                      opacity: authBusy ? 0.6 : 1,
+                    }}
+                  >
+                    로그인
+                  </button>
+                </div>
               </div>
             )}
           </div>
