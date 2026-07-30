@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.61";
+const APP_VERSION = "0.1.62";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1991,8 +1991,8 @@ export default function Alloy() {
                   onClick={handleAddButton}
                   onMouseDown={pressDown("scale(0.9)")}
                   onMouseUp={pressUp("scale(1)")}
-                  aria-label="업로드"
-                  title="업로드"
+                  aria-label={currentPath.length === 0 ? "새 프로젝트" : "업로드"}
+                  title={currentPath.length === 0 ? "새 프로젝트" : "업로드"}
                   style={{
                     minWidth: 36,
                     height: 30,
@@ -2025,7 +2025,7 @@ export default function Alloy() {
                       <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
                   )}
-                  업로드
+                  {currentPath.length === 0 ? "새 프로젝트" : "업로드"}
                 </button>
 
                 {/* 숨겨진 파일 입력 - 이미지·움짤만 받는다 */}
@@ -4305,7 +4305,7 @@ export default function Alloy() {
       )}
 
       {/* 변환(일괄 이름 변경) 모달 - 체크한 항목들의 이름을 한 번에 바꾼다.
-          목록은 300px 넘으면 스크롤, 지우기/추가로 미리보기 이름을 만들고 변환으로 확정한다. */}
+          목록은 300px 넘으면 스크롤, 지우기/추가로 미리보기 이름을 만들고 적용으로 확정한다. */}
       {convertModalOpen && (
         <>
           <div
@@ -4560,7 +4560,7 @@ export default function Alloy() {
               onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
               onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
             >
-              변환
+              적용
             </button>
           </div>
         </>
