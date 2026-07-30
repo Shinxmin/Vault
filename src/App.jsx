@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.62";
+const APP_VERSION = "0.1.63";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1280,8 +1280,31 @@ export default function Alloy() {
 
   // 실제 갤러리/파일 선택 다이얼로그(input[type=file])를 통해 고른 항목을 R2에 업로드하고
   // 성공한 것만 현재 위치(currentPath)에 추가한다. 지원 형식(JPG/JPEG/PNG/GIF/APNG/WEBP/TXT)만 받는다.
-  // 업로드는 이 함수가 아니라 브라우저가 presigned URL로 R2에 직접 PUT한다.
-  const [uploadingCount, setUploadingCount] = useState(0);
+  // 동시에 최대 UPLOAD_CONCURRENCY개만 실제로 전송하고(진행), 나머지는 차례를 기다리며(대기),
+  // 각 파일의 업로드 현황(진행/완료/대기)은 uploadQueue로 관리해 하단 우측 업로드 현황 패널에 보여준다.
+  const UPLOAD_CONCURRENCY = 3;
+  const [uploadQueue, setUploadQueue] = useState([]); // [{ qid, name, size, loaded, status: 'queued'|'uploading'|'done'|'error' }]
+  const [uploadPanelClosed, setUploadPanelClosed] = useState(false);
+  const formatMB = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+
+  // XMLHttpRequest만 업로드 진행률(upload.onprogress)을 제공한다 - fetch는 요청 바디 전송
+  // 진행률을 알려주지 않는다.
+  const putFileWithProgress = (url, file, onProgress) =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url);
+      xhr.setRequestHeader("content-type", file.type);
+      xhr.upload.onprogress = (evt) => {
+        if (evt.lengthComputable) onProgress(evt.loaded);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`업로드 실패 (${xhr.status})`));
+      };
+      xhr.onerror = () => reject(new Error("업로드 실패"));
+      xhr.send(file);
+    });
+
   const handleFilesPicked = async (e) => {
     const selected = Array.from(e.target.files || []);
     e.target.value = "";
@@ -1298,33 +1321,52 @@ export default function Alloy() {
       return;
     }
 
-    setUploadingCount((c) => c + toUpload.length);
-    const results = await Promise.all(
-      toUpload.map(async ({ file, kind }) => {
-        const id = Date.now() + Math.random();
-        const r2Key = `${id}-${encodeURIComponent(file.name)}`;
-        try {
-          const { url: putUrl } = await r2Presign({ action: "put", key: r2Key, contentType: file.type });
-          const putResp = await fetch(putUrl, { method: "PUT", body: file, headers: { "content-type": file.type } });
-          if (!putResp.ok) throw new Error(`업로드 실패 (${putResp.status})`);
-          let url = null;
-          if (kind === "image") {
-            const presigned = await r2Presign({ action: "get", key: r2Key });
-            url = presigned.url;
-          }
-          const now = Date.now();
-          const { base, ext } = splitNameExt(file.name);
-          return { id, name: base, ext, size: file.size, mimeType: file.type, kind, r2Key, url, path: currentPath, createdAt: now, updatedAt: now };
-        } catch (err) {
-          console.error("파일 업로드 실패:", file.name, err);
-          return null;
-        } finally {
-          setUploadingCount((c) => c - 1);
+    const queueItems = toUpload.map(({ file, kind }) => ({
+      qid: `${Date.now()}-${Math.random()}`,
+      file,
+      kind,
+      name: file.name,
+      size: file.size,
+      loaded: 0,
+      status: "queued",
+    }));
+    setUploadQueue(queueItems.map(({ file, kind, ...rest }) => rest));
+    setUploadPanelClosed(false);
+
+    const updateItem = (qid, patch) => {
+      setUploadQueue((prev) => prev.map((it) => (it.qid === qid ? { ...it, ...patch } : it)));
+    };
+
+    let cursor = 0;
+    const runNext = async () => {
+      const idx = cursor++;
+      if (idx >= queueItems.length) return;
+      const { qid, file, kind, size } = queueItems[idx];
+      updateItem(qid, { status: "uploading" });
+      const id = Date.now() + Math.random();
+      const r2Key = `${id}-${encodeURIComponent(file.name)}`;
+      let accepted = null;
+      try {
+        const { url: putUrl } = await r2Presign({ action: "put", key: r2Key, contentType: file.type });
+        await putFileWithProgress(putUrl, file, (loaded) => updateItem(qid, { loaded }));
+        let url = null;
+        if (kind === "image") {
+          const presigned = await r2Presign({ action: "get", key: r2Key });
+          url = presigned.url;
         }
-      })
-    );
-    const accepted = results.filter(Boolean);
-    if (accepted.length) setFiles((prev) => [...prev, ...accepted]);
+        const now = Date.now();
+        const { base, ext } = splitNameExt(file.name);
+        accepted = { id, name: base, ext, size, mimeType: file.type, kind, r2Key, url, path: currentPath, createdAt: now, updatedAt: now };
+        updateItem(qid, { status: "done", loaded: size });
+      } catch (err) {
+        console.error("파일 업로드 실패:", file.name, err);
+        updateItem(qid, { status: "error" });
+      }
+      if (accepted) setFiles((prev) => [...prev, accepted]);
+      await runNext();
+    };
+
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, queueItems.length) }, runNext));
   };
 
   const deleteFile = (fileId) => {
@@ -2015,7 +2057,7 @@ export default function Alloy() {
                   onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
                   onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
                 >
-                  {uploadingCount > 0 ? (
+                  {uploadQueue.some((it) => it.status === "queued" || it.status === "uploading") ? (
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: "vaulty-spin 0.8s linear infinite" }}>
                       <path d="M12 3a9 9 0 1 0 9 9" />
                     </svg>
@@ -4268,6 +4310,122 @@ export default function Alloy() {
           }}
         >
           {toastMessage}
+        </div>
+      )}
+
+      {/* 업로드 현황 패널 - 화면 우측 하단에 떠서 파일별 진행/완료/대기 상태와 전송량을
+          보여준다. 업로드가 새로 시작되면 다시 나타나고, X를 누르면 닫힌다(업로드 자체는
+          백그라운드에서 계속된다). */}
+      {uploadQueue.length > 0 && !uploadPanelClosed && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            width: 280,
+            maxWidth: "calc(100vw - 48px)",
+            borderRadius: 16,
+            background: isLight ? "rgba(255,255,255,0.85)" : "rgba(30,29,28,0.9)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            WebkitBackdropFilter: "blur(20px) saturate(180%)",
+            border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+            zIndex: 45,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "12px 14px",
+              borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)"}`,
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ fontSize: 14, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>업로드</span>
+            <button
+              onClick={() => setUploadPanelClosed(true)}
+              aria-label="닫기"
+              style={{
+                width: 22,
+                height: 22,
+                flexShrink: 0,
+                border: "none",
+                background: "transparent",
+                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                cursor: "pointer",
+                outline: "none",
+                borderRadius: 6,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="6" y1="6" x2="18" y2="18" />
+                <line x1="18" y1="6" x2="6" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div style={{ overflowY: "auto", maxHeight: 260, padding: "4px 0" }}>
+            {uploadQueue.map((item) => (
+              <div
+                key={item.qid}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "7px 14px",
+                  fontSize: 12.5,
+                }}
+              >
+                <span
+                  style={{
+                    flexShrink: 0,
+                    width: 28,
+                    fontWeight: 600,
+                    color: item.status === "error"
+                      ? "#ff6b6b"
+                      : item.status === "done"
+                        ? (isLight ? "#14161A" : "#FFFFFF")
+                        : (isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)"),
+                  }}
+                >
+                  {item.status === "queued" && "대기"}
+                  {item.status === "uploading" && "진행"}
+                  {item.status === "done" && "완료"}
+                  {item.status === "error" && "실패"}
+                </span>
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                  }}
+                >
+                  {item.name}
+                </span>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 11.5,
+                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                  }}
+                >
+                  ({formatMB(item.loaded)}/{formatMB(item.size)})
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
