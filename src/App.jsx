@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.59";
+const APP_VERSION = "0.1.60";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1704,9 +1704,9 @@ export default function Alloy() {
                     transform: settingsButtonHovered ? "scale(1.08)" : "scale(1)",
                   }}
                 >
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="12" cy="8" r="4" />
-                    <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
+                    <path d="M4 21a8 8 0 0 1 16 0z" />
                   </svg>
                 </button>
               </div>
@@ -2919,9 +2919,9 @@ export default function Alloy() {
                   transform: trashCloseButtonHovered ? "scale(1.08)" : "scale(1)",
                 }}
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                   <circle cx="12" cy="8" r="4" />
-                  <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
+                  <path d="M4 21a8 8 0 0 1 16 0z" />
                 </svg>
               </button>
             </div>
@@ -3303,6 +3303,8 @@ export default function Alloy() {
                   cursor: pricingInfoOpen ? "default" : "pointer",
                   outline: "none",
                   opacity: pricingInfoOpen ? 0.5 : 1,
+                  textDecoration: "underline",
+                  textUnderlineOffset: 2,
                   transition: "opacity 0.3s ease",
                 }}
               >
