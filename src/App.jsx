@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.65";
+const APP_VERSION = "0.1.66";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -2536,7 +2536,7 @@ export default function Alloy() {
               const renderImageGrid = (imagesArray, marginTop) => {
                 if (imagesArray.length === 0) return null;
                 return (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginTop }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", alignItems: "start", gap: 8, marginTop }}>
                     {imagesArray.map((img) => {
                       const isPickedUp = draggingItem && draggingItem.type === "file" && draggingItem.id === img.id;
                       return (
