@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.64";
+const APP_VERSION = "0.1.65";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -28,7 +28,7 @@ export default function Alloy() {
 
   const [theme, setTheme] = useState("dark"); // "dark" | "light" | "sunset" | "forest"
   const THEME_SWATCHES = {
-    light: "#FFFFFF",
+    light: "#FAF9F5",
     dark: "#141413",
     sunset: "radial-gradient(circle at 50% 50%, #47301e 0%, #2a1f1a 55%, #17191D 95%)",
     forest: "radial-gradient(circle at 50% 50%, #1f3d28 0%, #1a2a20 55%, #17191D 95%)",
@@ -99,6 +99,10 @@ export default function Alloy() {
   const BAR_HEIGHT = 58;
   // 홈 탭의 추가하기(+) 버튼과 휴지통 화면의 닫기(X) 버튼 크기 - 검색 버튼(BAR_HEIGHT)의 2/3.
   const TOP_BUTTON_SIZE = Math.round((BAR_HEIGHT * 2) / 3);
+  // 데스크탑처럼 넓은 화면에서 콘텐츠(홈 탭/설정 화면)가 가로로 무한정 늘어나지 않도록
+  // 이 폭에서 잘라내고 가운데 정렬한다. 화면 배경(고정 배경 레이어)은 이 폭과 무관하게 항상
+  // 뷰포트 전체를 채운다.
+  const CONTENT_MAX_WIDTH = 640;
 
   // 상단 헤더 중앙의 검색창 - 항상 떠 있는 인라인 입력창(예전처럼 버튼을 눌러 열고 닫는
   // 패널이 아니다). 검색어가 있으면 홈 탭 메인 섹션이 현재 위치와 상관없이 이름에
@@ -1578,7 +1582,7 @@ export default function Alloy() {
           margin: 0;
           padding: 0;
           min-height: 100%;
-          background: ${isLight ? "#FFFFFF" : "#141413"};
+          background: ${isLight ? "#FAF9F5" : "#141413"};
         }
         @keyframes vaulty-spin {
           from { transform: rotate(0deg); }
@@ -1603,11 +1607,14 @@ export default function Alloy() {
         }}
       />
 
-      {/* 탭 콘텐츠 영역 */}
+      {/* 탭 콘텐츠 영역 - 데스크탑 등 넓은 화면에서는 CONTENT_MAX_WIDTH에서 잘라 가운데
+          정렬한다(뒤의 고정 배경 레이어는 계속 화면 전체를 채운다). */}
       <div
         style={{
           minHeight: vh,
           width: "100%",
+          maxWidth: CONTENT_MAX_WIDTH,
+          margin: "0 auto",
           boxSizing: "border-box",
           padding: "0 20px 140px 20px",
         }}
@@ -2902,12 +2909,25 @@ export default function Alloy() {
               left: 0,
               right: 0,
               bottom: 0,
-              background: isLight ? "#FFFFFF" : "#141413",
+              background: isLight ? "#FAF9F5" : "#141413",
               zIndex: 49,
               display: "flex",
               flexDirection: "column",
             }}
           >
+            {/* 데스크탑 등 넓은 화면에서 설정/휴지통 내용도 CONTENT_MAX_WIDTH에서 잘라
+                가운데 정렬한다 - 바깥 배경(위 div)은 계속 화면 전체를 채운다. */}
+            <div
+              style={{
+                width: "100%",
+                maxWidth: CONTENT_MAX_WIDTH,
+                margin: "0 auto",
+                minHeight: 0,
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
             <div
               style={{
                 flexShrink: 0,
@@ -3680,6 +3700,7 @@ export default function Alloy() {
           </div>
             )}
             </div>
+          </div>
           </div>
         )}
 
