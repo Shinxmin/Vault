@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.66";
+const APP_VERSION = "0.1.67";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -713,6 +713,10 @@ export default function Alloy() {
     return sorted;
   };
 
+  // 검색 결과/"분류" 화면 전용 정렬 - 현재 정렬 모드(사용자 지정 드래그 순서 포함)와 무관하게
+  // 항상 가나다순으로 보여준다(폴더는 별도 섹션으로 이미지보다 먼저 렌더링되어 항상 최상단에 온다).
+  const koSort = (items) => [...items].sort((a, b) => a.name.localeCompare(b.name, "ko"));
+
   // 폴더/문서 꾹 눌러서 드래그로 섹션 내 순서 변경(사용자 지정 정렬)
   const [draggingItem, setDraggingItem] = useState(null); // { type: 'folder' | 'file', id }
   const [dragOverKey, setDragOverKey] = useState(null);
@@ -1094,38 +1098,9 @@ export default function Alloy() {
   const taggedDocs = taggedFiles.filter((f) => f.kind !== "image");
   const closeTagScreen = () => setTagScreenTags([]);
 
-  // 앱에서 실제로 쓰이고 있는 모든 태그 - 마법사의 "분류" 모달(여러 개 체크)에서 쓴다.
-  const allTags = useMemo(() => Array.from(new Set([
-    ...folders.flatMap((f) => f.tags || []),
-    ...files.flatMap((f) => f.tags || []),
-  ])).sort(), [folders, files]);
   // 태그 텍스트를 누르면 검색/팔레트를 거치지 않고 곧바로 그 태그의 "분류" 화면을 연다.
   const openTagScreen = (tag) => {
     setTagScreenTags([tag]);
-  };
-
-  // "분류" 모달 - 마법사 메뉴의 "분류"를 누르면 뜬다(태그 팔레트와는 별개). 존재하는 모든
-  // 태그를 2열 그리드로 보여주고, 여러 개를 체크한 뒤 확인을 누르면 그 태그들이 하나라도
-  // 달린 항목을 전부 모아 "분류" 화면을 연다.
-  const [classifyModalOpen, setClassifyModalOpen] = useState(false);
-  const [classifyModalVisible, setClassifyModalVisible] = useState(false);
-  const [classifyChecked, setClassifyChecked] = useState({}); // { [tag]: true }
-  const openClassifyModal = () => {
-    setClassifyChecked({});
-    setClassifyModalOpen(true);
-    requestAnimationFrame(() => setClassifyModalVisible(true));
-  };
-  const closeClassifyModal = () => {
-    setClassifyModalVisible(false);
-    setTimeout(() => setClassifyModalOpen(false), 200);
-  };
-  const toggleClassifyChecked = (tag) => {
-    setClassifyChecked((prev) => ({ ...prev, [tag]: !prev[tag] }));
-  };
-  const handleClassifyConfirm = () => {
-    const checked = allTags.filter((t) => classifyChecked[t]);
-    closeClassifyModal();
-    if (checked.length) setTagScreenTags(checked);
   };
 
   // 이미지/움짤 전체화면 뷰어 - 열 당시의 이미지 배열을 그대로 들고 있다가
@@ -2000,32 +1975,6 @@ export default function Alloy() {
                       >
                         태그
                       </button>
-                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-                      <button
-                        onClick={() => {
-                          closeWizardMenu();
-                          openClassifyModal();
-                        }}
-                        onMouseDown={pressDown("scale(0.97)")}
-                        onMouseUp={pressUp("scale(1)")}
-                        style={{
-                          width: "100%",
-                          padding: "10px 12px",
-                          border: "none",
-                          background: "transparent",
-                          color: isLight ? "#14161A" : "#FFFFFF",
-                          fontSize: 15,
-                          fontWeight: 500,
-                          cursor: "pointer",
-                          outline: "none",
-                          textAlign: "left",
-                          transition: "background 0.2s, transform 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                      >
-                        분류
-                      </button>
                     </div>
                   </>,
                   document.body
@@ -2631,7 +2580,7 @@ export default function Alloy() {
                 }
                 return (
                   <>
-                    {taggedFolders.map((folder) =>
+                    {koSort(taggedFolders).map((folder) =>
                       renderRow(
                         "folder",
                         folder,
@@ -2645,7 +2594,7 @@ export default function Alloy() {
                         }
                       )
                     )}
-                    {taggedDocs.map((doc) =>
+                    {koSort(taggedDocs).map((doc) =>
                       renderRow(
                         "file",
                         doc,
@@ -2657,19 +2606,24 @@ export default function Alloy() {
                         }
                       )
                     )}
-                    {renderImageGrid(taggedImages, taggedFolders.length || taggedDocs.length ? 8 : 0)}
+                    {renderImageGrid(koSort(taggedImages), taggedFolders.length || taggedDocs.length ? 8 : 0)}
                   </>
                 );
               }
 
               // ── 검색 결과: 검색어가 있으면 지금 어느 위치를 보고 있든 상관없이 전체
-              //     폴더/파일/문서/이미지 중 이름에 검색어가 포함된 항목을 리스트로 보여준다.
-              //     항목을 누르면 검색을 닫고 해당 항목이 있는 위치로 이동한다. ──
+              //     폴더/파일/문서/이미지 중 이름에 검색어가 포함된 항목을 보여준다. 폴더/문서는
+              //     리스트로, 이미지/움짤은 "분류" 화면과 동일한 콜라주 그리드로 보여준다. 현재
+              //     정렬 모드(사용자 지정 순서 포함)와 무관하게 항상 가나다순이고, 폴더가 항상
+              //     이미지보다 먼저(최상단) 온다. 항목을 누르면 검색을 닫고 해당 위치로 이동한다
+              //     (이미지는 그리드와 동일하게 뷰어가 뜬다). ──
               const trimmedQuery = searchQuery.trim().toLowerCase();
               if (trimmedQuery) {
-                const folderMatches = folders.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
-                const fileMatches = files.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
-                if (folderMatches.length === 0 && fileMatches.length === 0) {
+                const folderMatches = koSort(folders.filter((f) => f.name.toLowerCase().includes(trimmedQuery)));
+                const allFileMatches = files.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
+                const docMatches = koSort(allFileMatches.filter((f) => f.kind !== "image"));
+                const imageMatches = koSort(allFileMatches.filter((f) => f.kind === "image"));
+                if (folderMatches.length === 0 && docMatches.length === 0 && imageMatches.length === 0) {
                   return (
                     <div
                       style={{
@@ -2702,7 +2656,7 @@ export default function Alloy() {
                         }
                       )
                     )}
-                    {fileMatches.map((item) =>
+                    {docMatches.map((item) =>
                       renderRow(
                         "file",
                         item,
@@ -2714,6 +2668,7 @@ export default function Alloy() {
                         }
                       )
                     )}
+                    {renderImageGrid(imageMatches, folderMatches.length || docMatches.length ? 8 : 0)}
                   </div>
                 );
               }
@@ -5011,179 +4966,6 @@ export default function Alloy() {
               onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
             >
               적용
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* "분류" 모달 - 마법사의 "분류"를 누르면 뜬다. 모든 태그를 2열 그리드로, 가로/세로 구분선으로
-          칸을 나눠 보여주고 각 태그 오른쪽에 체크박스가 있다. 확인을 누르면 체크한 태그(들)로
-          "분류" 화면이 열린다. */}
-      {classifyModalOpen && (
-        <>
-          <div
-            onClick={closeClassifyModal}
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "rgba(0,0,0,0.45)",
-              zIndex: 39,
-              opacity: classifyModalVisible ? 1 : 0,
-              transition: "opacity 0.2s ease",
-            }}
-          />
-          <div
-            style={{
-              position: "fixed",
-              top: "50%",
-              left: "50%",
-              transform: classifyModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-              opacity: classifyModalVisible ? 1 : 0,
-              background: isLight ? "#FFFFFF" : "#1a1918",
-              borderRadius: 20,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-              padding: "32px 30px",
-              width: "84vw",
-              boxSizing: "border-box",
-              zIndex: 40,
-              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
-              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 20,
-                  fontWeight: 700,
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                }}
-              >
-                분류
-              </h2>
-              <button
-                onClick={closeClassifyModal}
-                onMouseDown={pressDown("scale(0.85)")}
-                onMouseUp={pressUp("scale(1)")}
-                aria-label="닫기"
-                style={{
-                  flexShrink: 0,
-                  width: 30,
-                  height: 30,
-                  borderRadius: 7,
-                  border: "none",
-                  background: "transparent",
-                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                  cursor: "pointer",
-                  outline: "none",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                </svg>
-              </button>
-            </div>
-
-            {allTags.length === 0 ? (
-              <div
-                style={{
-                  textAlign: "center",
-                  padding: "20px 0",
-                  marginBottom: 16,
-                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
-                  fontSize: 14,
-                }}
-              >
-                아직 태그가 없습니다
-              </div>
-            ) : (
-              <div
-                style={{
-                  maxHeight: 320,
-                  overflowY: "auto",
-                  marginBottom: 16,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.15)" : "rgba(255,255,255,0.15)"}`,
-                  borderRadius: 10,
-                }}
-              >
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
-                  {allTags.map((tag, i) => {
-                    const totalRows = Math.ceil(allTags.length / 2);
-                    const isLastRow = Math.floor(i / 2) === totalRows - 1;
-                    const isLeftCol = i % 2 === 0;
-                    const cellBorderColor = isLight ? "rgba(20,22,26,0.12)" : "rgba(255,255,255,0.12)";
-                    return (
-                      <div
-                        key={tag}
-                        onClick={() => toggleClassifyChecked(tag)}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          padding: "10px 12px",
-                          cursor: "pointer",
-                          borderRight: isLeftCol ? `1px solid ${cellBorderColor}` : "none",
-                          borderBottom: isLastRow ? "none" : `1px solid ${cellBorderColor}`,
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: 14,
-                            color: isLight ? "#14161A" : "#FFFFFF",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {tag}
-                        </span>
-                        <input
-                          type="checkbox"
-                          checked={!!classifyChecked[tag]}
-                          onChange={() => toggleClassifyChecked(tag)}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ width: 18, height: 18, flexShrink: 0, cursor: "pointer" }}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={handleClassifyConfirm}
-              onMouseDown={pressDown("scale(0.95)")}
-              onMouseUp={pressUp("scale(1)")}
-              style={{
-                width: "100%",
-                padding: 10,
-                border: "none",
-                borderRadius: 8,
-                background: isLight ? "#14161A" : "#FFFFFF",
-                color: isLight ? "#FFFFFF" : "#14161A",
-                fontSize: 15,
-                fontWeight: 600,
-                cursor: "pointer",
-                outline: "none",
-                transition: "transform 0.15s ease",
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-            >
-              확인
             </button>
           </div>
         </>
