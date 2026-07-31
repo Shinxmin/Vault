@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.67";
+const APP_VERSION = "0.1.68";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1088,6 +1088,109 @@ export default function Alloy() {
     closeTagModal();
   };
 
+  // 압축 모달 - "마법사" 메뉴의 "압축"을 누르면 뜬다. 지금 보고 있는 Vault/폴더 안의
+  // 이미지/움짤(kind === "image")만 대상으로 하고(동영상은 애초에 업로드 자체가 안 되므로
+  // 고려하지 않는다), 체크한 항목들의 해상도를 설정한 %로 줄여 R2에 같은 키로 덮어쓴다.
+  // 캔버스는 GIF/APNG를 다시 GIF/APNG로 인코딩할 수 없어서(브라우저 표준 API의 한계),
+  // 압축된 결과는 항상 정지 이미지(JPEG, PNG는 PNG 유지)가 된다 - 움짤을 압축하면
+  // 애니메이션이 사라지고 첫 프레임만 남는다.
+  const [compressModalOpen, setCompressModalOpen] = useState(false);
+  const [compressModalVisible, setCompressModalVisible] = useState(false);
+  const [compressChecked, setCompressChecked] = useState({}); // { [id]: true }
+  const [compressPercent, setCompressPercent] = useState(80);
+  const [compressBusy, setCompressBusy] = useState(false);
+  const compressBarRef = useRef(null);
+
+  const compressTargets = useMemo(() => {
+    if (currentPath.length === 0) return [];
+    return files
+      .filter((f) =>
+        f.kind === "image" &&
+        f.path.length === currentPath.length &&
+        f.path.every((p, i) => p === currentPath[i])
+      )
+      .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  }, [currentPath, files]);
+
+  const openCompressModal = () => {
+    setCompressChecked({});
+    setCompressPercent(80);
+    setCompressModalOpen(true);
+    requestAnimationFrame(() => setCompressModalVisible(true));
+  };
+  const closeCompressModal = () => {
+    if (compressBusy) return;
+    setCompressModalVisible(false);
+    setTimeout(() => setCompressModalOpen(false), 200);
+  };
+  const toggleCompressChecked = (id) => {
+    setCompressChecked((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+  const toggleCompressSelectAll = () => {
+    const allChecked = compressTargets.length > 0 && compressTargets.every((item) => compressChecked[item.id]);
+    setCompressChecked(allChecked ? {} : Object.fromEntries(compressTargets.map((item) => [item.id, true])));
+  };
+  // 프로그레스 바를 누르거나 드래그하면 그 위치에 해당하는 %로 바로 설정된다.
+  const handleCompressBarPick = (e) => {
+    if (!compressBarRef.current) return;
+    const rect = compressBarRef.current.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    setCompressPercent(Math.max(1, Math.min(100, Math.round(ratio * 100))));
+  };
+  // 실제로 이미지를 <canvas>에 설정한 %만큼 축소해 그린 뒤 Blob으로 뽑아낸다.
+  // PNG는 PNG로 유지하고, 그 외(JPEG/GIF/APNG/WEBP)는 JPEG로 인코딩한다(가장 널리
+  // 지원되고 압축률도 좋다) - 원래 gif/apng였던 파일은 정지 이미지가 된다.
+  const compressOneImage = (file) =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        const scale = compressPercent / 100;
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        const outType = file.mimeType === "image/png" ? "image/png" : "image/jpeg";
+        canvas.toBlob(
+          (blob) => (blob ? resolve({ blob, outType }) : reject(new Error("압축 실패"))),
+          outType,
+          0.85
+        );
+      };
+      img.onerror = () => reject(new Error("이미지를 불러오지 못했습니다"));
+      img.src = file.url;
+    });
+  const handleCompressApply = async () => {
+    const checkedItems = compressTargets.filter((item) => compressChecked[item.id]);
+    if (!checkedItems.length) {
+      closeCompressModal();
+      return;
+    }
+    setCompressBusy(true);
+    const now = Date.now();
+    const updates = {};
+    for (const item of checkedItems) {
+      try {
+        const { blob, outType } = await compressOneImage(item);
+        const { url: putUrl } = await r2Presign({ action: "put", key: item.r2Key, contentType: outType });
+        await putFileWithProgress(putUrl, blob, () => {});
+        const newExt = outType === "image/png" ? "png" : "jpg";
+        updates[item.id] = { size: blob.size, mimeType: outType, ext: newExt, updatedAt: now };
+      } catch (err) {
+        console.error("이미지 압축 실패:", item.name, err);
+      }
+    }
+    if (Object.keys(updates).length) {
+      setFiles((prev) => prev.map((f) => (updates[f.id] ? { ...f, ...updates[f.id] } : f)));
+      showToast("압축했습니다");
+    }
+    setCompressBusy(false);
+    closeCompressModal();
+  };
+
   // "분류" 화면(구 태그 화면)에서 보여줄, 선택된 태그들 중 하나라도 달린 폴더/이미지/문서를
   // 종류별로 나눈 목록. 폴더가 항상 맨 위에 리스트로, 그 아래에 이미지/움짤이 갤러리(메이슨리)로 온다.
   const taggedFolders = tagScreenTags.length ? folders.filter((f) => (f.tags || []).some((t) => tagScreenTags.includes(t))) : [];
@@ -1974,6 +2077,32 @@ export default function Alloy() {
                         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                       >
                         태그
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      <button
+                        onClick={() => {
+                          closeWizardMenu();
+                          openCompressModal();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        압축
                       </button>
                     </div>
                   </>,
@@ -4966,6 +5095,253 @@ export default function Alloy() {
               onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
             >
               적용
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* 압축 모달 - "마법사" 메뉴의 "압축"을 누르면 뜬다. 레이아웃은 변환/태그 모달과 같되
+          텍스트 입력 대신 프로그레스 바(누르거나 드래그해서 %를 정할 수 있다) + 작은 %
+          인풋창으로 압축 정도를 정한다. 이미지/움짤만 대상이며(동영상은 업로드 자체가 안 됨),
+          움짤은 압축 후 애니메이션이 사라지고 정지 이미지가 된다. */}
+      {compressModalOpen && (
+        <>
+          <div
+            onClick={closeCompressModal}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.45)",
+              zIndex: 39,
+              opacity: compressModalVisible ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: compressModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: compressModalVisible ? 1 : 0,
+              background: isLight ? "#FFFFFF" : "#1a1918",
+              borderRadius: 20,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              padding: "32px 30px",
+              width: "84vw",
+              boxSizing: "border-box",
+              zIndex: 40,
+              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                }}
+              >
+                압축
+              </h2>
+              <button
+                onClick={closeCompressModal}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                disabled={compressBusy}
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: compressBusy ? "default" : "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: compressBusy ? 0.5 : 1,
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            <button
+              onClick={toggleCompressSelectAll}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: 0,
+                marginBottom: 14,
+                border: "none",
+                background: "transparent",
+                fontSize: 13,
+                fontWeight: 500,
+                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                cursor: "pointer",
+                outline: "none",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              전체 선택
+            </button>
+
+            {/* 압축할 이미지/움짤 목록 - 현재 Vault/폴더 안의 이미지만 대상이다. */}
+            <div
+              style={{
+                maxHeight: 300,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginBottom: 16,
+              }}
+            >
+              {compressTargets.length === 0 && (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "20px 0",
+                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                    fontSize: 14,
+                  }}
+                >
+                  압축할 이미지가 없습니다
+                </div>
+              )}
+              {compressTargets.map((item) => (
+                <label
+                  key={item.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "8px 4px",
+                    cursor: "pointer",
+                    borderRadius: 8,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!compressChecked[item.id]}
+                    onChange={() => toggleCompressChecked(item.id)}
+                    style={{ width: 18, height: 18, flexShrink: 0, cursor: "pointer" }}
+                  />
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontSize: 15,
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                    }}
+                  >
+                    {item.name}
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {/* 프로그레스 바(누르거나 드래그해서 %를 정할 수 있다) + 작은 % 인풋창 */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+              <div
+                ref={compressBarRef}
+                onClick={handleCompressBarPick}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  handleCompressBarPick(e);
+                }}
+                onPointerMove={(e) => {
+                  if (e.buttons === 1) handleCompressBarPick(e);
+                }}
+                style={{
+                  flex: 1,
+                  height: 8,
+                  borderRadius: 999,
+                  background: isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)",
+                  overflow: "hidden",
+                  cursor: "pointer",
+                  touchAction: "none",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${compressPercent}%`,
+                    borderRadius: 999,
+                    background: isLight ? "#14161A" : "#FFFFFF",
+                    transition: "width 0.1s ease",
+                  }}
+                />
+              </div>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={compressPercent}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setCompressPercent(isNaN(v) ? 1 : Math.max(1, Math.min(100, v)));
+                }}
+                style={{
+                  width: 44,
+                  padding: "6px 4px",
+                  textAlign: "center",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 13,
+                  outline: "none",
+                }}
+              />
+              <span style={{ fontSize: 13, color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)" }}>%</span>
+            </div>
+
+            <button
+              onClick={handleCompressApply}
+              onMouseDown={pressDown("scale(0.95)")}
+              onMouseUp={pressUp("scale(1)")}
+              disabled={compressBusy}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: compressBusy ? "default" : "pointer",
+                outline: "none",
+                opacity: compressBusy ? 0.6 : 1,
+                transition: "transform 0.15s ease, opacity 0.2s ease",
+              }}
+              onMouseEnter={(e) => { if (!compressBusy) e.currentTarget.style.transform = "translateY(-1px)"; }}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              {compressBusy ? "압축 중..." : "적용"}
             </button>
           </div>
         </>
