@@ -61,3 +61,7 @@ create unique index if not exists vaulty_state_user_id_key on public.vaulty_stat
 -- update public.vaulty_state
 --   set user_id = (select id from auth.users where email = 'YOUR_EMAIL')
 --   where id = 'default';
+
+-- 업로드 압축 비율(%) - 설정 탭의 "업로드" 카드에서 정한다. 이미지/움짤을 올릴 때 원본
+-- 해상도의 이 %만큼만 줄여서 R2에 올린다. 100%(기본값)면 압축 없이 원본 그대로 올라간다.
+alter table public.vaulty_state add column if not exists upload_compress_percent numeric not null default 100;
