@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.79";
+const APP_VERSION = "0.1.80";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -706,26 +706,28 @@ export default function Alloy() {
   // localeCompare에 { numeric: true }를 줘서 이름 안에 섞인 숫자를 문자 하나씩이 아니라
   // 값 그대로 비교한다 - 안 그러면 "예시(10)"이 "예시(2)"보다 앞에 온다("1" < "2"라서).
   // 이 옵션을 주면 "예시(1)", "예시(2)", ..., "예시(9)", "예시(10)" 순서로 정렬된다.
+  // 고정된 항목(pinned)은 정렬 모드/사용자 지정 순서와 무관하게 항상 맨 위에 먼저 온다 -
+  // 여러 개면 그 안에서도(사용자 지정 모드에서는 가나다/숫자/알파벳 정렬 기준으로) 순서대로 배치된다.
   const sortItems = (items) => {
-    if (sortMode === "custom") return items;
-    const sorted = [...items];
-    if (sortMode === "num") {
-      sorted.sort((a, b) => {
-        const na = parseFloat(a.name);
-        const nb = parseFloat(b.name);
-        const aIsNum = !isNaN(na);
-        const bIsNum = !isNaN(nb);
-        if (aIsNum && bIsNum) return na - nb;
-        if (aIsNum) return -1;
-        if (bIsNum) return 1;
-        return a.name.localeCompare(b.name, "en", { numeric: true });
-      });
-    } else if (sortMode === "en") {
-      sorted.sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }));
-    } else {
-      sorted.sort((a, b) => a.name.localeCompare(b.name, "ko", { numeric: true }));
-    }
-    return sorted;
+    const comparator =
+      sortMode === "num"
+        ? (a, b) => {
+            const na = parseFloat(a.name);
+            const nb = parseFloat(b.name);
+            const aIsNum = !isNaN(na);
+            const bIsNum = !isNaN(nb);
+            if (aIsNum && bIsNum) return na - nb;
+            if (aIsNum) return -1;
+            if (bIsNum) return 1;
+            return a.name.localeCompare(b.name, "en", { numeric: true });
+          }
+        : sortMode === "en"
+        ? (a, b) => a.name.localeCompare(b.name, "en", { numeric: true })
+        : (a, b) => a.name.localeCompare(b.name, "ko", { numeric: true });
+    const pinned = items.filter((i) => i.pinned).sort(comparator);
+    const rest = items.filter((i) => !i.pinned);
+    if (sortMode === "custom") return [...pinned, ...rest];
+    return [...pinned, ...rest.sort(comparator)];
   };
 
   // 검색 결과/"분류" 화면 전용 정렬 - 현재 정렬 모드(사용자 지정 드래그 순서 포함)와 무관하게
@@ -1130,6 +1132,65 @@ export default function Alloy() {
     setTagScreenTags([tag]);
   };
 
+  // 고정 모달 - "마법사" 메뉴의 "고정"을 누르면 뜬다. 레이아웃은 변환/태그 모달과 동일하되
+  // 이름/태그 편집 없이 체크박스만으로 고정 여부를 정한다(Vault는 대상에서 제외 - 폴더/파일만 고정 가능).
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinModalVisible, setPinModalVisible] = useState(false);
+  const [pinChecked, setPinChecked] = useState({}); // { [id]: true } - 적용 시 최종 고정 여부
+
+  const pinTargets = useMemo(() => convertTargets.filter((t) => t.type !== "vault"), [convertTargets]);
+
+  const openPinModal = () => {
+    const initial = {};
+    pinTargets.forEach((item) => {
+      const source = item.type === "folder" ? folders.find((f) => f.id === item.id) : files.find((f) => f.id === item.id);
+      if (source && source.pinned) initial[item.id] = true;
+    });
+    setPinChecked(initial);
+    setPinModalOpen(true);
+    requestAnimationFrame(() => setPinModalVisible(true));
+  };
+  const closePinModal = () => {
+    setPinModalVisible(false);
+    setTimeout(() => setPinModalOpen(false), 200);
+  };
+  const togglePinChecked = (id) => {
+    setPinChecked((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+  // 전체 선택 - 이미 전부 체크돼 있으면 전체 해제, 아니면 전체 선택으로 토글한다.
+  const togglePinSelectAll = () => {
+    const allChecked = pinTargets.length > 0 && pinTargets.every((item) => pinChecked[item.id]);
+    setPinChecked(allChecked ? {} : Object.fromEntries(pinTargets.map((item) => [item.id, true])));
+  };
+  // 적용 - 체크된 항목은 고정하고, 목록에 있는데 체크 해제된 항목은 고정을 해제한다.
+  const handlePinApply = () => {
+    if (!pinTargets.length) {
+      closePinModal();
+      return;
+    }
+    const now = Date.now();
+    const folderIds = pinTargets.filter((i) => i.type === "folder").map((i) => i.id);
+    const fileIds = pinTargets.filter((i) => i.type === "file").map((i) => i.id);
+    if (folderIds.length) setFolders((prev) => prev.map((f) => (folderIds.includes(f.id) ? { ...f, pinned: !!pinChecked[f.id], updatedAt: now } : f)));
+    if (fileIds.length) setFiles((prev) => prev.map((f) => (fileIds.includes(f.id) ? { ...f, pinned: !!pinChecked[f.id], updatedAt: now } : f)));
+    closePinModal();
+  };
+
+  // 고정 화면 - 마법사 왼쪽 별표 버튼을 누르면 검색/분류 화면과 같은 방식으로, 지금 어디에
+  // 있든 상관없이 앱 전체에서 고정된 폴더가 먼저 리스트로, 그 아래 고정된 이미지/움짤이
+  // 갤러리로, 문서는 리스트로 온다. 상단 헤더의 닫기(X)로 닫는다(분류 화면과 동일한 패턴).
+  const [pinScreenOpen, setPinScreenOpen] = useState(false);
+  const openPinScreen = () => {
+    setTagScreenTags([]);
+    setSearchQuery("");
+    setPinScreenOpen(true);
+  };
+  const closePinScreen = () => setPinScreenOpen(false);
+  const pinnedFolders = pinScreenOpen ? folders.filter((f) => f.pinned) : [];
+  const pinnedFiles = pinScreenOpen ? files.filter((f) => f.pinned) : [];
+  const pinnedDocs = pinnedFiles.filter((f) => f.kind !== "image");
+  const pinnedImages = pinnedFiles.filter((f) => f.kind === "image");
+
   // 이미지/움짤 전체화면 뷰어 - 열 당시의 이미지 배열을 그대로 들고 있다가
   // 좌우 스와이프(포인터 드래그)로 이전/다음 사진을 넘긴다. 드래그 중엔 손가락을 그대로
   // 따라가고, 손을 떼면 완전히 밀려나가며 다음/이전 사진이 반대편에서 슬라이드로 들어온다.
@@ -1282,6 +1343,93 @@ export default function Alloy() {
       setFiles((prev) => prev.map((f) => (f.id === moveTarget.id ? { ...f, path: moveBrowsePath } : f)));
     }
     closeMoveModal();
+  };
+
+  // 복사 모달 - 이동 모달과 완전히 동일한 디자인/탐색 로직이지만, 원본은 그대로 두고
+  // 지정한 위치에 새 사본을 만든다. 폴더를 복사하면 그 하위 폴더/파일도 전부 함께
+  // 복사된다(새 id를 발급하고, path만 새 위치를 기준으로 다시 붙인다).
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
+  const [copyModalVisible, setCopyModalVisible] = useState(false);
+  const [copyTarget, setCopyTarget] = useState(null); // { type: 'folder' | 'file', id, name }
+  const [copyBrowsePath, setCopyBrowsePath] = useState([]);
+
+  const openCopyModal = (type, id, name) => {
+    setCopyTarget({ type, id, name });
+    setCopyBrowsePath([]);
+    setCopyModalOpen(true);
+    requestAnimationFrame(() => setCopyModalVisible(true));
+  };
+  const closeCopyModal = () => {
+    setCopyModalVisible(false);
+    setTimeout(() => {
+      setCopyModalOpen(false);
+      setCopyTarget(null);
+      setCopyBrowsePath([]);
+    }, 200);
+  };
+
+  const copyingFile = copyTarget && copyTarget.type === "file" ? files.find((f) => f.id === copyTarget.id) : null;
+  const copyingIsDoc = copyingFile && (copyingFile.kind === "doc" || copyingFile.kind === "text");
+  // 이동과 달리 복사는 원본이 그대로 남으므로 자기 자신/하위 폴더 안으로도 자유롭게
+  // 들어가 사본을 만들 수 있다(막을 이유가 없다).
+  const copyModalEntries = !copyModalOpen
+    ? []
+    : copyBrowsePath.length === 0
+    ? vaults.map((v) => ({ id: v.id, name: v.name, isVault: true }))
+    : copyingIsDoc
+    ? []
+    : folders
+        .filter(
+          (f) =>
+            f.path.length === copyBrowsePath.length + 1 &&
+            f.path.slice(0, copyBrowsePath.length).every((p, i) => p === copyBrowsePath[i])
+        )
+        .map((f) => ({ id: f.id, name: f.name, isVault: false }));
+  const canCopyHere = copyingIsDoc ? copyBrowsePath.length === 1 : copyBrowsePath.length >= 1;
+
+  const confirmCopy = () => {
+    if (!copyTarget || !canCopyHere) {
+      closeCopyModal();
+      return;
+    }
+    if (copyTarget.type === "folder") {
+      const folder = folders.find((f) => f.id === copyTarget.id);
+      if (folder) {
+        const oldPrefix = folder.path;
+        const newPrefix = [...copyBrowsePath, folder.name];
+        const descendantFolders = folders.filter(
+          (f) => f.id !== folder.id && f.path.length > oldPrefix.length && oldPrefix.every((seg, i) => f.path[i] === seg)
+        );
+        const descendantFiles = files.filter(
+          (f) => f.path.length >= oldPrefix.length && oldPrefix.every((seg, i) => f.path[i] === seg)
+        );
+        const now = Date.now();
+        const newFolders = [folder, ...descendantFolders].map((f) => ({
+          ...f,
+          id: Date.now() + Math.random(),
+          path: [...newPrefix, ...f.path.slice(oldPrefix.length)],
+          createdAt: now,
+          updatedAt: now,
+        }));
+        const newFiles = descendantFiles.map((f) => ({
+          ...f,
+          id: Date.now() + Math.random(),
+          path: [...newPrefix, ...f.path.slice(oldPrefix.length)],
+          createdAt: now,
+          updatedAt: now,
+        }));
+        setFolders((prev) => [...prev, ...newFolders]);
+        setFiles((prev) => [...prev, ...newFiles]);
+      }
+    } else {
+      const file = files.find((f) => f.id === copyTarget.id);
+      if (file) {
+        const now = Date.now();
+        setFiles((prev) => [...prev, { ...file, id: Date.now() + Math.random(), path: copyBrowsePath, createdAt: now, updatedAt: now }]);
+      }
+    }
+    closeCopyModal();
+    showToast("데이터를 복사했습니다");
   };
 
   // 실제 갤러리/파일 선택 다이얼로그(input[type=file])를 통해 고른 항목을 R2에 업로드하고
@@ -1691,14 +1839,14 @@ export default function Alloy() {
             사람 아이콘 버튼(설정 화면 열기)을 둔다. 예전 + 버튼(Vault 생성/업로드 메뉴
             트리거)은 "마법사" 옆 "업로드" 버튼으로 옮겨갔다. */}
         <div style={stickyHeaderStyle}>
-          {tagScreenTags.length ? (
+          {(tagScreenTags.length || pinScreenOpen) ? (
             <>
               <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF", letterSpacing: 0.2, minHeight: "1em" }}>
-                분류
+                {pinScreenOpen ? "고정" : "분류"}
               </h1>
               <div style={{ position: "relative" }}>
                 <button
-                  onClick={closeTagScreen}
+                  onClick={pinScreenOpen ? closePinScreen : closeTagScreen}
                   onMouseEnter={() => setTrashCloseButtonHovered(true)}
                   onMouseLeave={(e) => {
                     setTrashCloseButtonHovered(false);
@@ -1858,9 +2006,9 @@ export default function Alloy() {
             입력이 밀리는 원인이 되므로 아예 렌더링을 건너뛴다. */}
         {authUser && (
           <>
-            {/* 경로 표기 및 정렬/보기 방식 아이콘 영역 - "분류" 화면에서는 마법사 버튼,
+            {/* 경로 표기 및 정렬/보기 방식 아이콘 영역 - "분류"/"고정" 화면에서는 마법사 버튼,
                 경로 표시 텍스트, 구분선 없이 곧바로 목록만 보여준다. */}
-            {!tagScreenTags.length && (
+            {!tagScreenTags.length && !pinScreenOpen && (
             <div
               style={{
                 display: "flex",
@@ -1932,6 +2080,39 @@ export default function Alloy() {
 
               {/* 마법사 - 예전 ABC 정렬 버튼 자리. 누르면 "정렬"/"변환" 드롭다운이 뜬다 */}
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* 별표 - 마법사 왼쪽. 누르면 검색/분류 화면과 동일한 방식으로 앱 전체의
+                    고정된 항목만 모아 보여준다(다시 누르면 닫힘). */}
+                <button
+                  onClick={openPinScreen}
+                  onMouseDown={pressDown("scale(0.9)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="고정 목록"
+                  title="고정 목록"
+                  style={{
+                    width: 30,
+                    height: 30,
+                    flexShrink: 0,
+                    borderRadius: 8,
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    cursor: "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s ease, transform 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.12)"}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+                    <polygon points="12 2.5 14.9 9 22 9.8 16.8 14.6 18.2 21.5 12 18 5.8 21.5 7.2 14.6 2 9.8 9.1 9" />
+                  </svg>
+                </button>
                 <button
                   ref={wizardButtonRef}
                   onClick={toggleWizardMenu}
@@ -2066,6 +2247,32 @@ export default function Alloy() {
                         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                       >
                         태그
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      <button
+                        onClick={() => {
+                          closeWizardMenu();
+                          openPinModal();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        고정
                       </button>
                     </div>
                   </>,
@@ -2325,6 +2532,58 @@ export default function Alloy() {
                           >
                             이름 바꾸기
                           </button>
+                          {type !== "vault" && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  closeItemMenu();
+                                  openMoveModal(type, item.id, item.name);
+                                }}
+                                style={{
+                                  width: "100%",
+                                  padding: "10px 12px",
+                                  border: "none",
+                                  background: "transparent",
+                                  color: isLight ? "#14161A" : "#FFFFFF",
+                                  fontSize: 15,
+                                  fontWeight: 500,
+                                  cursor: "pointer",
+                                  outline: "none",
+                                  textAlign: "left",
+                                  transition: "background 0.2s",
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                              >
+                                이동
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  closeItemMenu();
+                                  openCopyModal(type, item.id, item.name);
+                                }}
+                                style={{
+                                  width: "100%",
+                                  padding: "10px 12px",
+                                  border: "none",
+                                  background: "transparent",
+                                  color: isLight ? "#14161A" : "#FFFFFF",
+                                  fontSize: 15,
+                                  fontWeight: 500,
+                                  cursor: "pointer",
+                                  outline: "none",
+                                  textAlign: "left",
+                                  transition: "background 0.2s",
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                              >
+                                복사
+                              </button>
+                            </>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2349,32 +2608,6 @@ export default function Alloy() {
                           >
                             정보
                           </button>
-                          {type !== "vault" && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                closeItemMenu();
-                                openMoveModal(type, item.id, item.name);
-                              }}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                border: "none",
-                                background: "transparent",
-                                color: isLight ? "#14161A" : "#FFFFFF",
-                                fontSize: 15,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                outline: "none",
-                                textAlign: "left",
-                                transition: "background 0.2s",
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                            >
-                              이동
-                            </button>
-                          )}
                           <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
                           {(() => {
                             const deleteKey = `${type}-${item.id}`;
@@ -2454,15 +2687,30 @@ export default function Alloy() {
                   );
                 }
                 return (
-                  <div
-                    style={{
-                      ...textStyle,
-                      userSelect: "none",
-                      WebkitUserSelect: "none",
-                      WebkitTouchCallout: "none",
-                    }}
-                  >
-                    {item.name}
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                    {item.pinned && (
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        style={{ flexShrink: 0, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.55)" }}
+                      >
+                        <path d="M16 3l5 5-3.5 3.5L19 14l-5 5-2.5-4.5L7 19l-1-1 4.5-4.5L6 11l5-5 1.5 2.5L16 3z" />
+                      </svg>
+                    )}
+                    <div
+                      style={{
+                        ...textStyle,
+                        flex: 1,
+                        minWidth: 0,
+                        userSelect: "none",
+                        WebkitUserSelect: "none",
+                        WebkitTouchCallout: "none",
+                      }}
+                    >
+                      {item.name}
+                    </div>
                   </div>
                 );
               };
@@ -2651,6 +2899,57 @@ export default function Alloy() {
                   </div>
                 );
               };
+
+              // ── "고정" 화면 - 별표 버튼을 누르면(pinScreenOpen) 지금 어느 위치에 있었든 상관없이
+              //     앱 전체에서 고정된 폴더가 먼저 리스트로, 그 아래 고정된 문서가 리스트로, 마지막에
+              //     고정된 이미지/움짤이 갤러리로 온다. "분류" 화면과 동일한 구조를 그대로 재사용한다. ──
+              if (pinScreenOpen) {
+                if (pinnedFolders.length === 0 && pinnedDocs.length === 0 && pinnedImages.length === 0) {
+                  return (
+                    <div
+                      style={{
+                        padding: "48px 0",
+                        textAlign: "center",
+                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
+                        fontSize: 14,
+                      }}
+                    >
+                      고정된 항목이 없습니다
+                    </div>
+                  );
+                }
+                return (
+                  <>
+                    {koSort(pinnedFolders).map((folder) =>
+                      renderRow(
+                        "folder",
+                        folder,
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>,
+                        folder.path.slice(0, -1).join(" / ") || "홈",
+                        () => {
+                          setCurrentPath(folder.path);
+                          closePinScreen();
+                        }
+                      )
+                    )}
+                    {koSort(pinnedDocs).map((doc) =>
+                      renderRow(
+                        "file",
+                        doc,
+                        getFileIcon(doc.mimeType),
+                        doc.path.join(" / ") || "홈",
+                        () => {
+                          setCurrentPath(doc.path);
+                          closePinScreen();
+                        }
+                      )
+                    )}
+                    {renderImageGrid(koSort(pinnedImages), pinnedFolders.length || pinnedDocs.length ? 8 : 0)}
+                  </>
+                );
+              }
 
               // ── "분류" 화면 - 태그 팔레트/분류 모달에서 태그를 고르면(tagScreenTags) 지금 어느 위치에
               //     있었든 상관없이 그 태그가 달린 폴더가 먼저 리스트로, 그 아래 이미지/움짤이
@@ -4441,6 +4740,221 @@ export default function Alloy() {
           </div>
         </>
       )}
+
+      {/* 복사 모달 - 이동 모달과 완전히 동일한 디자인/탐색 흐름. */}
+      {copyModalOpen && (
+        <>
+          <div
+            onClick={closeCopyModal}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 39,
+              opacity: copyModalVisible ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: copyModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: copyModalVisible ? 1 : 0,
+              background: isLight ? "#FFFFFF" : "#1a1918",
+              borderRadius: 20,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              padding: "32px 30px",
+              width: "84vw",
+              boxSizing: "border-box",
+              zIndex: 40,
+              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 19,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {copyTarget ? copyTarget.name : "복사"}
+              </h2>
+              <button
+                onClick={closeCopyModal}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: 4,
+                margin: "12px 0",
+                paddingBottom: 12,
+                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+              }}
+            >
+              <button
+                onClick={() => setCopyBrowsePath([])}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  padding: 0,
+                  outline: "none",
+                  opacity: copyBrowsePath.length === 0 ? 1 : 0.7,
+                }}
+              >
+                홈
+              </button>
+              {copyBrowsePath.map((seg, index) => (
+                <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", fontSize: 14 }}>&gt;</span>
+                  <button
+                    onClick={() => setCopyBrowsePath(copyBrowsePath.slice(0, index + 1))}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 14,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      padding: 0,
+                      outline: "none",
+                      opacity: index === copyBrowsePath.length - 1 ? 1 : 0.7,
+                    }}
+                  >
+                    {seg}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: 300, overflowY: "auto", marginBottom: 16 }}>
+              {copyModalEntries.length === 0 ? (
+                <div
+                  style={{
+                    padding: "24px 0",
+                    textAlign: "center",
+                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
+                    fontSize: 14,
+                  }}
+                >
+                  {copyBrowsePath.length === 0 ? "Vault가 없습니다" : "하위 폴더가 없습니다"}
+                </div>
+              ) : (
+                copyModalEntries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    onClick={() => setCopyBrowsePath([...copyBrowsePath, entry.name])}
+                    onMouseDown={pressDown("scale(0.98)")}
+                    onMouseUp={pressUp("scale(1)")}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                      e.currentTarget.style.transform = "scale(1)";
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 8px",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      transition: "background 0.2s ease, transform 0.15s ease",
+                    }}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"} style={{ flexShrink: 0 }}>
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <div
+                      style={{
+                        flex: 1,
+                        color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 15,
+                        fontWeight: 500,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {entry.name}
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="m9 6 6 6-6 6" />
+                    </svg>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <button
+              onClick={confirmCopy}
+              disabled={!canCopyHere}
+              onMouseDown={canCopyHere ? pressDown("scale(0.95)") : undefined}
+              onMouseUp={canCopyHere ? pressUp("scale(1)") : undefined}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: canCopyHere ? "pointer" : "not-allowed",
+                opacity: canCopyHere ? 1 : 0.4,
+                outline: "none",
+                transition: "transform 0.15s ease, opacity 0.2s ease",
+              }}
+              onMouseEnter={(e) => { if (canCopyHere) e.currentTarget.style.transform = "translateY(-1px)"; }}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              복사
+            </button>
+          </div>
+        </>
+      )}
       {/* 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다" 같은 짧은 안내를
           하단 탭바 바로 위에 2초간 페이드 인/아웃으로 보여준다. */}
       {toastMessage && (
@@ -5129,6 +5643,190 @@ export default function Alloy() {
 
             <button
               onClick={handleTagApply}
+              onMouseDown={pressDown("scale(0.95)")}
+              onMouseUp={pressUp("scale(1)")}
+              style={{
+                width: "100%",
+                padding: 10,
+                border: "none",
+                borderRadius: 8,
+                background: isLight ? "#14161A" : "#FFFFFF",
+                color: isLight ? "#FFFFFF" : "#14161A",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: "pointer",
+                outline: "none",
+                transition: "transform 0.15s ease",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+            >
+              적용
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* 고정 모달 - 변환/태그 모달과 동일한 레이아웃(제목 + 전체 선택 + 리스트 + 적용)이되
+          이름/태그 편집 없이 체크박스만으로 고정 여부를 정한다. Vault는 대상에서 제외된다. */}
+      {pinModalOpen && (
+        <>
+          <div
+            onClick={closePinModal}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.45)",
+              zIndex: 39,
+              opacity: pinModalVisible ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: pinModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: pinModalVisible ? 1 : 0,
+              background: isLight ? "#FFFFFF" : "#1a1918",
+              borderRadius: 20,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              padding: "32px 30px",
+              width: "84vw",
+              boxSizing: "border-box",
+              zIndex: 40,
+              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                }}
+              >
+                고정
+              </h2>
+              <button
+                onClick={closePinModal}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            <button
+              onClick={togglePinSelectAll}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: 0,
+                marginBottom: 14,
+                border: "none",
+                background: "transparent",
+                fontSize: 13,
+                fontWeight: 500,
+                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.62)",
+                cursor: "pointer",
+                outline: "none",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              전체 선택
+            </button>
+
+            <div
+              style={{
+                maxHeight: 300,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginBottom: 16,
+              }}
+            >
+              {pinTargets.length === 0 && (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "20px 0",
+                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
+                    fontSize: 14,
+                  }}
+                >
+                  고정할 항목이 없습니다
+                </div>
+              )}
+              {pinTargets.map((item) => (
+                <label
+                  key={item.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "8px 4px",
+                    cursor: "pointer",
+                    borderRadius: 8,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!pinChecked[item.id]}
+                    onChange={() => togglePinChecked(item.id)}
+                    style={{ width: 18, height: 18, flexShrink: 0, cursor: "pointer" }}
+                  />
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontSize: 15,
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                    }}
+                  >
+                    {item.name}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            <button
+              onClick={handlePinApply}
               onMouseDown={pressDown("scale(0.95)")}
               onMouseUp={pressUp("scale(1)")}
               style={{
