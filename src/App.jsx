@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.71";
+const APP_VERSION = "0.1.72";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -423,30 +423,35 @@ export default function Alloy() {
   const [settingsScreenOpen, setSettingsScreenOpen] = useState(false);
   const [settingsButtonHovered, setSettingsButtonHovered] = useState(false);
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
-  // 요금 안내 - 청구 금액 제목 오른쪽의 물음표 아이콘을 누르면 하단 서브 액션바와 같은
-  // 리퀴드 글래스 배경을 가진 별도의 뜬 패널이 그 아이콘 바로 밑 위치에 2초간 페이드
+  // 안내 팝업 - 청구 금액/업로드(최적화) 제목 옆 물음표 아이콘을 누르면 하단 서브 액션바와
+  // 같은 리퀴드 글래스 배경을 가진 별도의 뜬 패널이 그 아이콘 바로 밑 위치에 2초간 페이드
   // 인/아웃으로 떴다가 사라진다(레이아웃 흐름에 얹혀 다른 내용을 밀어내지 않고,
-  // document.body에 포탈로 띄운다). 떠 있는 동안에는 물음표 버튼을 비활성화하고 투명도를 낮춘다.
-  const [pricingInfoOpen, setPricingInfoOpen] = useState(false);
-  const [pricingInfoVisible, setPricingInfoVisible] = useState(false);
-  const [pricingInfoPos, setPricingInfoPos] = useState({ top: 0, left: 0 });
+  // document.body에 포탈로 띄운다). 어느 아이콘을 눌렀는지(kind)에 따라 안에 보여줄 문구만
+  // 다르고, 위치 계산/타이밍/페이드 로직은 완전히 같다. 떠 있는 동안에는 그 물음표 버튼을
+  // 비활성화하고 투명도를 낮춘다.
+  const [infoPopupKind, setInfoPopupKind] = useState(null); // "pricing" | "upload" | null
+  const [infoPopupVisible, setInfoPopupVisible] = useState(false);
+  const [infoPopupPos, setInfoPopupPos] = useState({ top: 0, left: 0 });
   const pricingButtonRef = useRef(null);
-  const pricingInfoShowTimerRef = useRef(null);
-  const pricingInfoHideTimerRef = useRef(null);
-  const showPricingInfo = () => {
-    if (pricingInfoShowTimerRef.current) clearTimeout(pricingInfoShowTimerRef.current);
-    if (pricingInfoHideTimerRef.current) clearTimeout(pricingInfoHideTimerRef.current);
-    if (pricingButtonRef.current) {
-      const rect = pricingButtonRef.current.getBoundingClientRect();
-      setPricingInfoPos({ top: rect.bottom + 8, left: rect.left });
+  const uploadOptimizeInfoButtonRef = useRef(null);
+  const infoPopupShowTimerRef = useRef(null);
+  const infoPopupHideTimerRef = useRef(null);
+  const showInfoPopup = (kind, anchorRef) => {
+    if (infoPopupShowTimerRef.current) clearTimeout(infoPopupShowTimerRef.current);
+    if (infoPopupHideTimerRef.current) clearTimeout(infoPopupHideTimerRef.current);
+    if (anchorRef.current) {
+      const rect = anchorRef.current.getBoundingClientRect();
+      setInfoPopupPos({ top: rect.bottom + 8, left: rect.left });
     }
-    setPricingInfoOpen(true);
-    requestAnimationFrame(() => setPricingInfoVisible(true));
-    pricingInfoHideTimerRef.current = setTimeout(() => {
-      setPricingInfoVisible(false);
-      pricingInfoShowTimerRef.current = setTimeout(() => setPricingInfoOpen(false), 300);
+    setInfoPopupKind(kind);
+    requestAnimationFrame(() => setInfoPopupVisible(true));
+    infoPopupHideTimerRef.current = setTimeout(() => {
+      setInfoPopupVisible(false);
+      infoPopupShowTimerRef.current = setTimeout(() => setInfoPopupKind(null), 300);
     }, 2000);
   };
+  const showPricingInfo = () => showInfoPopup("pricing", pricingButtonRef);
+  const showUploadOptimizeInfo = () => showInfoPopup("upload", uploadOptimizeInfoButtonRef);
   // 휴지통 항목의 복구/삭제 - 다른 항목들과 같은 우측 끝 삼점 메뉴 패턴으로 담는다.
   const [trashItemMenuOpen, setTrashItemMenuOpen] = useState(null); // 휴지통 항목 id
   const [trashItemMenuVisible, setTrashItemMenuVisible] = useState(false);
@@ -3336,6 +3341,35 @@ export default function Alloy() {
                 >
                   최적화
                 </span>
+                <button
+                  ref={uploadOptimizeInfoButtonRef}
+                  onClick={showUploadOptimizeInfo}
+                  disabled={infoPopupKind === "upload"}
+                  aria-label="최적화 안내"
+                  style={{
+                    width: 18,
+                    height: 18,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    cursor: infoPopupKind === "upload" ? "default" : "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: infoPopupKind === "upload" ? 0.5 : 1,
+                    transition: "opacity 0.3s ease, color 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => { if (infoPopupKind !== "upload") e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
+                </button>
               </div>
             </div>
 
@@ -3357,7 +3391,7 @@ export default function Alloy() {
                 <button
                   ref={pricingButtonRef}
                   onClick={showPricingInfo}
-                  disabled={pricingInfoOpen}
+                  disabled={infoPopupKind === "pricing"}
                   aria-label="요금 안내"
                   style={{
                     width: 18,
@@ -3366,15 +3400,15 @@ export default function Alloy() {
                     border: "none",
                     background: "transparent",
                     color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-                    cursor: pricingInfoOpen ? "default" : "pointer",
+                    cursor: infoPopupKind === "pricing" ? "default" : "pointer",
                     outline: "none",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    opacity: pricingInfoOpen ? 0.5 : 1,
+                    opacity: infoPopupKind === "pricing" ? 0.5 : 1,
                     transition: "opacity 0.3s ease, color 0.2s ease",
                   }}
-                  onMouseEnter={(e) => { if (!pricingInfoOpen) e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
+                  onMouseEnter={(e) => { if (infoPopupKind !== "pricing") e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"; }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -4548,17 +4582,17 @@ export default function Alloy() {
         </div>
       )}
 
-      {/* 요금 안내 패널 - 서브 액션바와 같은 리퀴드 글래스 배경을 쓰되, 하단 고정이 아니라
-          "모든 요금제를 확인하세요" 버튼 바로 밑 위치(pricingInfoPos)에 뜬다. 레이아웃
-          흐름에 얹지 않고 document.body에 포탈로 띄워 다른 내용을 밀어내지 않는다. */}
-      {pricingInfoOpen && createPortal(
+      {/* 안내 팝업 - 서브 액션바와 같은 리퀴드 글래스 배경을 쓰되, 하단 고정이 아니라
+          눌린 물음표 아이콘 바로 밑 위치(infoPopupPos)에 뜬다. 레이아웃 흐름에 얹지 않고
+          document.body에 포탈로 띄워 다른 내용을 밀어내지 않는다. kind에 따라 문구만 다르다. */}
+      {infoPopupKind && createPortal(
         <div
           style={{
             position: "fixed",
-            top: pricingInfoPos.top,
-            left: pricingInfoPos.left,
-            transform: pricingInfoVisible ? "translateY(0)" : "translateY(8px)",
-            opacity: pricingInfoVisible ? 1 : 0,
+            top: infoPopupPos.top,
+            left: infoPopupPos.left,
+            transform: infoPopupVisible ? "translateY(0)" : "translateY(8px)",
+            opacity: infoPopupVisible ? 1 : 0,
             zIndex: 50,
             padding: "12px 16px",
             borderRadius: 14,
@@ -4571,12 +4605,20 @@ export default function Alloy() {
             transition: "opacity 0.3s ease, transform 0.3s ease",
           }}
         >
-          <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-            Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
-          </div>
-          <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 4 }}>
-            기본 저장 공간 10GB를 초과하면 $0.015/GB 가 청구됩니다
-          </div>
+          {infoPopupKind === "pricing" ? (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                기본 저장 공간 10GB를 초과하면 $0.015/GB 가 청구됩니다
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+              이미지를 50% 해상도로 업로드합니다
+            </div>
+          )}
         </div>,
         document.body
       )}
