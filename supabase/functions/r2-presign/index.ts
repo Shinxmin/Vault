@@ -52,11 +52,10 @@ Deno.serve(async (req) => {
   };
 
   let body: {
-    action?: "put" | "get" | "get-batch" | "delete" | "copy";
+    action?: "put" | "get" | "get-batch" | "delete";
     key?: string;
     keys?: string[];
     contentType?: string;
-    destKey?: string;
   } = {};
   try {
     body = await req.json();
@@ -82,22 +81,6 @@ Deno.serve(async (req) => {
     if (body.action === "delete" && body.key) {
       const resp = await client.fetch(objectUrl(body.key), { method: "DELETE" });
       return json({ success: resp.ok || resp.status === 404 });
-    }
-    // 복사 - "복사" 메뉴로 만든 사본은 원본과 완전히 별개의 R2 오브젝트여야 한다. 같은
-    // r2Key를 그대로 재사용하면 겉보기엔 파일이 두 개지만 실제 바이트는 하나뿐이라,
-    // 둘 중 하나만 삭제해도(DELETE) 나머지 하나까지 함께 사라져 버린다. S3 호환 COPY
-    // (x-amz-copy-source 헤더를 쓴 PUT)로 서버에서 직접 새 오브젝트를 만들어 이 문제를 막는다.
-    if (body.action === "copy" && body.key && body.destKey) {
-      const copySource = `/${bucket}/${body.key.split("/").map(encodeURIComponent).join("/")}`;
-      const resp = await client.fetch(objectUrl(body.destKey), {
-        method: "PUT",
-        headers: { "x-amz-copy-source": copySource },
-      });
-      if (!resp.ok) {
-        console.error("R2 복사 실패:", resp.status, await resp.text());
-        return json({ error: "복사에 실패했습니다" }, 502);
-      }
-      return json({ success: true });
     }
     return json({ error: "지원하지 않는 action" }, 400);
   } catch (e) {

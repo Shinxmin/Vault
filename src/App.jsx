@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.81";
+const APP_VERSION = "0.1.82";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1345,118 +1345,6 @@ export default function Alloy() {
     closeMoveModal();
   };
 
-  // 복사 모달 - 이동 모달과 완전히 동일한 디자인/탐색 로직이지만, 원본은 그대로 두고
-  // 지정한 위치에 새 사본을 만든다. 폴더를 복사하면 그 하위 폴더/파일도 전부 함께
-  // 복사된다(새 id를 발급하고, path만 새 위치를 기준으로 다시 붙인다).
-  const [copyModalOpen, setCopyModalOpen] = useState(false);
-  const [copyModalVisible, setCopyModalVisible] = useState(false);
-  const [copyTarget, setCopyTarget] = useState(null); // { type: 'folder' | 'file', id, name }
-  const [copyBrowsePath, setCopyBrowsePath] = useState([]);
-  const [copyInProgress, setCopyInProgress] = useState(false);
-
-  const openCopyModal = (type, id, name) => {
-    setCopyTarget({ type, id, name });
-    setCopyBrowsePath([]);
-    setCopyModalOpen(true);
-    requestAnimationFrame(() => setCopyModalVisible(true));
-  };
-  const closeCopyModal = () => {
-    setCopyModalVisible(false);
-    setTimeout(() => {
-      setCopyModalOpen(false);
-      setCopyTarget(null);
-      setCopyBrowsePath([]);
-    }, 200);
-  };
-
-  const copyingFile = copyTarget && copyTarget.type === "file" ? files.find((f) => f.id === copyTarget.id) : null;
-  const copyingIsDoc = copyingFile && (copyingFile.kind === "doc" || copyingFile.kind === "text");
-  // 이동과 달리 복사는 원본이 그대로 남으므로 자기 자신/하위 폴더 안으로도 자유롭게
-  // 들어가 사본을 만들 수 있다(막을 이유가 없다).
-  const copyModalEntries = !copyModalOpen
-    ? []
-    : copyBrowsePath.length === 0
-    ? vaults.map((v) => ({ id: v.id, name: v.name, isVault: true }))
-    : copyingIsDoc
-    ? []
-    : folders
-        .filter(
-          (f) =>
-            f.path.length === copyBrowsePath.length + 1 &&
-            f.path.slice(0, copyBrowsePath.length).every((p, i) => p === copyBrowsePath[i])
-        )
-        .map((f) => ({ id: f.id, name: f.name, isVault: false }));
-  const canCopyHere = copyingIsDoc ? copyBrowsePath.length === 1 : copyBrowsePath.length >= 1;
-
-  // 파일을 실제로 복사한다 - 원본과 같은 r2Key를 그대로 재사용하면 겉보기엔 파일이 두 개지만
-  // R2에는 바이트가 하나뿐이라, 사본을 지우면(삼점 메뉴 "삭제") 그 삭제가 원본의 실제 바이트까지
-  // 함께 지워버린다(원본 레코드는 남아있어도 이미지를 다시 불러올 수 없게 된다). 그래서 서버에서
-  // R2 오브젝트 자체를 새 키로 복제한 뒤, 그 새 키를 가리키는 새 파일 레코드를 만든다.
-  const copyFileRecord = async (file, newPath, now) => {
-    let newR2Key = file.r2Key;
-    let newUrl = file.url;
-    if (file.r2Key) {
-      newR2Key = `${Date.now()}-${Math.random()}-${encodeURIComponent(file.name)}`;
-      await r2Presign({ action: "copy", key: file.r2Key, destKey: newR2Key });
-      newUrl = null;
-      if (file.kind === "image") {
-        const presigned = await r2Presign({ action: "get", key: newR2Key });
-        newUrl = presigned.url;
-      }
-    }
-    return { ...file, id: Date.now() + Math.random(), path: newPath, r2Key: newR2Key, url: newUrl, createdAt: now, updatedAt: now };
-  };
-
-  const confirmCopy = async () => {
-    if (!copyTarget || !canCopyHere || copyInProgress) {
-      if (!copyInProgress) closeCopyModal();
-      return;
-    }
-    setCopyInProgress(true);
-    try {
-      if (copyTarget.type === "folder") {
-        const folder = folders.find((f) => f.id === copyTarget.id);
-        if (folder) {
-          const oldPrefix = folder.path;
-          const newPrefix = [...copyBrowsePath, folder.name];
-          const descendantFolders = folders.filter(
-            (f) => f.id !== folder.id && f.path.length > oldPrefix.length && oldPrefix.every((seg, i) => f.path[i] === seg)
-          );
-          const descendantFiles = files.filter(
-            (f) => f.path.length >= oldPrefix.length && oldPrefix.every((seg, i) => f.path[i] === seg)
-          );
-          const now = Date.now();
-          const newFiles = await Promise.all(
-            descendantFiles.map((f) => copyFileRecord(f, [...newPrefix, ...f.path.slice(oldPrefix.length)], now))
-          );
-          const newFolders = [folder, ...descendantFolders].map((f) => ({
-            ...f,
-            id: Date.now() + Math.random(),
-            path: [...newPrefix, ...f.path.slice(oldPrefix.length)],
-            createdAt: now,
-            updatedAt: now,
-          }));
-          setFolders((prev) => [...prev, ...newFolders]);
-          setFiles((prev) => [...prev, ...newFiles]);
-        }
-      } else {
-        const file = files.find((f) => f.id === copyTarget.id);
-        if (file) {
-          const now = Date.now();
-          const newFile = await copyFileRecord(file, copyBrowsePath, now);
-          setFiles((prev) => [...prev, newFile]);
-        }
-      }
-      closeCopyModal();
-      showToast("데이터를 복사했습니다");
-    } catch (err) {
-      console.error("복사 실패:", err);
-      showToast("복사에 실패했습니다");
-    } finally {
-      setCopyInProgress(false);
-    }
-  };
-
   // 실제 갤러리/파일 선택 다이얼로그(input[type=file])를 통해 고른 항목을 R2에 업로드하고
   // 성공한 것만 현재 위치(currentPath)에 추가한다. 지원 형식(JPG/JPEG/PNG/GIF/APNG/WEBP/TXT)만 받는다.
   // 동시에 최대 UPLOAD_CONCURRENCY개만 실제로 전송하고(진행), 나머지는 차례를 기다리며(대기),
@@ -2558,56 +2446,30 @@ export default function Alloy() {
                             이름 바꾸기
                           </button>
                           {type !== "vault" && (
-                            <>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  closeItemMenu();
-                                  openMoveModal(type, item.id, item.name);
-                                }}
-                                style={{
-                                  width: "100%",
-                                  padding: "10px 12px",
-                                  border: "none",
-                                  background: "transparent",
-                                  color: isLight ? "#14161A" : "#FFFFFF",
-                                  fontSize: 15,
-                                  fontWeight: 500,
-                                  cursor: "pointer",
-                                  outline: "none",
-                                  textAlign: "left",
-                                  transition: "background 0.2s",
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                              >
-                                이동
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  closeItemMenu();
-                                  openCopyModal(type, item.id, item.name);
-                                }}
-                                style={{
-                                  width: "100%",
-                                  padding: "10px 12px",
-                                  border: "none",
-                                  background: "transparent",
-                                  color: isLight ? "#14161A" : "#FFFFFF",
-                                  fontSize: 15,
-                                  fontWeight: 500,
-                                  cursor: "pointer",
-                                  outline: "none",
-                                  textAlign: "left",
-                                  transition: "background 0.2s",
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                              >
-                                복사
-                              </button>
-                            </>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                closeItemMenu();
+                                openMoveModal(type, item.id, item.name);
+                              }}
+                              style={{
+                                width: "100%",
+                                padding: "10px 12px",
+                                border: "none",
+                                background: "transparent",
+                                color: isLight ? "#14161A" : "#FFFFFF",
+                                fontSize: 15,
+                                fontWeight: 500,
+                                cursor: "pointer",
+                                outline: "none",
+                                textAlign: "left",
+                                transition: "background 0.2s",
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                            >
+                              이동
+                            </button>
                           )}
                           <button
                             onClick={(e) => {
@@ -4766,220 +4628,6 @@ export default function Alloy() {
         </>
       )}
 
-      {/* 복사 모달 - 이동 모달과 완전히 동일한 디자인/탐색 흐름. */}
-      {copyModalOpen && (
-        <>
-          <div
-            onClick={closeCopyModal}
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "rgba(0,0,0,0.4)",
-              zIndex: 39,
-              opacity: copyModalVisible ? 1 : 0,
-              transition: "opacity 0.2s ease",
-            }}
-          />
-          <div
-            style={{
-              position: "fixed",
-              top: "50%",
-              left: "50%",
-              transform: copyModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-              opacity: copyModalVisible ? 1 : 0,
-              background: isLight ? "#FFFFFF" : "#1a1918",
-              borderRadius: 20,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-              padding: "32px 30px",
-              width: "84vw",
-              boxSizing: "border-box",
-              zIndex: 40,
-              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
-              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 19,
-                  fontWeight: 700,
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {copyTarget ? copyTarget.name : "복사"}
-              </h2>
-              <button
-                onClick={closeCopyModal}
-                onMouseDown={pressDown("scale(0.85)")}
-                onMouseUp={pressUp("scale(1)")}
-                aria-label="닫기"
-                style={{
-                  flexShrink: 0,
-                  width: 30,
-                  height: 30,
-                  borderRadius: 7,
-                  border: "none",
-                  background: "transparent",
-                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                  cursor: "pointer",
-                  outline: "none",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: 4,
-                margin: "12px 0",
-                paddingBottom: 12,
-                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-              }}
-            >
-              <button
-                onClick={() => setCopyBrowsePath([])}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 14,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  padding: 0,
-                  outline: "none",
-                  opacity: copyBrowsePath.length === 0 ? 1 : 0.7,
-                }}
-              >
-                홈
-              </button>
-              {copyBrowsePath.map((seg, index) => (
-                <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", fontSize: 14 }}>&gt;</span>
-                  <button
-                    onClick={() => setCopyBrowsePath(copyBrowsePath.slice(0, index + 1))}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: isLight ? "#14161A" : "#FFFFFF",
-                      fontSize: 14,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      padding: 0,
-                      outline: "none",
-                      opacity: index === copyBrowsePath.length - 1 ? 1 : 0.7,
-                    }}
-                  >
-                    {seg}
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ maxHeight: 300, overflowY: "auto", marginBottom: 16 }}>
-              {copyModalEntries.length === 0 ? (
-                <div
-                  style={{
-                    padding: "24px 0",
-                    textAlign: "center",
-                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
-                    fontSize: 14,
-                  }}
-                >
-                  {copyBrowsePath.length === 0 ? "Vault가 없습니다" : "하위 폴더가 없습니다"}
-                </div>
-              ) : (
-                copyModalEntries.map((entry) => (
-                  <div
-                    key={entry.id}
-                    onClick={() => setCopyBrowsePath([...copyBrowsePath, entry.name])}
-                    onMouseDown={pressDown("scale(0.98)")}
-                    onMouseUp={pressUp("scale(1)")}
-                    onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                      e.currentTarget.style.transform = "scale(1)";
-                    }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "10px 8px",
-                      borderRadius: 8,
-                      cursor: "pointer",
-                      transition: "background 0.2s ease, transform 0.15s ease",
-                    }}
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"} style={{ flexShrink: 0 }}>
-                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                    </svg>
-                    <div
-                      style={{
-                        flex: 1,
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {entry.name}
-                    </div>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="m9 6 6 6-6 6" />
-                    </svg>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <button
-              onClick={confirmCopy}
-              disabled={!canCopyHere || copyInProgress}
-              onMouseDown={canCopyHere && !copyInProgress ? pressDown("scale(0.95)") : undefined}
-              onMouseUp={canCopyHere && !copyInProgress ? pressUp("scale(1)") : undefined}
-              style={{
-                width: "100%",
-                padding: 10,
-                border: "none",
-                borderRadius: 8,
-                background: isLight ? "#14161A" : "#FFFFFF",
-                color: isLight ? "#FFFFFF" : "#14161A",
-                fontSize: 15,
-                fontWeight: 600,
-                cursor: canCopyHere && !copyInProgress ? "pointer" : "not-allowed",
-                opacity: canCopyHere && !copyInProgress ? 1 : 0.4,
-                outline: "none",
-                transition: "transform 0.15s ease, opacity 0.2s ease",
-              }}
-              onMouseEnter={(e) => { if (canCopyHere && !copyInProgress) e.currentTarget.style.transform = "translateY(-1px)"; }}
-              onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-            >
-              {copyInProgress ? "복사 중..." : "복사"}
-            </button>
-          </div>
-        </>
-      )}
       {/* 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다" 같은 짧은 안내를
           하단 탭바 바로 위에 2초간 페이드 인/아웃으로 보여준다. */}
       {toastMessage && (
