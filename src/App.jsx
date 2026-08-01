@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.74";
+const APP_VERSION = "0.1.75";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -300,7 +300,13 @@ export default function Alloy() {
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
-          if (error) console.error("Vaulty 상태 저장 실패:", error);
+          if (error) {
+            // 저장이 실패하면(예: 컬럼 스키마가 아직 반영되지 않은 경우) 콘솔 로그만으로는
+            // 사용자가 알아챌 방법이 없어 새로고침하면 변경 내용이 통째로 사라진 것처럼
+            // 보인다 - 눈에 보이는 안내를 반드시 함께 띄운다.
+            console.error("Vaulty 상태 저장 실패:", error);
+            showToast("저장에 실패했습니다. 새로고침하지 마세요");
+          }
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
