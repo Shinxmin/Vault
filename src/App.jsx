@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.80";
+const APP_VERSION = "0.1.81";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1352,6 +1352,7 @@ export default function Alloy() {
   const [copyModalVisible, setCopyModalVisible] = useState(false);
   const [copyTarget, setCopyTarget] = useState(null); // { type: 'folder' | 'file', id, name }
   const [copyBrowsePath, setCopyBrowsePath] = useState([]);
+  const [copyInProgress, setCopyInProgress] = useState(false);
 
   const openCopyModal = (type, id, name) => {
     setCopyTarget({ type, id, name });
@@ -1387,49 +1388,73 @@ export default function Alloy() {
         .map((f) => ({ id: f.id, name: f.name, isVault: false }));
   const canCopyHere = copyingIsDoc ? copyBrowsePath.length === 1 : copyBrowsePath.length >= 1;
 
-  const confirmCopy = () => {
-    if (!copyTarget || !canCopyHere) {
-      closeCopyModal();
+  // 파일을 실제로 복사한다 - 원본과 같은 r2Key를 그대로 재사용하면 겉보기엔 파일이 두 개지만
+  // R2에는 바이트가 하나뿐이라, 사본을 지우면(삼점 메뉴 "삭제") 그 삭제가 원본의 실제 바이트까지
+  // 함께 지워버린다(원본 레코드는 남아있어도 이미지를 다시 불러올 수 없게 된다). 그래서 서버에서
+  // R2 오브젝트 자체를 새 키로 복제한 뒤, 그 새 키를 가리키는 새 파일 레코드를 만든다.
+  const copyFileRecord = async (file, newPath, now) => {
+    let newR2Key = file.r2Key;
+    let newUrl = file.url;
+    if (file.r2Key) {
+      newR2Key = `${Date.now()}-${Math.random()}-${encodeURIComponent(file.name)}`;
+      await r2Presign({ action: "copy", key: file.r2Key, destKey: newR2Key });
+      newUrl = null;
+      if (file.kind === "image") {
+        const presigned = await r2Presign({ action: "get", key: newR2Key });
+        newUrl = presigned.url;
+      }
+    }
+    return { ...file, id: Date.now() + Math.random(), path: newPath, r2Key: newR2Key, url: newUrl, createdAt: now, updatedAt: now };
+  };
+
+  const confirmCopy = async () => {
+    if (!copyTarget || !canCopyHere || copyInProgress) {
+      if (!copyInProgress) closeCopyModal();
       return;
     }
-    if (copyTarget.type === "folder") {
-      const folder = folders.find((f) => f.id === copyTarget.id);
-      if (folder) {
-        const oldPrefix = folder.path;
-        const newPrefix = [...copyBrowsePath, folder.name];
-        const descendantFolders = folders.filter(
-          (f) => f.id !== folder.id && f.path.length > oldPrefix.length && oldPrefix.every((seg, i) => f.path[i] === seg)
-        );
-        const descendantFiles = files.filter(
-          (f) => f.path.length >= oldPrefix.length && oldPrefix.every((seg, i) => f.path[i] === seg)
-        );
-        const now = Date.now();
-        const newFolders = [folder, ...descendantFolders].map((f) => ({
-          ...f,
-          id: Date.now() + Math.random(),
-          path: [...newPrefix, ...f.path.slice(oldPrefix.length)],
-          createdAt: now,
-          updatedAt: now,
-        }));
-        const newFiles = descendantFiles.map((f) => ({
-          ...f,
-          id: Date.now() + Math.random(),
-          path: [...newPrefix, ...f.path.slice(oldPrefix.length)],
-          createdAt: now,
-          updatedAt: now,
-        }));
-        setFolders((prev) => [...prev, ...newFolders]);
-        setFiles((prev) => [...prev, ...newFiles]);
+    setCopyInProgress(true);
+    try {
+      if (copyTarget.type === "folder") {
+        const folder = folders.find((f) => f.id === copyTarget.id);
+        if (folder) {
+          const oldPrefix = folder.path;
+          const newPrefix = [...copyBrowsePath, folder.name];
+          const descendantFolders = folders.filter(
+            (f) => f.id !== folder.id && f.path.length > oldPrefix.length && oldPrefix.every((seg, i) => f.path[i] === seg)
+          );
+          const descendantFiles = files.filter(
+            (f) => f.path.length >= oldPrefix.length && oldPrefix.every((seg, i) => f.path[i] === seg)
+          );
+          const now = Date.now();
+          const newFiles = await Promise.all(
+            descendantFiles.map((f) => copyFileRecord(f, [...newPrefix, ...f.path.slice(oldPrefix.length)], now))
+          );
+          const newFolders = [folder, ...descendantFolders].map((f) => ({
+            ...f,
+            id: Date.now() + Math.random(),
+            path: [...newPrefix, ...f.path.slice(oldPrefix.length)],
+            createdAt: now,
+            updatedAt: now,
+          }));
+          setFolders((prev) => [...prev, ...newFolders]);
+          setFiles((prev) => [...prev, ...newFiles]);
+        }
+      } else {
+        const file = files.find((f) => f.id === copyTarget.id);
+        if (file) {
+          const now = Date.now();
+          const newFile = await copyFileRecord(file, copyBrowsePath, now);
+          setFiles((prev) => [...prev, newFile]);
+        }
       }
-    } else {
-      const file = files.find((f) => f.id === copyTarget.id);
-      if (file) {
-        const now = Date.now();
-        setFiles((prev) => [...prev, { ...file, id: Date.now() + Math.random(), path: copyBrowsePath, createdAt: now, updatedAt: now }]);
-      }
+      closeCopyModal();
+      showToast("데이터를 복사했습니다");
+    } catch (err) {
+      console.error("복사 실패:", err);
+      showToast("복사에 실패했습니다");
+    } finally {
+      setCopyInProgress(false);
     }
-    closeCopyModal();
-    showToast("데이터를 복사했습니다");
   };
 
   // 실제 갤러리/파일 선택 다이얼로그(input[type=file])를 통해 고른 항목을 R2에 업로드하고
@@ -4930,9 +4955,9 @@ export default function Alloy() {
 
             <button
               onClick={confirmCopy}
-              disabled={!canCopyHere}
-              onMouseDown={canCopyHere ? pressDown("scale(0.95)") : undefined}
-              onMouseUp={canCopyHere ? pressUp("scale(1)") : undefined}
+              disabled={!canCopyHere || copyInProgress}
+              onMouseDown={canCopyHere && !copyInProgress ? pressDown("scale(0.95)") : undefined}
+              onMouseUp={canCopyHere && !copyInProgress ? pressUp("scale(1)") : undefined}
               style={{
                 width: "100%",
                 padding: 10,
@@ -4942,15 +4967,15 @@ export default function Alloy() {
                 color: isLight ? "#FFFFFF" : "#14161A",
                 fontSize: 15,
                 fontWeight: 600,
-                cursor: canCopyHere ? "pointer" : "not-allowed",
-                opacity: canCopyHere ? 1 : 0.4,
+                cursor: canCopyHere && !copyInProgress ? "pointer" : "not-allowed",
+                opacity: canCopyHere && !copyInProgress ? 1 : 0.4,
                 outline: "none",
                 transition: "transform 0.15s ease, opacity 0.2s ease",
               }}
-              onMouseEnter={(e) => { if (canCopyHere) e.currentTarget.style.transform = "translateY(-1px)"; }}
+              onMouseEnter={(e) => { if (canCopyHere && !copyInProgress) e.currentTarget.style.transform = "translateY(-1px)"; }}
               onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
             >
-              복사
+              {copyInProgress ? "복사 중..." : "복사"}
             </button>
           </div>
         </>
