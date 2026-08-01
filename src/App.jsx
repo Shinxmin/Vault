@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.69";
+const APP_VERSION = "0.1.70";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -139,9 +139,9 @@ export default function Alloy() {
   const [customOrderActive, setCustomOrderActive] = useState(false);
   // storageLimitGB도 같은 이유로 여기서 미리 선언한다(저장 공간 한도, 기본 10GB).
   const [storageLimitGB, setStorageLimitGB] = useState(10);
-  // 업로드 압축 비율 - 설정 탭의 "업로드" 카드에서 정한다. 이미지/움짤을 올릴 때 원본
-  // 해상도의 이 %만큼만 줄여서 R2에 올린다. 100%(기본값)면 압축 없이 원본 그대로 올라간다.
-  const [uploadCompressPercent, setUploadCompressPercent] = useState(100);
+  // 업로드 방식 - 설정 탭의 "업로드" 카드에서 원본/최적화 스위치로 고른다. 최적화면
+  // 이미지/움짤만 원본 해상도의 50%로 줄여서 올린다(기본값은 원본 - 손대지 않고 그대로 올림).
+  const [uploadOptimizeEnabled, setUploadOptimizeEnabled] = useState(false);
   // 로그인 - 개인 웹사이트라 회원가입 기능은 없고, Supabase Auth에 미리 등록해 둔
   // 계정(들)으로만 로그인할 수 있다(가입 화면이 없으니 등록 안 된 계정은 애초에
   // signInWithPassword 자체가 실패한다). vaulty_state.user_id가 그 계정의 Vault
@@ -188,7 +188,7 @@ export default function Alloy() {
     setFolders(loadedFolders);
     setCustomOrderActive(row.custom_order_active === true);
     setStorageLimitGB(typeof row.storage_limit_gb === "number" && row.storage_limit_gb > 0 ? row.storage_limit_gb : 10);
-    setUploadCompressPercent(typeof row.upload_compress_percent === "number" && row.upload_compress_percent > 0 ? row.upload_compress_percent : 100);
+    setUploadOptimizeEnabled(row.upload_optimize_enabled === true);
     const trashImageKeys = loadedTrash.flatMap((t) => t.files || []).filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
     const imageKeys = [...loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key), ...trashImageKeys];
     if (imageKeys.length) {
@@ -250,7 +250,7 @@ export default function Alloy() {
     setTrash([]);
     setCustomOrderActive(false);
     setStorageLimitGB(10);
-    setUploadCompressPercent(100);
+    setUploadOptimizeEnabled(false);
     setCurrentPath([]);
   };
 
@@ -296,7 +296,7 @@ export default function Alloy() {
           files: filesToSave,
           custom_order_active: customOrderActive,
           storage_limit_gb: storageLimitGB,
-          upload_compress_percent: uploadCompressPercent,
+          upload_optimize_enabled: uploadOptimizeEnabled,
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
@@ -304,7 +304,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, storageLimitGB, uploadCompressPercent, dataLoaded, authUser, myRowId]);
+  }, [vaults, folders, files, customOrderActive, storageLimitGB, uploadOptimizeEnabled, dataLoaded, authUser, myRowId]);
 
   // 로그인 - 개인 웹사이트라 회원가입은 없고, Supabase Auth 대시보드에 미리 등록해 둔
   // 계정(이메일/비밀번호)으로만 로그인할 수 있다. 등록되지 않은 이메일이거나 비밀번호가
@@ -423,10 +423,10 @@ export default function Alloy() {
   const [settingsScreenOpen, setSettingsScreenOpen] = useState(false);
   const [settingsButtonHovered, setSettingsButtonHovered] = useState(false);
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
-  // 요금 안내 - "모든 요금제를 확인하세요"를 누르면 하단 서브 액션바와 같은 리퀴드 글래스
-  // 배경을 가진 별도의 뜬 패널이 그 텍스트 바로 밑 위치에 2초간 페이드 인/아웃으로 떴다가
-  // 사라진다(레이아웃 흐름에 얹혀 다른 내용을 밀어내지 않고, document.body에 포탈로 띄운다).
-  // 떠 있는 동안에는 "모든 요금제를 확인하세요" 버튼을 비활성화하고 투명도를 낮춘다.
+  // 요금 안내 - 청구 금액 제목 오른쪽의 물음표 아이콘을 누르면 하단 서브 액션바와 같은
+  // 리퀴드 글래스 배경을 가진 별도의 뜬 패널이 그 아이콘 바로 밑 위치에 2초간 페이드
+  // 인/아웃으로 떴다가 사라진다(레이아웃 흐름에 얹혀 다른 내용을 밀어내지 않고,
+  // document.body에 포탈로 띄운다). 떠 있는 동안에는 물음표 버튼을 비활성화하고 투명도를 낮춘다.
   const [pricingInfoOpen, setPricingInfoOpen] = useState(false);
   const [pricingInfoVisible, setPricingInfoVisible] = useState(false);
   const [pricingInfoPos, setPricingInfoPos] = useState({ top: 0, left: 0 });
@@ -513,26 +513,6 @@ export default function Alloy() {
   };
   // 한도 표시 전용 포맷 - 1,000GB(=1TB)일 때만 "1TB"로 보여주고, 999GB 이하는 그대로 GB로 보여준다.
   const formatStorageLimitDisplay = (gb) => (gb >= 1000 ? "1TB" : formatGBShort(gb * 1024 * 1024 * 1024));
-
-  // 업로드 압축 비율 입력 - 설정 탭 "업로드" 카드의 인풋은 항상 보이며, 유효한 값(1~100)을
-  // 입력하는 즉시 uploadCompressPercent에 반영된다(별도 적용 버튼 없음). 포커스를 벗어나면
-  // 범위를 벗어난 값/빈 값을 1~100으로 정리한다.
-  const [uploadCompressDraft, setUploadCompressDraft] = useState("100");
-  useEffect(() => {
-    setUploadCompressDraft(String(uploadCompressPercent));
-  }, [uploadCompressPercent]);
-  const handleUploadCompressChange = (e) => {
-    const raw = e.target.value;
-    setUploadCompressDraft(raw);
-    const v = parseInt(raw, 10);
-    if (!isNaN(v) && v >= 1 && v <= 100) setUploadCompressPercent(v);
-  };
-  const handleUploadCompressBlur = () => {
-    const v = parseInt(uploadCompressDraft, 10);
-    const clamped = isNaN(v) ? 100 : Math.max(1, Math.min(100, v));
-    setUploadCompressPercent(clamped);
-    setUploadCompressDraft(String(clamped));
-  };
 
   // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 기본 10GB를
   // 초과한 만큼만 GB당 $0.015를 곱한다.
@@ -1310,11 +1290,12 @@ export default function Alloy() {
       xhr.send(file);
     });
 
-  // 이미지/움짤을 올리기 전에 설정 탭 "업로드" 카드에서 정한 uploadCompressPercent만큼
-  // 해상도를 줄인다(100%면 그대로 건드리지 않는다). 캔버스는 GIF/APNG를 다시 그 형식으로
-  // 인코딩할 수 없어서(브라우저 표준 API의 한계) PNG는 PNG로 유지하고 그 외(JPEG/GIF/
-  // APNG/WEBP)는 JPEG로 인코딩한다 - 100% 미만으로 올린 움짤은 애니메이션 없는 정지
-  // 이미지가 된다.
+  // 이미지/움짤을 올리기 전에 설정 탭 "업로드" 카드의 "최적화" 스위치가 켜져 있으면
+  // 해상도를 percent%로 줄인다(원본 스위치면 이 함수 자체를 호출하지 않는다). 캔버스는
+  // GIF/APNG를 다시 그 형식으로 인코딩할 수 없어서(브라우저 표준 API의 한계) PNG는
+  // PNG로 유지하고 그 외(JPEG/GIF/APNG/WEBP)는 JPEG로 인코딩한다 - 최적화로 올린
+  // 움짤은 애니메이션 없는 정지 이미지가 된다.
+  const UPLOAD_OPTIMIZE_PERCENT = 50;
   const compressImageFile = (file, percent) =>
     new Promise((resolve, reject) => {
       const objectUrl = URL.createObjectURL(file);
@@ -1361,6 +1342,11 @@ export default function Alloy() {
       return;
     }
 
+    // 이 업로드 배치를 시작하는 시점의 스위치 값을 그대로 고정해서 쓴다 - 업로드 도중
+    // 설정 탭에서 스위치를 바꿔도 이미 시작된 배치에는 영향을 주지 않고, 그 다음 배치
+    // (또는 진행 중인 배치가 끝난 뒤 새로 시작하는 업로드)부터 새 값이 적용된다.
+    const optimizeThisBatch = uploadOptimizeEnabled;
+
     const queueItems = toUpload.map(({ file, kind }) => ({
       qid: `${Date.now()}-${Math.random()}`,
       file,
@@ -1389,8 +1375,8 @@ export default function Alloy() {
         let uploadBlob = file;
         let uploadType = file.type;
         let uploadSize = size;
-        if (kind === "image" && uploadCompressPercent < 100) {
-          const { blob, outType } = await compressImageFile(file, uploadCompressPercent);
+        if (kind === "image" && optimizeThisBatch) {
+          const { blob, outType } = await compressImageFile(file, UPLOAD_OPTIMIZE_PERCENT);
           uploadBlob = blob;
           uploadType = outType;
           uploadSize = blob.size;
@@ -3273,9 +3259,10 @@ export default function Alloy() {
               </div>
             </div>
 
-            {/* 업로드 - 휴지통 카드 바로 아래. 이미지/움짤을 올릴 때 원본 해상도의 몇 %로
-                줄여서 올릴지 정한다. 유효한 값을 입력하는 즉시 자동으로 반영되고(별도 적용
-                버튼 없음), 기본값은 100%(압축 없음)다. */}
+            {/* 업로드 - 휴지통 카드 바로 아래. 원본/최적화 스위치로 업로드 방식을 고른다.
+                최적화는 이미지/움짤에 한정해 원본 해상도의 50%로 줄여서 올린다. 업로드 도중
+                스위치를 바꿔도 이미 시작된 업로드에는 적용되지 않고, 그 다음 업로드부터
+                반영된다(handleFilesPicked가 배치 시작 시점의 값을 그대로 고정해서 쓴다). */}
             <div
               style={{
                 borderRadius: 14,
@@ -3289,34 +3276,53 @@ export default function Alloy() {
               <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 8 }}>
                 업로드
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={uploadCompressDraft}
-                  onChange={handleUploadCompressChange}
-                  onBlur={handleUploadCompressBlur}
-                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => setUploadOptimizeEnabled(false)}
+                  onMouseDown={pressDown("scale(0.97)")}
+                  onMouseUp={pressUp("scale(1)")}
                   style={{
-                    width: 56,
-                    padding: "6px 8px",
-                    textAlign: "center",
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    flex: 1,
+                    padding: "8px 0",
                     borderRadius: 8,
-                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 14,
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: !uploadOptimizeEnabled ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
+                    color: !uploadOptimizeEnabled ? (isLight ? "#FFFFFF" : "#14161A") : (isLight ? "#14161A" : "#FFFFFF"),
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
                     outline: "none",
+                    transition: "background 0.2s ease, color 0.2s ease, transform 0.15s ease",
                   }}
-                />
-                <span style={{ fontSize: 14, color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)" }}>%</span>
+                >
+                  원본
+                </button>
+                <button
+                  onClick={() => setUploadOptimizeEnabled(true)}
+                  onMouseDown={pressDown("scale(0.97)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  style={{
+                    flex: 1,
+                    padding: "8px 0",
+                    borderRadius: 8,
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: uploadOptimizeEnabled ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
+                    color: uploadOptimizeEnabled ? (isLight ? "#FFFFFF" : "#14161A") : (isLight ? "#14161A" : "#FFFFFF"),
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    outline: "none",
+                    transition: "background 0.2s ease, color 0.2s ease, transform 0.15s ease",
+                  }}
+                >
+                  최적화
+                </button>
               </div>
             </div>
 
             {/* 청구 금액 - 저장 공간 카드 바로 아래. 설정한 한도가 아니라 지금 실제로 쓰고
-                있는 용량 기준이다. 제목 밑의 "요금 안내" 작은 링크를 누르면 요금 안내
-                패널이 뜬다. 사용량이 기본 10GB 이하면 금액 텍스트를 보여주지 않는다. */}
+                있는 용량 기준이다. 제목 오른쪽의 물음표 아이콘을 누르면 요금 안내 패널이
+                뜬다. 사용량이 기본 10GB 이하면 금액 텍스트를 보여주지 않는다. */}
             <div
               style={{
                 borderRadius: 14,
@@ -3327,38 +3333,43 @@ export default function Alloy() {
                 padding: "14px 18px",
               }}
             >
-              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 6 }}>
-                청구 금액
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>청구 금액</span>
+                <button
+                  ref={pricingButtonRef}
+                  onClick={showPricingInfo}
+                  disabled={pricingInfoOpen}
+                  aria-label="요금 안내"
+                  style={{
+                    width: 18,
+                    height: 18,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    cursor: pricingInfoOpen ? "default" : "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: pricingInfoOpen ? 0.5 : 1,
+                    transition: "opacity 0.3s ease, color 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => { if (!pricingInfoOpen) e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
+                </button>
               </div>
               {billingOverageGB > 0 && (
                 <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "#14161A" : "#FFFFFF" }}>
                   {billingOverageGB % 1 === 0 ? billingOverageGB : billingOverageGB.toFixed(1)}GB ({billingAmount.toFixed(2)}$/월)
                 </div>
               )}
-              <button
-                ref={pricingButtonRef}
-                onClick={showPricingInfo}
-                disabled={pricingInfoOpen}
-                style={{
-                  display: "block",
-                  marginTop: 4,
-                  padding: 0,
-                  border: "none",
-                  background: "transparent",
-                  fontSize: 12,
-                  color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
-                  cursor: pricingInfoOpen ? "default" : "pointer",
-                  outline: "none",
-                  textDecoration: "underline",
-                  textUnderlineOffset: 2,
-                  opacity: pricingInfoOpen ? 0.5 : 1,
-                  transition: "opacity 0.3s ease, color 0.2s ease",
-                }}
-                onMouseEnter={(e) => { if (!pricingInfoOpen) e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"; }}
-              >
-                요금 안내
-              </button>
             </div>
 
             {/* 계정 카드 - 로그인 상태에서는 로그아웃 버튼, 로그아웃 상태에서는 로그인 폼을
