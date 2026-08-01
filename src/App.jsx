@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.70";
+const APP_VERSION = "0.1.71";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -3276,47 +3276,66 @@ export default function Alloy() {
               <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 8 }}>
                 업로드
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={() => setUploadOptimizeEnabled(false)}
-                  onMouseDown={pressDown("scale(0.97)")}
-                  onMouseUp={pressUp("scale(1)")}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span
                   style={{
-                    flex: 1,
-                    padding: "8px 0",
-                    borderRadius: 8,
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    background: !uploadOptimizeEnabled ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
-                    color: !uploadOptimizeEnabled ? (isLight ? "#FFFFFF" : "#14161A") : (isLight ? "#14161A" : "#FFFFFF"),
                     fontSize: 13,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    outline: "none",
-                    transition: "background 0.2s ease, color 0.2s ease, transform 0.15s ease",
+                    fontWeight: uploadOptimizeEnabled ? 400 : 600,
+                    color: uploadOptimizeEnabled
+                      ? (isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)")
+                      : (isLight ? "#14161A" : "#FFFFFF"),
                   }}
                 >
                   원본
-                </button>
+                </span>
                 <button
-                  onClick={() => setUploadOptimizeEnabled(true)}
-                  onMouseDown={pressDown("scale(0.97)")}
+                  onClick={() => setUploadOptimizeEnabled((v) => !v)}
+                  onMouseDown={pressDown("scale(0.94)")}
                   onMouseUp={pressUp("scale(1)")}
+                  role="switch"
+                  aria-checked={uploadOptimizeEnabled}
+                  aria-label="업로드 최적화"
                   style={{
-                    flex: 1,
-                    padding: "8px 0",
-                    borderRadius: 8,
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    background: uploadOptimizeEnabled ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
-                    color: uploadOptimizeEnabled ? (isLight ? "#FFFFFF" : "#14161A") : (isLight ? "#14161A" : "#FFFFFF"),
-                    fontSize: 13,
-                    fontWeight: 600,
+                    position: "relative",
+                    width: 38,
+                    height: 21,
+                    flexShrink: 0,
+                    borderRadius: 999,
+                    border: "none",
+                    background: uploadOptimizeEnabled
+                      ? (isLight ? "#14161A" : "#FFFFFF")
+                      : (isLight ? "rgba(20,22,26,0.15)" : "rgba(255,255,255,0.15)"),
                     cursor: "pointer",
                     outline: "none",
-                    transition: "background 0.2s ease, color 0.2s ease, transform 0.15s ease",
+                    padding: 0,
+                    transition: "background 0.25s ease, transform 0.15s ease",
+                  }}
+                >
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: 2,
+                      left: uploadOptimizeEnabled ? 19 : 2,
+                      width: 17,
+                      height: 17,
+                      borderRadius: "50%",
+                      background: isLight ? "#FFFFFF" : "#14161A",
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
+                      transition: "left 0.25s cubic-bezier(0.22, 1, 0.36, 1)",
+                    }}
+                  />
+                </button>
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: uploadOptimizeEnabled ? 600 : 400,
+                    color: uploadOptimizeEnabled
+                      ? (isLight ? "#14161A" : "#FFFFFF")
+                      : (isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)"),
                   }}
                 >
                   최적화
-                </button>
+                </span>
               </div>
             </div>
 
