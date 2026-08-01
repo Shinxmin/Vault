@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.75";
+const APP_VERSION = "0.1.76";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -942,7 +942,10 @@ export default function Alloy() {
       return next;
     });
   };
-  // 변환 - 실제로 적용한다. 같은 이름이 여러 개면 뒤에 (1), (2)...를 붙여 구분한다.
+  // 변환 - 실제로 적용한다. 지우기로 비워둔 채 적용하면(빈 이름) 원래 이름으로 되돌리지
+  // 않고, 목록 위에서부터(convertTargets 순서) 1, 2, 3...으로 순번을 붙인다(예: 12개를
+  // 지우고 그대로 적용하면 1~12로 일괄 번호가 매겨진다). 그 외에 이름이 겹치는 경우는
+  // 기존처럼 뒤에 (1), (2)...를 붙여 구분한다.
   const handleConvertApply = () => {
     const checkedItems = convertTargets.filter((item) => convertChecked[item.id]);
     if (!checkedItems.length) {
@@ -951,14 +954,22 @@ export default function Alloy() {
     }
     const finalNames = checkedItems.map((item) => ({
       id: item.id,
-      name: (convertDrafts[item.id] !== undefined ? convertDrafts[item.id] : item.name).trim() || item.name,
+      name: (convertDrafts[item.id] !== undefined ? convertDrafts[item.id] : item.name).trim(),
     }));
+    let blankCounter = 0;
+    const withBlanksNumbered = finalNames.map((f) => {
+      if (f.name === "") {
+        blankCounter += 1;
+        return { id: f.id, name: String(blankCounter) };
+      }
+      return f;
+    });
     const counts = {};
-    finalNames.forEach((f) => {
+    withBlanksNumbered.forEach((f) => {
       counts[f.name] = (counts[f.name] || 0) + 1;
     });
     const seen = {};
-    const resolved = finalNames.map((f) => {
+    const resolved = withBlanksNumbered.map((f) => {
       if (counts[f.name] > 1) {
         seen[f.name] = (seen[f.name] || 0) + 1;
         return { id: f.id, name: `${f.name}(${seen[f.name]})` };
