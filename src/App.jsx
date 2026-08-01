@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.73";
+const APP_VERSION = "0.1.74";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1811,12 +1811,12 @@ export default function Alloy() {
             style={{
               padding: "64px 0",
               textAlign: "center",
-              color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+              color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
               fontSize: 14,
             }}
           >
             로그인이 필요합니다
-            <div style={{ marginTop: 6, fontSize: 12, color: isLight ? "rgba(20,22,26,0.32)" : "rgba(255,255,255,0.32)" }}>
+            <div style={{ marginTop: 6, fontSize: 12, color: isLight ? "rgba(20,22,26,0.32)" : "rgba(255,255,255,0.42)" }}>
               설정에서 로그인해주세요
             </div>
           </div>
@@ -1870,7 +1870,7 @@ export default function Alloy() {
                 </button>
                 {currentPath.map((path, index) => (
                   <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 15 }}>
+                    <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", fontSize: 15 }}>
                       &gt;
                     </span>
                     <button
@@ -2454,7 +2454,7 @@ export default function Alloy() {
                         }}
                         style={{
                           fontSize: 12,
-                          color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)",
+                          color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.58)",
                           cursor: "pointer",
                         }}
                         onMouseEnter={(e) => e.currentTarget.style.textDecoration = "underline"}
@@ -2532,7 +2532,7 @@ export default function Alloy() {
                     })}
                     {renderTagPills(item)}
                     {subText && (
-                      <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 13, marginTop: 2 }}>
+                      <div style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", fontSize: 13, marginTop: 2 }}>
                         {subText}
                       </div>
                     )}
@@ -2633,7 +2633,7 @@ export default function Alloy() {
                       style={{
                         padding: "48px 0",
                         textAlign: "center",
-                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                         fontSize: 14,
                       }}
                     >
@@ -2692,7 +2692,7 @@ export default function Alloy() {
                       style={{
                         padding: "48px 0",
                         textAlign: "center",
-                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                         fontSize: 14,
                       }}
                     >
@@ -2745,7 +2745,7 @@ export default function Alloy() {
                       style={{
                         padding: "56px 0",
                         textAlign: "center",
-                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                         fontSize: 14,
                         lineHeight: 1.7,
                       }}
@@ -2834,7 +2834,7 @@ export default function Alloy() {
                           <div
                             style={{
                               marginTop: 5,
-                              color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                              color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
                               fontSize: 13,
                               overflow: "hidden",
                               textOverflow: "ellipsis",
@@ -2879,7 +2879,7 @@ export default function Alloy() {
                     style={{
                       padding: "48px 0",
                       textAlign: "center",
-                      color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                      color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                       fontSize: 14,
                     }}
                   >
@@ -3121,7 +3121,7 @@ export default function Alloy() {
                   cursor: "pointer",
                 }}
               >
-                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)" }}>
+                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)" }}>
                   시스템 설정
                 </span>
                 <button
@@ -3161,7 +3161,7 @@ export default function Alloy() {
               <div style={{ padding: "16px 18px" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>저장 공간</span>
-                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", display: "flex", alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", display: "flex", alignItems: "center" }}>
                     {formatGBShort(usedStorageBytes)}/
                     {storageLimitEditing ? (
                       <input
@@ -3219,14 +3219,14 @@ export default function Alloy() {
                     border: "none",
                     background: "transparent",
                     fontSize: 12,
-                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
                     cursor: "pointer",
                     outline: "none",
                     textDecoration: "underline",
                     textUnderlineOffset: 2,
                   }}
                   onMouseEnter={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"}
-                  onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"}
+                  onMouseLeave={(e) => e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)"}
                 >
                   한도 설정
                 </button>
@@ -3253,7 +3253,7 @@ export default function Alloy() {
                 <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>휴지통</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   {trash.length > 0 && (
-                    <span style={{ fontSize: 13, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)" }}>
+                    <span style={{ fontSize: 13, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)" }}>
                       {trash.length}
                     </span>
                   )}
@@ -3287,7 +3287,7 @@ export default function Alloy() {
                     fontSize: 13,
                     fontWeight: uploadOptimizeEnabled ? 400 : 600,
                     color: uploadOptimizeEnabled
-                      ? (isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)")
+                      ? (isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.5)")
                       : (isLight ? "#14161A" : "#FFFFFF"),
                   }}
                 >
@@ -3336,7 +3336,7 @@ export default function Alloy() {
                     fontWeight: uploadOptimizeEnabled ? 600 : 400,
                     color: uploadOptimizeEnabled
                       ? (isLight ? "#14161A" : "#FFFFFF")
-                      : (isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.4)"),
+                      : (isLight ? "rgba(20,22,26,0.4)" : "rgba(255,255,255,0.5)"),
                   }}
                 >
                   최적화
@@ -3483,7 +3483,7 @@ export default function Alloy() {
                   계정
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", flexShrink: 0, width: 48 }}>
                     이메일
                   </span>
                   <input
@@ -3509,7 +3509,7 @@ export default function Alloy() {
                   />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", flexShrink: 0, width: 48 }}>
+                  <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", flexShrink: 0, width: 48 }}>
                     비밀번호
                   </span>
                   <input
@@ -3639,7 +3639,7 @@ export default function Alloy() {
                 style={{
                   padding: "48px 0",
                   textAlign: "center",
-                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                   fontSize: 14,
                 }}
               >
@@ -3701,7 +3701,7 @@ export default function Alloy() {
                         >
                           {entry.name}
                         </div>
-                        <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 2 }}>
+                        <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", marginTop: 2 }}>
                           {daysLeft}일 후 영구 삭제
                         </div>
                       </div>
@@ -3920,7 +3920,7 @@ export default function Alloy() {
             <div
               style={{
                 marginBottom: 8,
-                color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)",
+                color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.58)",
                 fontSize: 14,
               }}
             >
@@ -4075,7 +4075,7 @@ export default function Alloy() {
                   : []),
               ].map((row) => (
                 <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)", fontSize: 15 }}>
+                  <span style={{ color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.58)", fontSize: 15 }}>
                     {row.label}
                   </span>
                   <span
@@ -4330,7 +4330,7 @@ export default function Alloy() {
               </button>
               {moveBrowsePath.map((seg, index) => (
                 <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", fontSize: 14 }}>&gt;</span>
+                  <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", fontSize: 14 }}>&gt;</span>
                   <button
                     onClick={() => setMoveBrowsePath(moveBrowsePath.slice(0, index + 1))}
                     style={{
@@ -4357,7 +4357,7 @@ export default function Alloy() {
                   style={{
                     padding: "24px 0",
                     textAlign: "center",
-                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                     fontSize: 14,
                   }}
                 >
@@ -4571,7 +4571,7 @@ export default function Alloy() {
                   style={{
                     flexShrink: 0,
                     fontSize: 11.5,
-                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
                   }}
                 >
                   ({formatMB(item.loaded)}/{formatMB(item.size)})
@@ -4610,7 +4610,7 @@ export default function Alloy() {
               <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
                 Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
               </div>
-              <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)", marginTop: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", marginTop: 4 }}>
                 기본 저장 공간 10GB를 초과하면 $0.015/GB 가 청구됩니다
               </div>
             </>
@@ -4713,7 +4713,7 @@ export default function Alloy() {
                 background: "transparent",
                 fontSize: 13,
                 fontWeight: 500,
-                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.62)",
                 cursor: "pointer",
                 outline: "none",
               }}
@@ -4739,7 +4739,7 @@ export default function Alloy() {
                   style={{
                     textAlign: "center",
                     padding: "20px 0",
-                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                     fontSize: 14,
                   }}
                 >
@@ -4974,7 +4974,7 @@ export default function Alloy() {
                 background: "transparent",
                 fontSize: 13,
                 fontWeight: 500,
-                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.62)",
                 cursor: "pointer",
                 outline: "none",
               }}
@@ -5001,7 +5001,7 @@ export default function Alloy() {
                   style={{
                     textAlign: "center",
                     padding: "20px 0",
-                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                    color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                     fontSize: 14,
                   }}
                 >
