@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.76";
+const APP_VERSION = "0.1.77";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -708,6 +708,9 @@ export default function Alloy() {
 
   // 정렬 - 단일 "ABC" 버튼 하나로 가나다순 -> 숫자순 -> 알파벳순을 순환한다.
   // 사용자 지정(꾹 눌러서 드래그) 정렬을 사용하면 배열 자체의 순서를 그대로 쓴다.
+  // localeCompare에 { numeric: true }를 줘서 이름 안에 섞인 숫자를 문자 하나씩이 아니라
+  // 값 그대로 비교한다 - 안 그러면 "예시(10)"이 "예시(2)"보다 앞에 온다("1" < "2"라서).
+  // 이 옵션을 주면 "예시(1)", "예시(2)", ..., "예시(9)", "예시(10)" 순서로 정렬된다.
   const sortItems = (items) => {
     if (sortMode === "custom") return items;
     const sorted = [...items];
@@ -720,19 +723,20 @@ export default function Alloy() {
         if (aIsNum && bIsNum) return na - nb;
         if (aIsNum) return -1;
         if (bIsNum) return 1;
-        return a.name.localeCompare(b.name);
+        return a.name.localeCompare(b.name, "en", { numeric: true });
       });
     } else if (sortMode === "en") {
-      sorted.sort((a, b) => a.name.localeCompare(b.name, "en"));
+      sorted.sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }));
     } else {
-      sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+      sorted.sort((a, b) => a.name.localeCompare(b.name, "ko", { numeric: true }));
     }
     return sorted;
   };
 
   // 검색 결과/"분류" 화면 전용 정렬 - 현재 정렬 모드(사용자 지정 드래그 순서 포함)와 무관하게
   // 항상 가나다순으로 보여준다(폴더는 별도 섹션으로 이미지보다 먼저 렌더링되어 항상 최상단에 온다).
-  const koSort = (items) => [...items].sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  // sortItems와 마찬가지로 숫자는 값 그대로 비교한다.
+  const koSort = (items) => [...items].sort((a, b) => a.name.localeCompare(b.name, "ko", { numeric: true }));
 
   // 폴더/문서 꾹 눌러서 드래그로 섹션 내 순서 변경(사용자 지정 정렬)
   const [draggingItem, setDraggingItem] = useState(null); // { type: 'folder' | 'file', id }
