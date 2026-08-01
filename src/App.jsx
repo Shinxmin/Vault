@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.72";
+const APP_VERSION = "0.1.73";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -3352,7 +3352,7 @@ export default function Alloy() {
                     padding: 0,
                     border: "none",
                     background: "transparent",
-                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    color: isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)",
                     cursor: infoPopupKind === "upload" ? "default" : "pointer",
                     outline: "none",
                     display: "flex",
@@ -3361,8 +3361,8 @@ export default function Alloy() {
                     opacity: infoPopupKind === "upload" ? 0.5 : 1,
                     transition: "opacity 0.3s ease, color 0.2s ease",
                   }}
-                  onMouseEnter={(e) => { if (infoPopupKind !== "upload") e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"; }}
+                  onMouseEnter={(e) => { if (infoPopupKind !== "upload") e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)"; }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" />
@@ -3399,7 +3399,7 @@ export default function Alloy() {
                     padding: 0,
                     border: "none",
                     background: "transparent",
-                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)",
+                    color: isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)",
                     cursor: infoPopupKind === "pricing" ? "default" : "pointer",
                     outline: "none",
                     display: "flex",
@@ -3408,8 +3408,8 @@ export default function Alloy() {
                     opacity: infoPopupKind === "pricing" ? 0.5 : 1,
                     transition: "opacity 0.3s ease, color 0.2s ease",
                   }}
-                  onMouseEnter={(e) => { if (infoPopupKind !== "pricing") e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.7)" : "rgba(255,255,255,0.7)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)"; }}
+                  onMouseEnter={(e) => { if (infoPopupKind !== "pricing") e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)"; }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" />
