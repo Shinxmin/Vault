@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.78";
+const APP_VERSION = "0.1.79";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1563,6 +1563,19 @@ export default function Alloy() {
       : infoTarget.type === "folder"
       ? files.filter((f) => pathStartsWith(f.path, infoItem.path)).reduce((s, f) => s + (f.size || 0), 0)
       : infoItem.size || 0;
+  // 정보 모달의 "해상도" 행 - 이미지/움짤 파일일 때만 "크기" 바로 위에 "3820x5420" 형태로
+  // 보여준다. 파일 메타데이터에 해상도를 저장해두지 않으므로, 모달을 열 때마다 이미지를
+  // 실제로 한 번 불러와 naturalWidth/naturalHeight를 읽는다.
+  const [infoImageDims, setInfoImageDims] = useState(null); // { w, h } | null
+  useEffect(() => {
+    setInfoImageDims(null);
+    if (infoTarget?.type === "file" && infoItem?.kind === "image" && infoItem?.url) {
+      const img = new Image();
+      img.onload = () => setInfoImageDims({ w: img.naturalWidth, h: img.naturalHeight });
+      img.onerror = () => setInfoImageDims(null);
+      img.src = infoItem.url;
+    }
+  }, [infoTarget?.id, infoTarget?.type, infoItem?.url, infoItem?.kind]);
 
   const getFileIcon = (mimeType) => {
     const color = isLight ? "#14161A" : "#FFFFFF";
@@ -4049,6 +4062,11 @@ export default function Alloy() {
                 { label: "이름", value: infoItem ? infoItem.name : "-" },
                 { label: "생성 일자", value: infoItem ? formatDate(infoItem.createdAt) : "-" },
                 { label: "수정 일자", value: infoItem ? formatDate(infoItem.updatedAt) : "-" },
+                // 해상도 - 이미지/움짤 파일일 때만 "크기" 바로 위에 보여준다. 아직 불러오는
+                // 중이면(infoImageDims === null) 빈 값 대신 로딩중임을 알 수 있게 "..."로 둔다.
+                ...(infoTarget && infoTarget.type === "file" && infoItem?.kind === "image"
+                  ? [{ label: "해상도", value: infoImageDims ? `${infoImageDims.w}x${infoImageDims.h}` : "..." }]
+                  : []),
                 { label: "크기", value: infoItem ? formatFileSize(infoItemSize) : "-" },
                 // 확장자 - Vault/폴더는 확장자 개념이 없으므로 파일(이미지/움짤/텍스트 등)일 때만 보여준다.
                 // 이름(item.name)에는 더 이상 확장자를 담지 않으므로 ext 필드를 우선 쓰고,
