@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.90";
+const APP_VERSION = "0.1.91";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1509,6 +1509,7 @@ export default function Alloy() {
   const [infoModalOpen, setInfoModalOpen] = useState(false);
   const [infoModalVisible, setInfoModalVisible] = useState(false);
   const [infoTarget, setInfoTarget] = useState(null); // { type: 'folder' | 'file', id }
+  const infoModalRef = useRef(null); // 섬네일 모달 높이를 맞추기 위해 실제 렌더링 높이를 잰다.
 
   const openInfoModal = (type, id) => {
     setInfoTarget({ type, id });
@@ -1553,7 +1554,11 @@ export default function Alloy() {
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
   const [coverPickerVisible, setCoverPickerVisible] = useState(false);
   const [coverPickerFolderId, setCoverPickerFolderId] = useState(null);
+  // 섬네일 모달의 크기(높이)를 지금 열려 있는 정보 모달과 똑같이 맞추기 위해,
+  // 열 때 정보 모달의 실제 렌더링 높이를 재서 그대로 적용한다.
+  const [coverPickerHeight, setCoverPickerHeight] = useState(null);
   const openCoverPicker = (folderId) => {
+    setCoverPickerHeight(infoModalRef.current ? infoModalRef.current.offsetHeight : null);
     setCoverPickerFolderId(folderId);
     setCoverPickerOpen(true);
     requestAnimationFrame(() => setCoverPickerVisible(true));
@@ -1570,7 +1575,7 @@ export default function Alloy() {
     ? files.filter((f) => f.kind === "image" && f.path.length === coverPickerFolder.path.length && f.path.every((p, i) => p === coverPickerFolder.path[i]))
     : [];
   const setFolderCover = (folderId, fileId) => {
-    setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, coverFileId: fileId, updatedAt: Date.now() } : f)));
+    setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, coverFileId: f.coverFileId === fileId ? undefined : fileId, updatedAt: Date.now() } : f)));
     closeCoverPicker();
   };
 
@@ -3907,6 +3912,7 @@ export default function Alloy() {
             }}
           />
           <div
+            ref={infoModalRef}
             style={{
               position: "fixed",
               top: "50%",
@@ -4064,18 +4070,21 @@ export default function Alloy() {
               border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
               padding: "32px 30px",
               width: "84vw",
+              height: coverPickerHeight || undefined,
               boxSizing: "border-box",
+              display: "flex",
+              flexDirection: "column",
               zIndex: 40,
               boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
               transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, flexShrink: 0 }}>
               <h2
                 style={{
                   margin: 0,
-                  fontSize: 19,
+                  fontSize: 20,
                   fontWeight: 700,
                   color: isLight ? "#14161A" : "#FFFFFF",
                   overflow: "hidden",
@@ -4118,7 +4127,10 @@ export default function Alloy() {
             {coverPickerImages.length === 0 ? (
               <div
                 style={{
-                  padding: "24px 0",
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   textAlign: "center",
                   color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
                   fontSize: 14,
@@ -4127,7 +4139,7 @@ export default function Alloy() {
                 이 폴더에 이미지가 없습니다
               </div>
             ) : (
-              <div style={{ maxHeight: 360, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, alignContent: "start" }}>
                 {coverPickerImages.map((img) => {
                   const isSelected = coverPickerFolder && coverPickerFolder.coverFileId === img.id;
                   return (
