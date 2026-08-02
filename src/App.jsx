@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.84";
+const APP_VERSION = "0.1.85";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -1225,33 +1225,71 @@ export default function Alloy() {
     });
 
   // 이미지/움짤을 올리기 전에 설정 탭 "업로드" 카드의 "최적화" 스위치가 켜져 있으면
-  // 해상도를 percent%로 줄인다(원본 스위치면 이 함수 자체를 호출하지 않는다). 캔버스는
-  // GIF/APNG를 다시 그 형식으로 인코딩할 수 없어서(브라우저 표준 API의 한계) PNG는
-  // PNG로 유지하고 그 외(JPEG/GIF/APNG/WEBP)는 JPEG로 인코딩한다 - 최적화로 올린
-  // 움짤은 애니메이션 없는 정지 이미지가 된다.
-  const UPLOAD_OPTIMIZE_PERCENT = 50;
-  const compressImageFile = (file, percent) =>
+  // 해상도는 그대로 두고 파일 용량을 원본의 절반 수준으로 줄인다(원본 스위치면 이
+  // 함수 자체를 호출하지 않는다). 캔버스는 GIF/APNG를 다시 그 형식으로 인코딩할 수
+  // 없어서(브라우저 표준 API의 한계) PNG는 PNG로 유지하고 그 외(JPEG/GIF/APNG/WEBP)는
+  // JPEG로 인코딩한다 - 최적화로 올린 움짤은 애니메이션 없는 정지 이미지가 된다.
+  //   · JPEG로 인코딩되는 경우: Canvas API가 "이 용량으로 인코딩해줘"를 직접 지원하지
+  //     않으므로, JPEG 압축 품질(quality)을 이진 탐색으로 여러 번 조절해 목표 용량
+  //     (원본의 50%)에 가장 가깝게(그러면서 화질은 최대한 높게) 맞춘다.
+  //   · PNG는 무손실이라 quality를 줘도 브라우저가 무시하므로 통하지 않는다 - 대신
+  //     픽셀 수를 절반으로 줄여(가로/세로 각각 약 70.7% = sqrt(0.5)) 대략 용량을
+  //     절반 수준으로 낮춘다.
+  const UPLOAD_OPTIMIZE_TARGET_RATIO = 0.5;
+  const canvasEncode = (img, w, h, outType, quality) =>
+    new Promise((resolve, reject) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("압축 실패"))), outType, quality);
+    });
+
+  const compressImageFile = (file) =>
     new Promise((resolve, reject) => {
       const objectUrl = URL.createObjectURL(file);
       const img = new Image();
-      img.onload = () => {
-        const scale = percent / 100;
-        const w = Math.max(1, Math.round(img.naturalWidth * scale));
-        const h = Math.max(1, Math.round(img.naturalHeight * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, w, h);
-        const outType = file.type === "image/png" ? "image/png" : "image/jpeg";
-        canvas.toBlob(
-          (blob) => {
-            URL.revokeObjectURL(objectUrl);
-            blob ? resolve({ blob, outType }) : reject(new Error("압축 실패"));
-          },
-          outType,
-          0.85
-        );
+      img.onload = async () => {
+        try {
+          const outType = file.type === "image/png" ? "image/png" : "image/jpeg";
+          const targetBytes = file.size * UPLOAD_OPTIMIZE_TARGET_RATIO;
+          let blob;
+          if (outType === "image/png") {
+            const scale = Math.sqrt(UPLOAD_OPTIMIZE_TARGET_RATIO);
+            const w = Math.max(1, Math.round(img.naturalWidth * scale));
+            const h = Math.max(1, Math.round(img.naturalHeight * scale));
+            blob = await canvasEncode(img, w, h, outType, undefined);
+          } else {
+            const w = img.naturalWidth;
+            const h = img.naturalHeight;
+            let lo = 0.05;
+            let hi = 0.92;
+            const hiBlob = await canvasEncode(img, w, h, outType, hi);
+            if (hiBlob.size <= targetBytes) {
+              blob = hiBlob;
+            } else {
+              const loBlob = await canvasEncode(img, w, h, outType, lo);
+              blob = loBlob;
+              if (loBlob.size <= targetBytes) {
+                for (let i = 0; i < 6; i++) {
+                  const mid = (lo + hi) / 2;
+                  const midBlob = await canvasEncode(img, w, h, outType, mid);
+                  if (midBlob.size <= targetBytes) {
+                    blob = midBlob;
+                    lo = mid;
+                  } else {
+                    hi = mid;
+                  }
+                }
+              }
+            }
+          }
+          URL.revokeObjectURL(objectUrl);
+          resolve({ blob, outType });
+        } catch (err) {
+          URL.revokeObjectURL(objectUrl);
+          reject(err);
+        }
       };
       img.onerror = () => {
         URL.revokeObjectURL(objectUrl);
@@ -1310,7 +1348,7 @@ export default function Alloy() {
         let uploadType = file.type;
         let uploadSize = size;
         if (kind === "image" && optimizeThisBatch) {
-          const { blob, outType } = await compressImageFile(file, UPLOAD_OPTIMIZE_PERCENT);
+          const { blob, outType } = await compressImageFile(file);
           uploadBlob = blob;
           uploadType = outType;
           uploadSize = blob.size;
@@ -3090,8 +3128,8 @@ export default function Alloy() {
             </div>
 
             {/* 업로드 - 휴지통 카드 바로 아래. 원본/최적화 스위치로 업로드 방식을 고른다.
-                최적화는 이미지/움짤에 한정해 원본 해상도의 50%로 줄여서 올린다. 업로드 도중
-                스위치를 바꿔도 이미 시작된 업로드에는 적용되지 않고, 그 다음 업로드부터
+                최적화는 이미지/움짤에 한정해 원본 용량의 50% 수준으로 줄여서 올린다. 업로드
+                도중 스위치를 바꿔도 이미 시작된 업로드에는 적용되지 않고, 그 다음 업로드부터
                 반영된다(handleFilesPicked가 배치 시작 시점의 값을 그대로 고정해서 쓴다). */}
             <div
               style={{
