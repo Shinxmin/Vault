@@ -68,3 +68,7 @@ alter table public.vaulty_state add column if not exists upload_compress_percent
 -- 업로드 방식 - 설정 탭의 "업로드" 카드에서 원본/최적화 스위치로 고른다. true(최적화)면
 -- 이미지/움짤만 원본 해상도의 50%로 줄여서 R2에 올린다. false(기본값, 원본)면 그대로 올라간다.
 alter table public.vaulty_state add column if not exists upload_optimize_enabled boolean not null default false;
+
+-- 보기(리스트/갤러리) - 마법사 메뉴의 "보기"로 위치별 폴더 리스트/갤러리 상태를 저장한다.
+-- { "홈/하위폴더경로": true } 형태의 JSON. 새로고침/로그아웃 후에도 유지되도록 저장한다.
+alter table public.vaulty_state add column if not exists gallery_view_paths jsonb not null default '{}'::jsonb;
