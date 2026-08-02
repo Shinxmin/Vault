@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.88";
+const APP_VERSION = "0.1.89";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -287,6 +287,23 @@ export default function Alloy() {
     return () => authListener.subscription.unsubscribe();
   }, []);
 
+  // 동기화 상태 - 홈/폴더 화면 하단 중앙에 작게 "☁ 동기화"로 보여준다. 폴더 생성/이미지
+  // 업로드 등으로 바뀐 내용이 실제로 DB(아래 저장 이펙트)에 정상 반영되는 동안은 계속
+  // 표기하고, 저장이 실패하거나(네트워크 오류 등) 아예 인터넷이 끊기면 숨긴다 - 사용자가
+  // "지금 내 변경사항이 안전하게 저장되고 있는지"를 감으로 알 수 있게 하는 용도다.
+  const [dbSyncOk, setDbSyncOk] = useState(true);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
   // 초기 로드가 끝난 뒤부터 folders/files/customOrderActive가 바뀔 때마다 살짝
   // 지연을 두고(짧은 시간 내 연속 변경을 한 번으로 묶어) Supabase에 저장한다. 로그인
   // 상태가 아니면 애초에 보여줄 데이터가 없으므로(웹드라이브는 로그인 전용) 절대
@@ -322,6 +339,9 @@ export default function Alloy() {
             // 보인다 - 눈에 보이는 안내를 반드시 함께 띄운다.
             console.error("Vaulty 상태 저장 실패:", error);
             showToast("저장에 실패했습니다. 새로고침하지 마세요");
+            setDbSyncOk(false);
+          } else {
+            setDbSyncOk(true);
           }
         });
     }, 800);
@@ -4480,6 +4500,33 @@ export default function Alloy() {
             </button>
           </div>
         </>
+      )}
+
+      {/* 동기화 표시 - 홈/폴더 화면 하단 중앙에 작게 "☁ 동기화"를 계속 띄워둔다. 방금
+          바뀐 내용(폴더 생성/이미지 업로드 등)이 DB에 정상 저장되고 있는 동안만 보이고,
+          저장이 실패하거나 인터넷이 끊기면 조용히 사라진다(별도 경고 없이 - 저장 실패
+          자체는 위 저장 이펙트가 서브 액션바로 따로 알린다). 설정 화면에서는 숨긴다. */}
+      {authUser && !settingsScreenOpen && dbSyncOk && isOnline && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 14,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 3,
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            pointerEvents: "none",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.4)"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17.5 19H6.5A4.5 4.5 0 0 1 6 10.03 5.5 5.5 0 0 1 16.9 8.5 4.5 4.5 0 0 1 17.5 19z" />
+          </svg>
+          <span style={{ fontSize: 11, fontWeight: 500, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.4)" }}>
+            동기화
+          </span>
+        </div>
       )}
 
       {/* 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다" 같은 짧은 안내를
