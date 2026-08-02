@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.87";
+const APP_VERSION = "0.1.88";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -144,7 +144,7 @@ export default function Alloy() {
   // 보기(리스트/갤러리) - 마법사 메뉴의 "보기"를 누르면 지금 보고 있는 위치의 폴더만
   // 갤러리형으로 바뀐다(그 안의 이미지/문서는 영향 없음 - 이미지는 원래도 갤러리다).
   // 위치별로 따로 기억한다(예: 홈에서 켜도 그 안의 하위 폴더까지 적용되지 않는다).
-  // 새로고침해도 유지할 필요는 없는 화면 전용 상태라 서버에 저장하지 않는다.
+  // gallery_view_paths 컬럼에 저장해 새로고침/로그아웃 후 다시 로그인해도 유지된다.
   const [galleryViewPaths, setGalleryViewPaths] = useState({}); // { [pathKey]: true }
   const currentPathKey = currentPath.join("/");
   const folderGalleryMode = !!galleryViewPaths[currentPathKey];
@@ -201,6 +201,7 @@ export default function Alloy() {
     setCustomOrderActive(row.custom_order_active === true);
     setStorageLimitGB(typeof row.storage_limit_gb === "number" && row.storage_limit_gb > 0 ? row.storage_limit_gb : 10);
     setUploadOptimizeEnabled(row.upload_optimize_enabled === true);
+    setGalleryViewPaths(row.gallery_view_paths && typeof row.gallery_view_paths === "object" ? row.gallery_view_paths : {});
     const trashImageKeys = loadedTrash.flatMap((t) => t.files || []).filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
     const imageKeys = [...loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key), ...trashImageKeys];
     if (imageKeys.length) {
@@ -262,6 +263,7 @@ export default function Alloy() {
     setCustomOrderActive(false);
     setStorageLimitGB(10);
     setUploadOptimizeEnabled(false);
+    setGalleryViewPaths({});
     setCurrentPath([]);
   };
 
@@ -310,6 +312,7 @@ export default function Alloy() {
           custom_order_active: customOrderActive,
           storage_limit_gb: storageLimitGB,
           upload_optimize_enabled: uploadOptimizeEnabled,
+          gallery_view_paths: galleryViewPaths,
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {
@@ -323,7 +326,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [folders, files, customOrderActive, storageLimitGB, uploadOptimizeEnabled, dataLoaded, authUser, myRowId]);
+  }, [folders, files, customOrderActive, storageLimitGB, uploadOptimizeEnabled, galleryViewPaths, dataLoaded, authUser, myRowId]);
 
   // 로그인 - 개인 웹사이트라 회원가입은 없고, Supabase Auth 대시보드에 미리 등록해 둔
   // 계정(이메일/비밀번호)으로만 로그인할 수 있다. 등록되지 않은 이메일이거나 비밀번호가
@@ -3931,7 +3934,7 @@ export default function Alloy() {
                       textDecoration: "underline",
                     }}
                   >
-                    커버
+                    섬네일
                   </button>
                 )}
               </div>
@@ -4060,7 +4063,7 @@ export default function Alloy() {
                   whiteSpace: "nowrap",
                 }}
               >
-                커버 - {coverPickerFolder ? coverPickerFolder.name : ""}
+                섬네일
               </h2>
               <button
                 onClick={closeCoverPicker}
