@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.83";
+const APP_VERSION = "0.1.84";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -110,14 +110,13 @@ export default function Alloy() {
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef(null);
 
-  // Vaulty 데이터 모델: Vault(프로젝트) > Folder(폴더) > Data(이미지/문서)
-  //  - vaults: 홈 화면에 카드로 보이는 최상위 프로젝트 [{id, name}]
-  //  - folders: path[0]가 소속 Vault 이름이며 path 는 자기 이름까지 포함
-  //  - files: path 는 소속 디렉터리(= Vault 이름 포함). kind 는 'image' | 'doc'
-  //    · 이미지/움짤(JPG/JPEG/PNG/GIF/APNG/WEBP)과 텍스트(TXT)만 업로드 가능
-  //    · 문서(doc)는 Vault 바로 아래(path.length === 1)에서만 생성/보관 가능
-  const [currentPath, setCurrentPath] = useState([]); // [] = 홈(Vault 목록)
-  const [vaults, setVaults] = useState([]);
+  // Vaulty 데이터 모델: Folder(폴더) > Data(이미지) - 홈이 곧 최상위 폴더다(예전의
+  // Vault 계층은 없앴다 - 폴더/데이터를 홈에 바로 만들 수 있다).
+  //  - folders: path 는 자기 이름까지 포함하는 조상 경로. 홈 바로 아래 폴더는 path.length === 1.
+  //  - files: path 는 소속 디렉터리(홈이면 []). kind 는 'image' | 'doc'
+  //    · 이미지/움짤(JPG/JPEG/PNG/GIF/APNG/WEBP)만 업로드 가능
+  //    · doc/text kind는 예전 버전에서 만들어진 문서가 남아있을 수 있어 표시만 계속 지원한다.
+  const [currentPath, setCurrentPath] = useState([]); // [] = 홈(최상위 폴더/데이터 목록)
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
 
@@ -144,8 +143,8 @@ export default function Alloy() {
   const [uploadOptimizeEnabled, setUploadOptimizeEnabled] = useState(false);
   // 로그인 - 개인 웹사이트라 회원가입 기능은 없고, Supabase Auth에 미리 등록해 둔
   // 계정(들)으로만 로그인할 수 있다(가입 화면이 없으니 등록 안 된 계정은 애초에
-  // signInWithPassword 자체가 실패한다). vaulty_state.user_id가 그 계정의 Vault
-  // 데이터가 들어있는 행을 가리킨다. 비로그인 상태에서는 Vault/폴더/파일 등은 전혀
+  // signInWithPassword 자체가 실패한다). vaulty_state.user_id가 그 계정의
+  // 데이터가 들어있는 행을 가리킨다. 비로그인 상태에서는 폴더/파일 등은 전혀
   // 불러오지 않고(웹드라이브 이용 불가), 게시글만 항상 공개된 'default' 행에서 읽는다.
   const [authUser, setAuthUser] = useState(null); // { id, username } | null
   const [authLoading, setAuthLoading] = useState(true);
@@ -167,10 +166,10 @@ export default function Alloy() {
     return { ...item, createdAt, updatedAt: item.updatedAt || createdAt };
   };
 
-  // Vaulty 상태(Vault/폴더/파일 목록) 영구 저장 - 계정별로 vaulty_state의 한 행(row)에
+  // Vaulty 상태(폴더/파일 목록) 영구 저장 - 계정별로 vaulty_state의 한 행(row)에
   // 저장한다. 파일의 실제 바이트는 R2에 있고 files[].r2Key로 R2 객체를 가리킨다.
   const [dataLoaded, setDataLoaded] = useState(false);
-  // 휴지통 - 삭제된 Vault/폴더/파일(이미지)은 바로 지워지지 않고 여기 담겨 7일간
+  // 휴지통 - 삭제된 폴더/파일(이미지)은 바로 지워지지 않고 여기 담겨 7일간
   // 보관된다. trash 컬럼은 이후에 추가된 것이라 아직 마이그레이션을 안 돌린 환경에서는
   // 없을 수 있으므로, select("*")로 있으면 읽고 없으면 빈 배열로 취급한다.
   const [trash, setTrash] = useState([]);
@@ -179,12 +178,15 @@ export default function Alloy() {
   // vaulty_state 한 행을 상태로 반영하는 공용 유틸 - 최초 비로그인 로드와 로그인 직후
   // 둘 다 이 함수를 쓴다. 이미지 표시용 url은 만료되는 presigned URL이라 DB에 저장하지
   // 않으므로 불러올 때마다 r2Key 기준으로 새로 발급받는다(휴지통 안 이미지도 포함).
+  // 예전 Vault 계층을 쓰던 계정의 데이터를 위한 1회성 비파괴 변환 - Vault 하나하나를
+  // 홈 바로 아래의 평범한 폴더로 취급한다. 하위 폴더/파일의 path는 이미 예전 Vault 이름을
+  // 첫 세그먼트로 갖고 있으므로 그대로 두면 새로 만든 폴더 밑으로 자연스럽게 들어간다.
+  const migrateVaultsToFolders = (vaults) => (vaults || []).map((v) => withDates({ ...v, path: [v.name] }));
+
   const hydrateFromRow = async (row) => {
-    const loadedVaults = (row.vaults || []).map(withDates);
-    const loadedFolders = (row.folders || []).map(withDates);
+    const loadedFolders = [...migrateVaultsToFolders(row.vaults), ...(row.folders || []).map(withDates)];
     const loadedFiles = (row.files || []).map(withDates);
     const loadedTrash = row.trash || [];
-    setVaults(loadedVaults);
     setFolders(loadedFolders);
     setCustomOrderActive(row.custom_order_active === true);
     setStorageLimitGB(typeof row.storage_limit_gb === "number" && row.storage_limit_gb > 0 ? row.storage_limit_gb : 10);
@@ -208,7 +210,7 @@ export default function Alloy() {
     }
   };
 
-  // 로그인 세션을 실제 앱 상태로 반영한다 - 이 계정의 vaulty_state 행을 찾아 Vault
+  // 로그인 세션을 실제 앱 상태로 반영한다 - 이 계정의 vaulty_state 행을 찾아
   // 데이터를 불러온다. 아직 어떤 계정에도 연결되지 않은 'default' 행이 있다면(처음
   // 로그인하는 계정인 경우) 그동안 로그인 없이 써오던 기존 데이터를 그대로 이 계정
   // 데이터로 이어받는다 - 회원가입 화면이 없으니 이 "최초 로그인 시 이어받기"가
@@ -240,11 +242,10 @@ export default function Alloy() {
     setAuthUser({ id: user.id, username });
   };
 
-  // 로그아웃/비로그인 상태로 되돌린다 - Vault 데이터는 화면에서 완전히 사라진다.
+  // 로그아웃/비로그인 상태로 되돌린다 - 데이터는 화면에서 완전히 사라진다.
   const clearMyData = () => {
     setAuthUser(null);
     setMyRowId("default");
-    setVaults([]);
     setFolders([]);
     setFiles([]);
     setTrash([]);
@@ -274,9 +275,9 @@ export default function Alloy() {
     return () => authListener.subscription.unsubscribe();
   }, []);
 
-  // 초기 로드가 끝난 뒤부터 vaults/folders/files/customOrderActive가 바뀔 때마다 살짝
+  // 초기 로드가 끝난 뒤부터 folders/files/customOrderActive가 바뀔 때마다 살짝
   // 지연을 두고(짧은 시간 내 연속 변경을 한 번으로 묶어) Supabase에 저장한다. 로그인
-  // 상태가 아니면 애초에 보여줄 Vault 데이터가 없으므로(웹드라이브는 로그인 전용) 절대
+  // 상태가 아니면 애초에 보여줄 데이터가 없으므로(웹드라이브는 로그인 전용) 절대
   // 저장을 시도하지 않는다 - 이 가드가 없으면 로그인 전 빈 상태가 실제 계정 데이터가
   // 든 행을 빈 배열로 덮어써버리는 사고로 이어진다.
   const saveTimerRef = useRef(null);
@@ -291,7 +292,9 @@ export default function Alloy() {
         .upsert({
           id: myRowId,
           user_id: authUser.id,
-          vaults,
+          // vaults는 더 이상 쓰지 않는 예전 컬럼 - 로드 시 폴더로 변환해 흡수했으므로
+          // 매번 빈 배열로 써서 다음 로드 때 같은 항목이 폴더로 중복 변환되지 않게 한다.
+          vaults: [],
           folders,
           files: filesToSave,
           custom_order_active: customOrderActive,
@@ -310,7 +313,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [vaults, folders, files, customOrderActive, storageLimitGB, uploadOptimizeEnabled, dataLoaded, authUser, myRowId]);
+  }, [folders, files, customOrderActive, storageLimitGB, uploadOptimizeEnabled, dataLoaded, authUser, myRowId]);
 
   // 로그인 - 개인 웹사이트라 회원가입은 없고, Supabase Auth 대시보드에 미리 등록해 둔
   // 계정(이메일/비밀번호)으로만 로그인할 수 있다. 등록되지 않은 이메일이거나 비밀번호가
@@ -377,11 +380,6 @@ export default function Alloy() {
     return () => clearInterval(interval);
   }, [dataLoaded]);
 
-  // Vault 생성 모달
-  const [vaultModalOpen, setVaultModalOpen] = useState(false);
-  const [vaultModalVisible, setVaultModalVisible] = useState(false);
-  const [vaultNameInput, setVaultNameInput] = useState("");
-
   const IMAGE_EXTS = ["jpg", "jpeg", "png", "gif", "apng", "webp"];
   const getKindFromName = (name) => {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -419,7 +417,7 @@ export default function Alloy() {
   const [itemMenuVisibleKey, setItemMenuVisibleKey] = useState(null);
   const [itemMenuAnchor, setItemMenuAnchor] = useState({ top: 0, right: 0 });
   // 삭제 - 확인 문구 없이, 삭제 버튼을 한 번 누르면 배경이 붉게 변하고(armed) 같은
-  // 버튼을 한 번 더 누르면 그때 실제로 삭제된다. Vault/폴더/파일(이미지) 전부 공용.
+  // 버튼을 한 번 더 누르면 그때 실제로 삭제된다. 폴더/파일(이미지) 전부 공용.
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
 
@@ -545,7 +543,7 @@ export default function Alloy() {
 
   // 경로 세그먼트 버튼 클릭 시 그 세그먼트 자신까지 포함해서 이동해야 한다.
   // slice(0, index)로 자기 자신을 빼먹으면 A>B에서 A를 눌러도 A 화면이 아니라
-  // 그 위(Vault 홈)로 튕겨나가는 버그가 생긴다.
+  // 그 위(홈)로 튕겨나가는 버그가 생긴다.
   const navigateToBreadcrumb = (index) => {
     setCurrentPath(currentPath.slice(0, index + 1));
   };
@@ -596,55 +594,6 @@ export default function Alloy() {
       setFolderModalOpen(false);
       setFolderName("");
     }, 200);
-  };
-
-  // Vault 생성 모달 - 홈에서 + 버튼을 누르면 열린다.
-  const openVaultModal = () => {
-    setVaultModalOpen(true);
-    requestAnimationFrame(() => setVaultModalVisible(true));
-  };
-  const closeVaultModal = () => {
-    setVaultModalVisible(false);
-    setTimeout(() => {
-      setVaultModalOpen(false);
-      setVaultNameInput("");
-    }, 200);
-  };
-  const createVault = () => {
-    if (vaultNameInput.trim()) {
-      const now = Date.now();
-      const trimmedName = vaultNameInput.trim();
-      setVaults((prev) => [...prev, { id: now, name: trimmedName, createdAt: now, updatedAt: now }]);
-    }
-    closeVaultModal();
-  };
-  // 삭제 = 휴지통으로 이동. Vault를 지우면 그 안의 폴더/파일도 통째로 하나의 휴지통
-  // 항목으로 담아서, "복구"를 누르면 원래 구조 그대로 되돌아온다.
-  const deleteVault = (vaultId) => {
-    const vault = vaults.find((v) => v.id === vaultId);
-    if (!vault) { closeItemMenu(); return; }
-    const descFolders = folders.filter((f) => f.path[0] === vault.name);
-    const descFiles = files.filter((f) => f.path[0] === vault.name);
-    setTrash((prev) => [...prev, {
-      id: Date.now(),
-      type: "vault",
-      name: vault.name,
-      deletedAt: Date.now(),
-      vault,
-      folders: descFolders,
-      files: descFiles,
-    }]);
-    setVaults((prev) => prev.filter((v) => v.id !== vaultId));
-    setFolders((prev) => prev.filter((f) => f.path[0] !== vault.name));
-    setFiles((prev) => prev.filter((f) => f.path[0] !== vault.name));
-    closeItemMenu();
-    showToast("데이터를 삭제했습니다");
-  };
-
-  // 홈에서는 + 가 Vault 생성 모달을, Vault/폴더 안에서는 업로드 메뉴를 연다.
-  const handleAddButton = () => {
-    if (currentPath.length === 0) openVaultModal();
-    else toggleUploadMenu();
   };
 
   const openItemMenu = (type, id, anchorEl) => {
@@ -747,7 +696,7 @@ export default function Alloy() {
   }, [draggingItem]);
 
   const reorderItem = (type, draggedId, targetId) => {
-    const setter = type === "folder" ? setFolders : type === "file" ? setFiles : setVaults;
+    const setter = type === "folder" ? setFolders : setFiles;
     setter((prev) => {
       const list = [...prev];
       const fromIndex = list.findIndex((it) => it.id === draggedId);
@@ -828,7 +777,7 @@ export default function Alloy() {
 
   // 이름 바꾸기 - 별도 모달 없이, 현재 화면에서 해당 항목의 제목 텍스트를 인라인 입력창으로
   // 바꿔서 바로 수정한다. 입력 후 포커스를 벗어나면(blur) 자동으로 저장된다.
-  const [editingItem, setEditingItem] = useState(null); // { type: 'vault' | 'folder' | 'file', id }
+  const [editingItem, setEditingItem] = useState(null); // { type: 'folder' | 'file', id }
   const [editingValue, setEditingValue] = useState("");
 
   const startInlineEdit = (type, id, currentName) => {
@@ -836,7 +785,7 @@ export default function Alloy() {
     setEditingValue(currentName);
   };
   // path가 prefix로 시작하는지, 그리고 그 prefix를 다른 prefix로 바꿔치기하는 헬퍼.
-  // Vault나 폴더 이름을 바꿀 때 그 하위의 모든 폴더/파일 path를 갱신하는 데 공용으로 쓴다
+  // 폴더 이름을 바꿀 때 그 하위의 모든 폴더/파일 path를 갱신하는 데 공용으로 쓴다
   // (깊이에 상관없이 동작 - 예전에는 폴더 이름을 바꾸면 하위 이미지의 path가 갱신되지 않아
   // 화면에서 사라지는 버그가 있었다).
   const pathStartsWith = (path, prefix) =>
@@ -847,16 +796,7 @@ export default function Alloy() {
     if (!editingItem) return;
     const newName = editingValue.trim();
     if (newName) {
-      if (editingItem.type === "vault") {
-        const vault = vaults.find((v) => v.id === editingItem.id);
-        setVaults((prev) => prev.map((v) => (v.id === editingItem.id ? { ...v, name: newName, updatedAt: Date.now() } : v)));
-        if (vault && vault.name !== newName) {
-          const oldPrefix = [vault.name];
-          const newPrefix = [newName];
-          setFolders((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
-          setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
-        }
-      } else if (editingItem.type === "folder") {
+      if (editingItem.type === "folder") {
         const folder = folders.find((f) => f.id === editingItem.id);
         if (folder) {
           const oldPrefix = folder.path;
@@ -875,8 +815,8 @@ export default function Alloy() {
     setEditingValue("");
   };
 
-  // 변환(일괄 이름 변경) 모달 - "마법사" 메뉴의 "변환"을 누르면 뜬다. 홈에서는 Vault들을,
-  // 폴더/Vault 안에서는 그 안의 하위 폴더·파일·이미지들을 체크해서 한 번에 새 이름으로 바꾼다.
+  // 변환(일괄 이름 변경) 모달 - "마법사" 메뉴의 "변환"을 누르면 뜬다. 지금 보고 있는
+  // 위치(홈 포함)의 하위 폴더·파일·이미지들을 체크해서 한 번에 새 이름으로 바꾼다.
   const [convertModalOpen, setConvertModalOpen] = useState(false);
   const [convertModalVisible, setConvertModalVisible] = useState(false);
   const [convertChecked, setConvertChecked] = useState({}); // { [id]: true }
@@ -884,19 +824,17 @@ export default function Alloy() {
   const [convertInput, setConvertInput] = useState("");
 
   const convertTargets = useMemo(() => {
-    const items = currentPath.length === 0
-      ? vaults.map((v) => ({ id: v.id, name: v.name, type: "vault" }))
-      : [
-          ...folders
-            .filter((f) => f.path.length === currentPath.length + 1 && f.path.slice(0, currentPath.length).every((p, i) => p === currentPath[i]))
-            .map((f) => ({ id: f.id, name: f.name, type: "folder" })),
-          ...files
-            .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
-            .map((f) => ({ id: f.id, name: f.name, type: "file" })),
-        ];
+    const items = [
+      ...folders
+        .filter((f) => f.path.length === currentPath.length + 1 && f.path.slice(0, currentPath.length).every((p, i) => p === currentPath[i]))
+        .map((f) => ({ id: f.id, name: f.name, type: "folder" })),
+      ...files
+        .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
+        .map((f) => ({ id: f.id, name: f.name, type: "file" })),
+    ];
     // 변환/태그 모달의 대상 목록은 항상 ㄱㄴㄷ(가나다)순으로 보여준다.
     return items.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-  }, [currentPath, vaults, folders, files]);
+  }, [currentPath, folders, files]);
 
   const openConvertModal = () => {
     setConvertChecked({});
@@ -977,50 +915,34 @@ export default function Alloy() {
     });
     const nameById = Object.fromEntries(resolved.map((r) => [r.id, r.name]));
     const now = Date.now();
-    if (currentPath.length === 0) {
-      const vaultRenames = resolved
-        .map((r) => {
-          const v = vaults.find((vv) => vv.id === r.id);
-          return v && v.name !== r.name ? { oldName: v.name, newName: r.name } : null;
-        })
-        .filter(Boolean);
-      setVaults((prev) => prev.map((v) => (nameById[v.id] ? { ...v, name: nameById[v.id], updatedAt: now } : v)));
-      vaultRenames.forEach(({ oldName, newName }) => {
-        const oldPrefix = [oldName];
-        const newPrefix = [newName];
-        setFolders((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
-        setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
-      });
-    } else {
-      const checkedFolders = checkedItems.filter((item) => item.type === "folder");
-      const checkedFiles = checkedItems.filter((item) => item.type === "file");
+    const checkedFolders = checkedItems.filter((item) => item.type === "folder");
+    const checkedFiles = checkedItems.filter((item) => item.type === "file");
 
-      // 폴더 이름이 바뀌면 그 하위 폴더/파일들의 path도 같이 rebase해야 한다(단일 이름 바꾸기와 동일 로직).
-      const folderRenames = checkedFolders
-        .map((item) => {
-          const folder = folders.find((f) => f.id === item.id);
-          const newName = nameById[item.id];
-          return folder && newName && folder.name !== newName ? { folder, newName } : null;
-        })
-        .filter(Boolean);
+    // 폴더 이름이 바뀌면 그 하위 폴더/파일들의 path도 같이 rebase해야 한다(단일 이름 바꾸기와 동일 로직).
+    const folderRenames = checkedFolders
+      .map((item) => {
+        const folder = folders.find((f) => f.id === item.id);
+        const newName = nameById[item.id];
+        return folder && newName && folder.name !== newName ? { folder, newName } : null;
+      })
+      .filter(Boolean);
 
-      if (checkedFolders.length) {
-        setFolders((prev) => prev.map((f) => {
-          if (!nameById[f.id] || !checkedFolders.some((c) => c.id === f.id)) return f;
-          const newName = nameById[f.id];
-          return { ...f, name: newName, path: [...f.path.slice(0, -1), newName], updatedAt: now };
-        }));
-      }
-      folderRenames.forEach(({ folder, newName }) => {
-        const oldPrefix = folder.path;
-        const newPrefix = [...oldPrefix.slice(0, -1), newName];
-        setFolders((prev) => prev.map((f) => (f.id !== folder.id && pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
-        setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
-      });
+    if (checkedFolders.length) {
+      setFolders((prev) => prev.map((f) => {
+        if (!nameById[f.id] || !checkedFolders.some((c) => c.id === f.id)) return f;
+        const newName = nameById[f.id];
+        return { ...f, name: newName, path: [...f.path.slice(0, -1), newName], updatedAt: now };
+      }));
+    }
+    folderRenames.forEach(({ folder, newName }) => {
+      const oldPrefix = folder.path;
+      const newPrefix = [...oldPrefix.slice(0, -1), newName];
+      setFolders((prev) => prev.map((f) => (f.id !== folder.id && pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
+      setFiles((prev) => prev.map((f) => (pathStartsWith(f.path, oldPrefix) ? { ...f, path: rebasePath(f.path, oldPrefix, newPrefix) } : f)));
+    });
 
-      if (checkedFiles.length) {
-        setFiles((prev) => prev.map((f) => (nameById[f.id] && checkedFiles.some((c) => c.id === f.id) ? { ...f, name: nameById[f.id], updatedAt: now } : f)));
-      }
+    if (checkedFiles.length) {
+      setFiles((prev) => prev.map((f) => (nameById[f.id] && checkedFiles.some((c) => c.id === f.id) ? { ...f, name: nameById[f.id], updatedAt: now } : f)));
     }
     closeConvertModal();
   };
@@ -1039,12 +961,9 @@ export default function Alloy() {
   const [tagScreenTags, setTagScreenTags] = useState([]);
 
   const tagTargets = useMemo(() => convertTargets.map((t) => {
-    const source =
-      t.type === "vault" ? vaults.find((v) => v.id === t.id) :
-      t.type === "folder" ? folders.find((f) => f.id === t.id) :
-      files.find((f) => f.id === t.id);
+    const source = t.type === "folder" ? folders.find((f) => f.id === t.id) : files.find((f) => f.id === t.id);
     return { ...t, tags: (source && source.tags) || [] };
-  }), [convertTargets, vaults, folders, files]);
+  }), [convertTargets, folders, files]);
 
   const openTagModal = () => {
     setTagChecked({});
@@ -1092,7 +1011,7 @@ export default function Alloy() {
     });
     setTagInput("");
   };
-  // 적용 - 실제로 vaults/folders/files에 태그 배열을 반영한다.
+  // 적용 - 실제로 folders/files에 태그 배열을 반영한다.
   const handleTagApply = () => {
     const checkedItems = tagTargets.filter((item) => tagChecked[item.id]);
     if (!checkedItems.length) {
@@ -1104,14 +1023,10 @@ export default function Alloy() {
     checkedItems.forEach((item) => {
       tagsById[item.id] = tagDrafts[item.id] !== undefined ? tagDrafts[item.id] : item.tags;
     });
-    if (currentPath.length === 0) {
-      setVaults((prev) => prev.map((v) => (tagsById[v.id] !== undefined ? { ...v, tags: tagsById[v.id], updatedAt: now } : v)));
-    } else {
-      const checkedFolderIds = checkedItems.filter((i) => i.type === "folder").map((i) => i.id);
-      const checkedFileIds = checkedItems.filter((i) => i.type === "file").map((i) => i.id);
-      if (checkedFolderIds.length) setFolders((prev) => prev.map((f) => (checkedFolderIds.includes(f.id) ? { ...f, tags: tagsById[f.id], updatedAt: now } : f)));
-      if (checkedFileIds.length) setFiles((prev) => prev.map((f) => (checkedFileIds.includes(f.id) ? { ...f, tags: tagsById[f.id], updatedAt: now } : f)));
-    }
+    const checkedFolderIds = checkedItems.filter((i) => i.type === "folder").map((i) => i.id);
+    const checkedFileIds = checkedItems.filter((i) => i.type === "file").map((i) => i.id);
+    if (checkedFolderIds.length) setFolders((prev) => prev.map((f) => (checkedFolderIds.includes(f.id) ? { ...f, tags: tagsById[f.id], updatedAt: now } : f)));
+    if (checkedFileIds.length) setFiles((prev) => prev.map((f) => (checkedFileIds.includes(f.id) ? { ...f, tags: tagsById[f.id], updatedAt: now } : f)));
     closeTagModal();
   };
 
@@ -1231,12 +1146,10 @@ export default function Alloy() {
       movingFolder.path.every((seg, i) => folder.path[i] === seg)
     );
   };
-  // 이동 모달의 탐색 목록: 홈(길이 0)에서는 Vault 를, 그 안에서는 폴더를 보여준다.
-  // 문서(doc)는 Vault 바로 아래에만 둘 수 있으므로 Vault 안에서는 하위 폴더를 노출하지 않는다.
+  // 이동 모달의 탐색 목록 - 홈부터 폴더를 타고 들어간다. 문서(doc, 레거시 데이터에만
+  // 남아있을 수 있음)는 홈 바로 아래에만 둘 수 있으므로 그 안에서는 하위 폴더를 노출하지 않는다.
   const moveModalEntries = !moveModalOpen
     ? []
-    : moveBrowsePath.length === 0
-    ? vaults.map((v) => ({ id: v.id, name: v.name, isVault: true }))
     : movingIsDoc
     ? []
     : folders
@@ -1246,9 +1159,9 @@ export default function Alloy() {
             f.path.slice(0, moveBrowsePath.length).every((p, i) => p === moveBrowsePath[i]) &&
             !isBlockedMoveFolder(f)
         )
-        .map((f) => ({ id: f.id, name: f.name, isVault: false }));
-  // "여기로 이동" 활성화 조건: 폴더/이미지는 Vault 안(길이>=1) 어디든, 문서는 Vault 루트(길이===1)만.
-  const canDropHere = movingIsDoc ? moveBrowsePath.length === 1 : moveBrowsePath.length >= 1;
+        .map((f) => ({ id: f.id, name: f.name }));
+  // "여기로 이동" 활성화 조건: 폴더/이미지는 홈 포함 어디든, 문서는 홈(길이===0)에만.
+  const canDropHere = movingIsDoc ? moveBrowsePath.length === 0 : true;
 
   const confirmMove = () => {
     if (!moveTarget || !canDropHere) {
@@ -1457,7 +1370,9 @@ export default function Alloy() {
     const checkedEntries = trash.filter((entry) => trashChecked[entry.id]);
     if (!checkedEntries.length) return;
     checkedEntries.forEach((entry) => {
-      if (entry.vault) setVaults((prev) => [...prev, entry.vault]);
+      // entry.vault는 Vault 계층이 있던 시절에 삭제된 휴지통 항목에만 남아있을 수 있는
+      // 레거시 필드 - 지금은 Vault가 없으므로 복구 시 평범한 홈 바로 아래 폴더로 되돌린다.
+      if (entry.vault) setFolders((prev) => [...prev, { ...entry.vault, path: [entry.vault.name] }]);
       const foldersToRestore = entry.folder ? [entry.folder, ...(entry.folders || [])] : (entry.folders || []);
       if (foldersToRestore.length) setFolders((prev) => [...prev, ...foldersToRestore]);
       if (entry.files && entry.files.length) setFiles((prev) => [...prev, ...entry.files]);
@@ -1480,11 +1395,11 @@ export default function Alloy() {
     setTrashChecked({});
   };
 
-  // 휴지통 복구 - 원래 있던 자리(vaults/folders/files)로 그대로 되돌려 놓는다.
+  // 휴지통 복구 - 원래 있던 자리(folders/files)로 그대로 되돌려 놓는다.
   const restoreTrashItem = (trashId) => {
     const entry = trash.find((t) => t.id === trashId);
     if (!entry) return;
-    if (entry.vault) setVaults((prev) => [...prev, entry.vault]);
+    if (entry.vault) setFolders((prev) => [...prev, { ...entry.vault, path: [entry.vault.name] }]);
     const foldersToRestore = entry.folder ? [entry.folder, ...(entry.folders || [])] : (entry.folders || []);
     if (foldersToRestore.length) setFolders((prev) => [...prev, ...foldersToRestore]);
     if (entry.files && entry.files.length) setFiles((prev) => [...prev, ...entry.files]);
@@ -1509,17 +1424,6 @@ export default function Alloy() {
     return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB`;
   };
 
-  // Vault 카드 하단에 보여줄 '35개 폴더, 140개 이미지 (35.5GB)' 형식의 통계 문구.
-  const vaultStatsText = (vaultName) => {
-    const folderCount = folders.filter((f) => f.path[0] === vaultName).length;
-    const vaultFiles = files.filter((f) => f.path[0] === vaultName);
-    const imageCount = vaultFiles.filter((f) => f.kind === "image").length;
-    const totalBytes = vaultFiles.reduce((s, f) => s + (f.size || 0), 0);
-    return `${folderCount}개 폴더, ${imageCount}개 이미지 (${formatFileSize(totalBytes)})`;
-  };
-  const vaultTotalBytes = (vaultName) =>
-    files.filter((f) => f.path[0] === vaultName).reduce((s, f) => s + (f.size || 0), 0);
-
   const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
   const formatDate = (ts) => {
     if (!ts) return "-";
@@ -1531,10 +1435,10 @@ export default function Alloy() {
   };
 
   // 정보 모달 - 삼점 메뉴의 "정보"를 누르면 대형 모달로 이름/생성 일자/수정 일자/크기를
-  // 보여준다. Vault/폴더/파일(이미지 포함) 공용.
+  // 보여준다. 폴더/파일(이미지 포함) 공용.
   const [infoModalOpen, setInfoModalOpen] = useState(false);
   const [infoModalVisible, setInfoModalVisible] = useState(false);
-  const [infoTarget, setInfoTarget] = useState(null); // { type: 'vault' | 'folder' | 'file', id }
+  const [infoTarget, setInfoTarget] = useState(null); // { type: 'folder' | 'file', id }
 
   const openInfoModal = (type, id) => {
     setInfoTarget({ type, id });
@@ -1550,16 +1454,12 @@ export default function Alloy() {
   };
   const infoItem = !infoTarget
     ? null
-    : infoTarget.type === "vault"
-    ? vaults.find((v) => v.id === infoTarget.id)
     : infoTarget.type === "folder"
     ? folders.find((f) => f.id === infoTarget.id)
     : files.find((f) => f.id === infoTarget.id);
   const infoItemSize =
     !infoTarget || !infoItem
       ? 0
-      : infoTarget.type === "vault"
-      ? vaultTotalBytes(infoItem.name)
       : infoTarget.type === "folder"
       ? files.filter((f) => pathStartsWith(f.path, infoItem.path)).reduce((s, f) => s + (f.size || 0), 0)
       : infoItem.size || 0;
@@ -1688,8 +1588,8 @@ export default function Alloy() {
       >
         {/* 상단 헤더 - "분류" 화면일 때만 제목("분류") + 닫기(X)를 보여주고, 그 외에는
             좌측에 "Vaulty" 제목, 중앙에 검색창(가운데 남는 공간의 2/3 폭), 우측에
-            사람 아이콘 버튼(설정 화면 열기)을 둔다. 예전 + 버튼(Vault 생성/업로드 메뉴
-            트리거)은 "마법사" 옆 "업로드" 버튼으로 옮겨갔다. */}
+            사람 아이콘 버튼(설정 화면 열기)을 둔다. 예전 + 버튼(업로드 메뉴 트리거)은
+            "마법사" 옆 "업로드" 버튼으로 옮겨갔다. */}
         <div style={stickyHeaderStyle}>
           {tagScreenTags.length ? (
             <>
@@ -1848,7 +1748,7 @@ export default function Alloy() {
           )}
         </div>
 
-        {/* 로그인 게이트 - 웹드라이브(Vault/폴더/파일)는 로그인 계정 전용 데이터라
+        {/* 로그인 게이트 - 웹드라이브(폴더/파일)는 로그인 계정 전용 데이터라
             로그인하지 않은 상태에서는 홈 탭 콘텐츠 전체 대신 안내만 보여준다.
             로딩이 끝나기 전(authLoading)에는 깜빡임을 피하려 아무것도 보여주지 않는다. */}
         {!authLoading && !authUser && (
@@ -2089,16 +1989,16 @@ export default function Alloy() {
                 )}
 
                 {/* 업로드 - 예전엔 상단 헤더 우측의 + 버튼이었는데, 그 자리를 설정(⚙) 버튼에
-                    내주면서 마법사 버튼 옆으로 옮겨왔다. 기존 + 버튼과 동일한 동작(홈에서는
-                    Vault 생성 모달, Vault/폴더 안에서는 업로드 메뉴)을 그대로 쓰되, 다른
-                    버튼들과 대비되도록 다크모드에서는 흰 배경, 라이트모드에서는 검은 배경을 쓴다. */}
+                    내주면서 마법사 버튼 옆으로 옮겨왔다. 홈을 포함해 어디서든 항상 업로드
+                    메뉴(업로드/폴더)를 여는 동일한 동작이다. 다른 버튼들과 대비되도록
+                    다크모드에서는 흰 배경, 라이트모드에서는 검은 배경을 쓴다. */}
                 <button
                   ref={uploadButtonRef}
-                  onClick={handleAddButton}
+                  onClick={toggleUploadMenu}
                   onMouseDown={pressDown("scale(0.9)")}
                   onMouseUp={pressUp("scale(1)")}
-                  aria-label={currentPath.length === 0 ? "새 프로젝트" : "업로드"}
-                  title={currentPath.length === 0 ? "새 프로젝트" : "업로드"}
+                  aria-label="업로드"
+                  title="업로드"
                   style={{
                     minWidth: 36,
                     height: 30,
@@ -2131,7 +2031,7 @@ export default function Alloy() {
                       <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
                   )}
-                  {currentPath.length === 0 ? "새 프로젝트" : "업로드"}
+                  업로드
                 </button>
 
                 {/* 숨겨진 파일 입력 - 이미지·움짤만 받는다 */}
@@ -2144,8 +2044,8 @@ export default function Alloy() {
                   style={{ display: "none" }}
                 />
 
-                {/* 업로드 메뉴 - Vault/폴더 안에서 업로드 버튼을 누르면 뜬다(홈에서는 버튼이
-                    바로 Vault 생성 모달을 연다). 텍스트 문서 생성 옵션은 더 이상 없다. */}
+                {/* 업로드 메뉴 - 홈을 포함해 어디서든 업로드 버튼을 누르면 뜬다.
+                    텍스트 문서 생성 옵션은 더 이상 없다. */}
                 {uploadMenuOpen && createPortal(
                   <>
                     <div onClick={closeUploadMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 19 }} />
@@ -2229,17 +2129,17 @@ export default function Alloy() {
             </div>
             )}
 
-            {/* 구분선 아래 드라이브 공간 - 홈에서는 Vault 카드, Vault/폴더 안에서는
-                폴더(행) + 문서(행) + 이미지(비율 콜라주)를 함께 보여준다. */}
+            {/* 구분선 아래 드라이브 공간 - 홈을 포함해 어디서든 폴더(행) + 문서(행) +
+                이미지(비율 콜라주)를 함께 보여준다. */}
             {(() => {
-              // 삼점 메뉴(이름 수정/이동/삭제) - Vault/폴더/파일 공용. Vault 에는 '이동'이 없다.
+              // 삼점 메뉴(이름 수정/이동/삭제) - 폴더/파일 공용.
               // 버튼/래퍼 양쪽에서 stopPropagation 하고 5px 안전 여백을 둬서 근처를 눌러도
               // 항목이 열리지 않고 메뉴만 토글되도록 하며, backdropFilter 컨테이닝 블록 문제를
               // 피하기 위해 드롭다운은 document.body 로 포탈해 화면 좌표로 띄운다.
               const renderItemMenu = (type, item) => {
                 const isOpen = itemMenuOpen && itemMenuOpen.type === type && itemMenuOpen.id === item.id;
                 const isVisible = itemMenuVisibleKey === `${type}-${item.id}`;
-                const onDelete = type === "vault" ? deleteVault : type === "folder" ? deleteFolder : deleteFile;
+                const onDelete = type === "folder" ? deleteFolder : deleteFile;
                 return (
                   <div
                     style={{ position: "relative", margin: -5, padding: 5, flexShrink: 0 }}
@@ -2341,32 +2241,30 @@ export default function Alloy() {
                           >
                             이름 바꾸기
                           </button>
-                          {type !== "vault" && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                closeItemMenu();
-                                openMoveModal(type, item.id, item.name);
-                              }}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                border: "none",
-                                background: "transparent",
-                                color: isLight ? "#14161A" : "#FFFFFF",
-                                fontSize: 15,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                outline: "none",
-                                textAlign: "left",
-                                transition: "background 0.2s",
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                            >
-                              이동
-                            </button>
-                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeItemMenu();
+                              openMoveModal(type, item.id, item.name);
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "10px 12px",
+                              border: "none",
+                              background: "transparent",
+                              color: isLight ? "#14161A" : "#FFFFFF",
+                              fontSize: 15,
+                              fontWeight: 500,
+                              cursor: "pointer",
+                              outline: "none",
+                              textAlign: "left",
+                              transition: "background 0.2s",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                          >
+                            이동
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2781,125 +2679,7 @@ export default function Alloy() {
                 );
               }
 
-              // ── 홈: Vault(프로젝트) 카드 목록 (2열, 세로 여백 넉넉히) ──
-              if (currentPath.length === 0) {
-                const visibleVaults = sortItems(vaults);
-                if (visibleVaults.length === 0) {
-                  return (
-                    <div
-                      style={{
-                        padding: "56px 0",
-                        textAlign: "center",
-                        color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
-                        fontSize: 14,
-                        lineHeight: 1.7,
-                      }}
-                    >
-                      아직 프로젝트가 없습니다
-                    </div>
-                  );
-                }
-                return (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {visibleVaults.map((vault) => {
-                      const isPickedUp = draggingItem && draggingItem.type === "vault" && draggingItem.id === vault.id;
-                      return (
-                      <div
-                        key={vault.id}
-                        data-drag-type="vault"
-                        data-drag-id={vault.id}
-                        onClick={() => {
-                          if (justDraggedRef.current) return;
-                          setCurrentPath([vault.name]);
-                        }}
-                        onPointerDown={rowPointerDown("vault", vault.id)}
-                        onPointerMove={rowPointerMove}
-                        onPointerUp={rowPointerUp}
-                        onMouseDown={pressDown("scale(0.98)")}
-                        onMouseUp={pressUp("none")}
-                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)";
-                          e.currentTarget.style.transform = isPickedUp ? e.currentTarget.style.transform : "none";
-                        }}
-                        style={{
-                          position: "relative",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 20,
-                          padding: "48px 18px",
-                          borderRadius: 16,
-                          background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                          backdropFilter: "blur(20px) saturate(180%)",
-                          WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                          border: `1px solid ${
-                            dragOverKey === `vault-${vault.id}` || isPickedUp
-                              ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
-                              : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
-                          }`,
-                          cursor: "pointer",
-                          touchAction: "manipulation",
-                          userSelect: "none",
-                          WebkitUserSelect: "none",
-                          WebkitTouchCallout: "none",
-                          transform: isPickedUp ? "scale(1.04)" : "none",
-                          boxShadow: isPickedUp ? "0 16px 36px rgba(0,0,0,0.35)" : "none",
-                          zIndex: isPickedUp ? 5 : "auto",
-                          transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease",
-                        }}
-                      >
-                        {/* 좌측 중앙정렬 금고(safe) 아이콘 */}
-                        <svg
-                          width="52"
-                          height="52"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke={isLight ? "#14161A" : "#FFFFFF"}
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          style={{ flexShrink: 0 }}
-                        >
-                          <rect x="3" y="3" width="20" height="20" rx="2.5" />
-                          <circle cx="12" cy="12" r="4.5" />
-                          <circle cx="12" cy="12" r="1" fill={isLight ? "#14161A" : "#FFFFFF"} stroke="none" />
-                          <path d="M12 7.5v1M12 15.5v1M7.5 12h1M15.5 12h1" />
-                        </svg>
-
-                        {/* 중앙: 제목(볼드) + 밑에 통계 */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          {renderEditableName("vault", vault, {
-                            color: isLight ? "#14161A" : "#FFFFFF",
-                            fontSize: 17,
-                            fontWeight: 700,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          })}
-                          <div
-                            style={{
-                              marginTop: 5,
-                              color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
-                              fontSize: 13,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {vaultStatsText(vault.name)}
-                          </div>
-                        </div>
-
-                        {/* 우측 중앙정렬 삼점 메뉴 */}
-                        {renderItemMenu("vault", vault)}
-                      </div>
-                      );
-                    })}
-                  </div>
-                );
-              }
-
-              // ── Vault/폴더 안: 폴더(행) + 문서(행) + 이미지(콜라주) ──
+              // ── 홈을 포함해 어디서든: 폴더(행) + 문서(행) + 이미지(콜라주) ──
               const visibleFolders = sortItems(
                 folders.filter(
                   (f) =>
@@ -3573,7 +3353,7 @@ export default function Alloy() {
           </div>
             )}
 
-            {/* 휴지통 화면 - 삭제된 Vault/폴더/파일이 삭제된 시점으로부터 7일간 여기 담긴다.
+            {/* 휴지통 화면 - 삭제된 폴더/파일이 삭제된 시점으로부터 7일간 여기 담긴다.
                 복구를 누르면 원래 위치로 돌아가고, 삭제를 누르면 확인 절차 없이 바로 영구 삭제된다. */}
             {trashScreenOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -3854,149 +3634,8 @@ export default function Alloy() {
 
       </div>
 
-      {/* Vault(프로젝트) 생성 모달 - 제목 "Vault" + 우측 X, 인풋 + 오른쪽 생성 버튼.
-          빈 배경(딤 오버레이) 클릭 시 취소된다. */}
-      {vaultModalOpen && (
-        <>
-          <div
-            onClick={closeVaultModal}
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "rgba(0,0,0,0.4)",
-              zIndex: 39,
-              opacity: vaultModalVisible ? 1 : 0,
-              transition: "opacity 0.2s ease",
-            }}
-          />
-          <div
-            style={{
-              position: "fixed",
-              top: "50%",
-              left: "50%",
-              transform: vaultModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-              opacity: vaultModalVisible ? 1 : 0,
-              background: isLight ? "#FFFFFF" : "#1a1918",
-              borderRadius: 16,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-              padding: "24px 30px",
-              width: "84vw",
-              boxSizing: "border-box",
-              zIndex: 40,
-              boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
-              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* 제목 + 우측 끝 X 버튼 */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 19,
-                  fontWeight: 700,
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                }}
-              >
-                Vault
-              </h2>
-              <button
-                onClick={closeVaultModal}
-                onMouseDown={pressDown("scale(0.85)")}
-                onMouseUp={pressUp("scale(1)")}
-                aria-label="닫기"
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 6,
-                  border: "none",
-                  background: "transparent",
-                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                  cursor: "pointer",
-                  outline: "none",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                </svg>
-              </button>
-            </div>
-
-            {/* 설명 글씨 */}
-            <div
-              style={{
-                marginBottom: 8,
-                color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.58)",
-                fontSize: 14,
-              }}
-            >
-              새 프로젝트 만들기
-            </div>
-
-            {/* 인풋 + 오른쪽 생성 버튼 */}
-            <div style={{ display: "flex", gap: 10 }}>
-              <input
-                type="text"
-                value={vaultNameInput}
-                onChange={(e) => setVaultNameInput(e.target.value)}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") createVault();
-                  if (e.key === "Escape") closeVaultModal();
-                }}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  padding: 12,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  borderRadius: 8,
-                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 17,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  transition: "border-color 0.2s ease",
-                }}
-              />
-              <button
-                onClick={createVault}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  flexShrink: 0,
-                  padding: "0 16px",
-                  border: "none",
-                  borderRadius: 8,
-                  background: isLight ? "#14161A" : "#FFFFFF",
-                  color: isLight ? "#FFFFFF" : "#14161A",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  outline: "none",
-                  transition: "transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-              >
-                생성
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
       {/* 정보 모달 - 이름/생성 일자/수정 일자/크기를 보여주는 단순 정보 모달.
-          Vault/폴더/파일 공용. 별도 확인 버튼 없이 상단 제목열 오른쪽 X로만 닫는다. */}
+          폴더/파일 공용. 별도 확인 버튼 없이 상단 제목열 오른쪽 X로만 닫는다. */}
       {infoModalOpen && (
         <>
           <div
@@ -4084,7 +3723,7 @@ export default function Alloy() {
                   ? [{ label: "해상도", value: infoImageDims ? `${infoImageDims.w}x${infoImageDims.h}` : "..." }]
                   : []),
                 { label: "크기", value: infoItem ? formatFileSize(infoItemSize) : "-" },
-                // 확장자 - Vault/폴더는 확장자 개념이 없으므로 파일(이미지/움짤/텍스트 등)일 때만 보여준다.
+                // 확장자 - 폴더는 확장자 개념이 없으므로 파일(이미지/움짤/텍스트 등)일 때만 보여준다.
                 // 이름(item.name)에는 더 이상 확장자를 담지 않으므로 ext 필드를 우선 쓰고,
                 // ext가 없는 예전 데이터는 이름에서 파싱해 보여준다.
                 ...(infoTarget && infoTarget.type === "file"
@@ -4382,7 +4021,7 @@ export default function Alloy() {
                     fontSize: 14,
                   }}
                 >
-                  {moveBrowsePath.length === 0 ? "Vault가 없습니다" : "하위 폴더가 없습니다"}
+                  {moveBrowsePath.length === 0 ? "폴더가 없습니다" : "하위 폴더가 없습니다"}
                 </div>
               ) : (
                 moveModalEntries.map((entry) => (
