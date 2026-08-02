@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.85";
+const APP_VERSION = "0.1.86";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -427,28 +427,27 @@ export default function Alloy() {
   const [settingsScreenOpen, setSettingsScreenOpen] = useState(false);
   const [settingsButtonHovered, setSettingsButtonHovered] = useState(false);
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
-  // 요금 안내 - 청구 금액 제목 오른쪽의 물음표 아이콘을 누르면 하단 서브 액션바와 같은
-  // 리퀴드 글래스 배경을 가진 별도의 뜬 패널이 그 아이콘 바로 밑 위치에 2초간 페이드
-  // 인/아웃으로 떴다가 사라진다(레이아웃 흐름에 얹혀 다른 내용을 밀어내지 않고,
-  // document.body에 포탈로 띄운다). 떠 있는 동안에는 물음표 버튼을 비활성화하고 투명도를 낮춘다.
-  const [pricingInfoOpen, setPricingInfoOpen] = useState(false);
-  const [pricingInfoVisible, setPricingInfoVisible] = useState(false);
-  const [pricingInfoPos, setPricingInfoPos] = useState({ top: 0, left: 0 });
-  const pricingButtonRef = useRef(null);
-  const pricingInfoShowTimerRef = useRef(null);
-  const pricingInfoHideTimerRef = useRef(null);
-  const showPricingInfo = () => {
-    if (pricingInfoShowTimerRef.current) clearTimeout(pricingInfoShowTimerRef.current);
-    if (pricingInfoHideTimerRef.current) clearTimeout(pricingInfoHideTimerRef.current);
-    if (pricingButtonRef.current) {
-      const rect = pricingButtonRef.current.getBoundingClientRect();
-      setPricingInfoPos({ top: rect.bottom + 8, left: rect.left });
+  // 안내 팝업 - "청구 금액"/"업로드" 카드 제목 오른쪽 물음표 아이콘을 누르면 하단 서브
+  // 액션바와 같은 리퀴드 글래스 배경을 가진 별도의 뜬 패널이 그 아이콘 바로 밑 위치에
+  // 2초간 페이드 인/아웃으로 떴다가 사라진다(레이아웃 흐름에 얹혀 다른 내용을 밀어내지
+  // 않고, document.body에 포탈로 띄운다). kind로 어떤 카드의 물음표인지 구분해 내용만 바꾼다.
+  const [infoPopupKind, setInfoPopupKind] = useState(null); // 'pricing' | 'upload' | null
+  const [infoPopupVisible, setInfoPopupVisible] = useState(false);
+  const [infoPopupPos, setInfoPopupPos] = useState({ top: 0, left: 0 });
+  const infoPopupShowTimerRef = useRef(null);
+  const infoPopupHideTimerRef = useRef(null);
+  const showInfoPopup = (kind, buttonEl) => {
+    if (infoPopupShowTimerRef.current) clearTimeout(infoPopupShowTimerRef.current);
+    if (infoPopupHideTimerRef.current) clearTimeout(infoPopupHideTimerRef.current);
+    if (buttonEl) {
+      const rect = buttonEl.getBoundingClientRect();
+      setInfoPopupPos({ top: rect.bottom + 8, left: rect.left });
     }
-    setPricingInfoOpen(true);
-    requestAnimationFrame(() => setPricingInfoVisible(true));
-    pricingInfoHideTimerRef.current = setTimeout(() => {
-      setPricingInfoVisible(false);
-      pricingInfoShowTimerRef.current = setTimeout(() => setPricingInfoOpen(false), 300);
+    setInfoPopupKind(kind);
+    requestAnimationFrame(() => setInfoPopupVisible(true));
+    infoPopupHideTimerRef.current = setTimeout(() => {
+      setInfoPopupVisible(false);
+      infoPopupShowTimerRef.current = setTimeout(() => setInfoPopupKind(null), 300);
     }, 2000);
   };
   // 휴지통 항목의 복구/삭제 - 다른 항목들과 같은 우측 끝 삼점 메뉴 패턴으로 담는다.
@@ -518,11 +517,11 @@ export default function Alloy() {
   // 한도 표시 전용 포맷 - 1,000GB(=1TB)일 때만 "1TB"로 보여주고, 999GB 이하는 그대로 GB로 보여준다.
   const formatStorageLimitDisplay = (gb) => (gb >= 1000 ? "1TB" : formatGBShort(gb * 1024 * 1024 * 1024));
 
-  // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 기본 10GB를
-  // 초과한 만큼만 GB당 $0.015를 곱한다.
+  // 예상 청구 금액 - 한도가 아니라 실제 지금 사용 중인 용량 기준으로, 할당된 10GB를
+  // 초과한 만큼만 GB당 $0.15를 곱한다.
   const usedStorageGB = usedStorageBytes / (1024 * 1024 * 1024);
   const billingOverageGB = Math.max(0, usedStorageGB - 10);
-  const billingAmount = billingOverageGB * 0.015;
+  const billingAmount = billingOverageGB * 0.15;
 
   // 하단 탭바 바로 위에 뜨는 서브 액션바 - "데이터를 삭제했습니다"/"데이터를 복구했습니다"처럼
   // 짧은 안내 문구를 2초간 페이드 인/아웃으로 보여주고 사라진다.
@@ -1698,7 +1697,7 @@ export default function Alloy() {
                 Vaulty
               </h1>
               <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "center", padding: "0 12px" }}>
-                <div style={{ position: "relative", width: "66%" }}>
+                <div style={{ position: "relative", width: "85.8%" }}>
                   <input
                     ref={searchInputRef}
                     type="text"
@@ -3141,8 +3140,36 @@ export default function Alloy() {
                 padding: "14px 18px",
               }}
             >
-              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 8 }}>
-                업로드
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>업로드</span>
+                <button
+                  onClick={(e) => showInfoPopup("upload", e.currentTarget)}
+                  disabled={infoPopupKind === "upload"}
+                  aria-label="업로드 안내"
+                  style={{
+                    width: 18,
+                    height: 18,
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    color: isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)",
+                    cursor: infoPopupKind === "upload" ? "default" : "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: infoPopupKind === "upload" ? 0.5 : 1,
+                    transition: "opacity 0.3s ease, color 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => { if (infoPopupKind !== "upload") e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)"; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
+                </button>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span
@@ -3209,7 +3236,8 @@ export default function Alloy() {
 
             {/* 청구 금액 - 저장 공간 카드 바로 아래. 설정한 한도가 아니라 지금 실제로 쓰고
                 있는 용량 기준이다. 제목 오른쪽의 물음표 아이콘을 누르면 요금 안내 패널이
-                뜬다. 사용량이 기본 10GB 이하면 금액 텍스트를 보여주지 않는다. */}
+                뜬다. 청구 금액이 0이어도 제목 밑에 "0$" 형태로 항상 표기한다(제목과
+                비슷하게 굵고 큰 글씨로 눈에 띄게). */}
             <div
               style={{
                 borderRadius: 14,
@@ -3223,9 +3251,8 @@ export default function Alloy() {
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                 <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>청구 금액</span>
                 <button
-                  ref={pricingButtonRef}
-                  onClick={showPricingInfo}
-                  disabled={pricingInfoOpen}
+                  onClick={(e) => showInfoPopup("pricing", e.currentTarget)}
+                  disabled={infoPopupKind === "pricing"}
                   aria-label="요금 안내"
                   style={{
                     width: 18,
@@ -3234,15 +3261,15 @@ export default function Alloy() {
                     border: "none",
                     background: "transparent",
                     color: isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)",
-                    cursor: pricingInfoOpen ? "default" : "pointer",
+                    cursor: infoPopupKind === "pricing" ? "default" : "pointer",
                     outline: "none",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    opacity: pricingInfoOpen ? 0.5 : 1,
+                    opacity: infoPopupKind === "pricing" ? 0.5 : 1,
                     transition: "opacity 0.3s ease, color 0.2s ease",
                   }}
-                  onMouseEnter={(e) => { if (!pricingInfoOpen) e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)"; }}
+                  onMouseEnter={(e) => { if (infoPopupKind !== "pricing") e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = isLight ? "rgba(20,22,26,0.28)" : "rgba(255,255,255,0.28)"; }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -3252,11 +3279,9 @@ export default function Alloy() {
                   </svg>
                 </button>
               </div>
-              {billingOverageGB > 0 && (
-                <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                  {billingOverageGB % 1 === 0 ? billingOverageGB : billingOverageGB.toFixed(1)}GB ({billingAmount.toFixed(2)}$/월)
-                </div>
-              )}
+              <div style={{ fontSize: 20, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                {(billingAmount % 1 === 0 ? billingAmount : parseFloat(billingAmount.toFixed(2)))}$
+              </div>
             </div>
 
             {/* 계정 카드 - 로그인 상태에서는 로그아웃 버튼, 로그아웃 상태에서는 로그인 폼을
@@ -4281,17 +4306,18 @@ export default function Alloy() {
         </div>
       )}
 
-      {/* 요금 안내 패널 - 서브 액션바와 같은 리퀴드 글래스 배경을 쓰되, 하단 고정이 아니라
-          눌린 물음표 아이콘 바로 밑 위치(pricingInfoPos)에 뜬다. 레이아웃 흐름에 얹지 않고
-          document.body에 포탈로 띄워 다른 내용을 밀어내지 않는다. */}
-      {pricingInfoOpen && createPortal(
+      {/* 안내 팝업 - 서브 액션바와 같은 리퀴드 글래스 배경을 쓰되, 하단 고정이 아니라
+          눌린 물음표 아이콘 바로 밑 위치(infoPopupPos)에 뜬다. 레이아웃 흐름에 얹지 않고
+          document.body에 포탈로 띄워 다른 내용을 밀어내지 않는다. kind로 요금/업로드
+          안내 중 어떤 물음표를 눌렀는지에 따라 내용만 바꾼다. */}
+      {infoPopupKind && createPortal(
         <div
           style={{
             position: "fixed",
-            top: pricingInfoPos.top,
-            left: pricingInfoPos.left,
-            transform: pricingInfoVisible ? "translateY(0)" : "translateY(8px)",
-            opacity: pricingInfoVisible ? 1 : 0,
+            top: infoPopupPos.top,
+            left: infoPopupPos.left,
+            transform: infoPopupVisible ? "translateY(0)" : "translateY(8px)",
+            opacity: infoPopupVisible ? 1 : 0,
             zIndex: 50,
             padding: "12px 16px",
             borderRadius: 14,
@@ -4302,14 +4328,23 @@ export default function Alloy() {
             boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
             pointerEvents: "none",
             transition: "opacity 0.3s ease, transform 0.3s ease",
+            maxWidth: 260,
           }}
         >
-          <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-            Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
-          </div>
-          <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", marginTop: 4 }}>
-            기본 저장 공간 10GB를 초과하면 $0.015/GB 가 청구됩니다
-          </div>
+          {infoPopupKind === "pricing" ? (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", marginTop: 4 }}>
+                할당된 저장 공간 10GB를 초과하면 0.15$/GB가 청구됩니다
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)" }}>
+              이미지 확장자에 적용되며 약 50%의 저장 공간을 절약할 수 있습니다
+            </div>
+          )}
         </div>,
         document.body
       )}
