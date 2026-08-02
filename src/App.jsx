@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.89";
+const APP_VERSION = "0.1.90";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -3470,7 +3470,7 @@ export default function Alloy() {
                   </svg>
                 </button>
               </div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
+              <div style={{ fontSize: 13, fontWeight: 400, color: isLight ? "#14161A" : "#FFFFFF" }}>
                 {(billingAmount % 1 === 0 ? billingAmount : parseFloat(billingAmount.toFixed(2)))}$
               </div>
             </div>
@@ -4701,14 +4701,9 @@ export default function Alloy() {
           }}
         >
           {infoPopupKind === "pricing" ? (
-            <>
-              <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                Vaulty 는 종량제를 따라 요금을 부과하고 있습니다
-              </div>
-              <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", marginTop: 4 }}>
-                할당된 저장 공간 10GB를 초과하면 0.15$/GB가 청구됩니다
-              </div>
-            </>
+            <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)" }}>
+              할당된 저장 공간 10GB를 초과하면 0.15$/GB가 청구됩니다
+            </div>
           ) : (
             <div style={{ fontSize: 12, fontWeight: 400, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)" }}>
               이미지 확장자에 적용되며 약 50%의 저장 공간을 절약할 수 있습니다
