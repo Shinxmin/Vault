@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.86";
+const APP_VERSION = "0.1.87";
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -141,6 +141,16 @@ export default function Alloy() {
   // 업로드 방식 - 설정 탭의 "업로드" 카드에서 원본/최적화 스위치로 고른다. 최적화면
   // 이미지/움짤만 원본 해상도의 50%로 줄여서 올린다(기본값은 원본 - 손대지 않고 그대로 올림).
   const [uploadOptimizeEnabled, setUploadOptimizeEnabled] = useState(false);
+  // 보기(리스트/갤러리) - 마법사 메뉴의 "보기"를 누르면 지금 보고 있는 위치의 폴더만
+  // 갤러리형으로 바뀐다(그 안의 이미지/문서는 영향 없음 - 이미지는 원래도 갤러리다).
+  // 위치별로 따로 기억한다(예: 홈에서 켜도 그 안의 하위 폴더까지 적용되지 않는다).
+  // 새로고침해도 유지할 필요는 없는 화면 전용 상태라 서버에 저장하지 않는다.
+  const [galleryViewPaths, setGalleryViewPaths] = useState({}); // { [pathKey]: true }
+  const currentPathKey = currentPath.join("/");
+  const folderGalleryMode = !!galleryViewPaths[currentPathKey];
+  const toggleFolderGalleryMode = () => {
+    setGalleryViewPaths((prev) => ({ ...prev, [currentPathKey]: !prev[currentPathKey] }));
+  };
   // 로그인 - 개인 웹사이트라 회원가입 기능은 없고, Supabase Auth에 미리 등록해 둔
   // 계정(들)으로만 로그인할 수 있다(가입 화면이 없으니 등록 안 된 계정은 애초에
   // signInWithPassword 자체가 실패한다). vaulty_state.user_id가 그 계정의
@@ -1514,6 +1524,33 @@ export default function Alloy() {
     }
   }, [infoTarget?.id, infoTarget?.type, infoItem?.url, infoItem?.kind]);
 
+  // 커버 선택 - 정보 모달의 "커버"를 누르면 그 폴더 바로 안의 이미지/움짤들을 작은
+  // 그리드로 보여주고, 하나를 고르면 folder.coverFileId로 저장한다(갤러리형 보기에서
+  // 그 폴더 카드의 썸네일로 쓰인다). 폴더 안에 이미지가 없으면 고를 것이 없다는 안내만 보여준다.
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const [coverPickerVisible, setCoverPickerVisible] = useState(false);
+  const [coverPickerFolderId, setCoverPickerFolderId] = useState(null);
+  const openCoverPicker = (folderId) => {
+    setCoverPickerFolderId(folderId);
+    setCoverPickerOpen(true);
+    requestAnimationFrame(() => setCoverPickerVisible(true));
+  };
+  const closeCoverPicker = () => {
+    setCoverPickerVisible(false);
+    setTimeout(() => {
+      setCoverPickerOpen(false);
+      setCoverPickerFolderId(null);
+    }, 200);
+  };
+  const coverPickerFolder = coverPickerFolderId ? folders.find((f) => f.id === coverPickerFolderId) : null;
+  const coverPickerImages = coverPickerFolder
+    ? files.filter((f) => f.kind === "image" && f.path.length === coverPickerFolder.path.length && f.path.every((p, i) => p === coverPickerFolder.path[i]))
+    : [];
+  const setFolderCover = (folderId, fileId) => {
+    setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, coverFileId: fileId, updatedAt: Date.now() } : f)));
+    closeCoverPicker();
+  };
+
   const getFileIcon = (mimeType) => {
     const color = isLight ? "#14161A" : "#FFFFFF";
     if (mimeType && mimeType.startsWith("image/")) {
@@ -1967,6 +2004,32 @@ export default function Alloy() {
                         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                       >
                         정렬
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      <button
+                        onClick={() => {
+                          closeWizardMenu();
+                          toggleFolderGalleryMode();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        보기
                       </button>
                       <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
                       <button
@@ -2603,6 +2666,104 @@ export default function Alloy() {
                 );
               };
 
+              // 폴더 갤러리(마법사 "보기") 렌더러 - 이미지 콜라주와 같은 2열 그리드 골격을 쓰되,
+              // 각 칸은 폴더의 커버 이미지(정보 모달의 "커버"로 지정)를 정중앙 기준 1:1로
+              // 크롭해 보여준다(aspectRatio 고정 박스 + objectFit: cover). 커버가 없으면
+              // 옅은 폴더 아이콘만 가운데에 둔다. 썸네일 밑에는 작은 폴더 아이콘 + 제목 +
+              // 삼점 메뉴를 나란히 둔다 - 그래서 정사각형보다 살짝 세로로 긴 카드가 된다.
+              const renderFolderGalleryGrid = (foldersArray) => {
+                if (foldersArray.length === 0) return null;
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", alignItems: "start", gap: 8 }}>
+                    {foldersArray.map((folder) => {
+                      const isPickedUp = draggingItem && draggingItem.type === "folder" && draggingItem.id === folder.id;
+                      const cover = files.find((f) => f.id === folder.coverFileId && f.kind === "image");
+                      return (
+                        <div
+                          key={folder.id}
+                          data-drag-type="folder"
+                          data-drag-id={folder.id}
+                          onClick={() => {
+                            if (justDraggedRef.current) return;
+                            setCurrentPath(folder.path);
+                          }}
+                          onPointerDown={rowPointerDown("folder", folder.id)}
+                          onPointerMove={rowPointerMove}
+                          onPointerUp={rowPointerUp}
+                          onMouseDown={pressDown("scale(0.97)")}
+                          onMouseUp={pressUp("none")}
+                          style={{
+                            position: "relative",
+                            borderRadius: 10,
+                            overflow: "hidden",
+                            border: `1px solid ${
+                              dragOverKey === `folder-${folder.id}` || isPickedUp
+                                ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
+                                : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
+                            }`,
+                            background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                            cursor: "pointer",
+                            touchAction: "manipulation",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
+                            WebkitTouchCallout: "none",
+                            transform: isPickedUp ? "scale(1.04)" : "none",
+                            boxShadow: isPickedUp ? "0 12px 28px rgba(0,0,0,0.3)" : "none",
+                            zIndex: isPickedUp ? 5 : "auto",
+                            transition: "border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease",
+                          }}
+                        >
+                          <div
+                            style={{
+                              position: "relative",
+                              width: "100%",
+                              aspectRatio: "1 / 1",
+                              overflow: "hidden",
+                              background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
+                            }}
+                          >
+                            {cover && cover.url ? (
+                              <img
+                                src={cover.url}
+                                alt={folder.name}
+                                draggable={false}
+                                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                              />
+                            ) : (
+                              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill={isLight ? "rgba(20,22,26,0.22)" : "rgba(255,255,255,0.22)"}>
+                                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                                </svg>
+                              </div>
+                            )}
+                          </div>
+                          {/* 작은 폴더 아이콘(좌) + 제목 + 삼점 메뉴(우) */}
+                          <div
+                            style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 4px 6px 8px" }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"} style={{ flexShrink: 0 }}>
+                              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                            </svg>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              {renderEditableName("folder", folder, {
+                                color: isLight ? "#14161A" : "#FFFFFF",
+                                fontSize: 12,
+                                fontWeight: 500,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              })}
+                            </div>
+                            {renderItemMenu("folder", folder)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              };
+
               // ── "분류" 화면 - 태그 팔레트/분류 모달에서 태그를 고르면(tagScreenTags) 지금 어느 위치에
               //     있었든 상관없이 그 태그가 달린 폴더가 먼저 리스트로, 그 아래 이미지/움짤이
               //     갤러리로 온다. 폴더/이미지 모두 평소와 같은 삼점 메뉴 등 전체 레이아웃을 그대로 쓴다. ──
@@ -2753,15 +2914,22 @@ export default function Alloy() {
               // 폴더/문서 공용 행 렌더러
               return (
                 <>
-                  {/* 폴더 행 */}
-                  {visibleFolders.map((folder) =>
-                    renderRow(
-                      "folder",
-                      folder,
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                      </svg>,
-                      null
+                  {/* 폴더 - 마법사 "보기"로 이 위치가 갤러리형이면 커버 이미지 카드 그리드로,
+                      아니면 기존처럼 리스트 행으로 보여준다. */}
+                  {folderGalleryMode ? (
+                    <div style={{ marginBottom: visibleDocs.length || visibleImages.length ? 8 : 0 }}>
+                      {renderFolderGalleryGrid(visibleFolders)}
+                    </div>
+                  ) : (
+                    visibleFolders.map((folder) =>
+                      renderRow(
+                        "folder",
+                        folder,
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>,
+                        null
+                      )
                     )
                   )}
 
@@ -3735,16 +3903,38 @@ export default function Alloy() {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 20,
-                  fontWeight: 700,
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                }}
-              >
-                정보
-              </h2>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                  }}
+                >
+                  정보
+                </h2>
+                {/* 커버 - 폴더일 때만 보여준다. 누르면 그 폴더 안의 이미지/움짤 중에서
+                    갤러리형 보기일 때 카드에 쓸 커버를 고르는 선택 화면이 뜬다. */}
+                {infoTarget && infoTarget.type === "folder" && (
+                  <button
+                    onClick={() => infoTarget && openCoverPicker(infoTarget.id)}
+                    style={{
+                      padding: 0,
+                      border: "none",
+                      background: "transparent",
+                      color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.5)",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      outline: "none",
+                      textDecoration: "underline",
+                    }}
+                  >
+                    커버
+                  </button>
+                )}
+              </div>
               <button
                 onClick={closeInfoModal}
                 onMouseDown={pressDown("scale(0.85)")}
@@ -3817,6 +4007,135 @@ export default function Alloy() {
                 </div>
               ))}
             </div>
+          </div>
+        </>
+      )}
+
+      {/* 커버 선택 모달 - 정보 모달의 "커버"를 누르면 뜬다. 그 폴더 바로 안의 이미지/움짤을
+          작은 그리드로 보여주고, 하나를 누르면 바로 커버로 지정되고 닫힌다. */}
+      {coverPickerOpen && (
+        <>
+          <div
+            onClick={closeCoverPicker}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.45)",
+              zIndex: 39,
+              opacity: coverPickerVisible ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: coverPickerVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: coverPickerVisible ? 1 : 0,
+              background: isLight ? "#FFFFFF" : "#1a1918",
+              borderRadius: 20,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              padding: "32px 30px",
+              width: "84vw",
+              boxSizing: "border-box",
+              zIndex: 40,
+              boxShadow: "0 30px 60px rgba(0,0,0,0.55)",
+              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 19,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                커버 - {coverPickerFolder ? coverPickerFolder.name : ""}
+              </h2>
+              <button
+                onClick={closeCoverPicker}
+                onMouseDown={pressDown("scale(0.85)")}
+                onMouseUp={pressUp("scale(1)")}
+                aria-label="닫기"
+                style={{
+                  flexShrink: 0,
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  border: "none",
+                  background: "transparent",
+                  color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                  cursor: "pointer",
+                  outline: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {coverPickerImages.length === 0 ? (
+              <div
+                style={{
+                  padding: "24px 0",
+                  textAlign: "center",
+                  color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.45)",
+                  fontSize: 14,
+                }}
+              >
+                이 폴더에 이미지가 없습니다
+              </div>
+            ) : (
+              <div style={{ maxHeight: 360, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                {coverPickerImages.map((img) => {
+                  const isSelected = coverPickerFolder && coverPickerFolder.coverFileId === img.id;
+                  return (
+                    <div
+                      key={img.id}
+                      onClick={() => setFolderCover(coverPickerFolderId, img.id)}
+                      onMouseDown={pressDown("scale(0.95)")}
+                      onMouseUp={pressUp("scale(1)")}
+                      style={{
+                        position: "relative",
+                        aspectRatio: "1 / 1",
+                        borderRadius: 8,
+                        overflow: "hidden",
+                        cursor: "pointer",
+                        border: `2px solid ${isSelected ? (isLight ? "#14161A" : "#FFFFFF") : "transparent"}`,
+                        background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
+                      }}
+                    >
+                      {img.url && (
+                        <img
+                          src={img.url}
+                          alt={img.name}
+                          draggable={false}
+                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </>
       )}
