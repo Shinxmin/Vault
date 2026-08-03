@@ -1,9 +1,84 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.91";
+const APP_VERSION = "0.1.92";
+
+// 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
+// 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
+const VIRTUALIZE_THRESHOLD = 40;
+
+// 가상 스크롤링(윈도우 스크롤 기준) 목록 - 화면(+여유분)에 걸치는 항목만 실제 DOM에
+// 그리고, 나머지 자리는 전체 높이를 가진 빈 컨테이너로만 잡아 둔다. 파일이 수백~수천 개인
+// 폴더에서도 DOM 노드 수가 화면에 보이는 만큼으로 유지돼 스크롤이 부드럽다.
+// 항목 높이는 제각각이므로(제목 줄 수, 태그 줄, 이미지 비율) 추정치로 시작해서 실제로
+// 그려진 높이를 measureElement로 다시 재 정확한 위치를 잡는다.
+function WindowVirtualList({ count, estimateSize, overscan = 6, renderItem }) {
+  const parentRef = useRef(null);
+  // 목록이 문서 맨 위에서 얼마나 떨어져 있는지 - 윈도우 스크롤 좌표를 목록 내부
+  // 좌표로 바꾸는 기준점이다. 위쪽 콘텐츠(폴더 목록, 이미지 로딩 등)의 높이가 바뀌면
+  // 같이 바뀌므로 body 크기 변화를 지켜보며 다시 잰다.
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (!parentRef.current) return;
+      const top = parentRef.current.getBoundingClientRect().top + window.scrollY;
+      setScrollMargin((prev) => (Math.abs(prev - top) > 0.5 ? top : prev));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    let observer = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(measure);
+      observer.observe(document.body);
+    }
+    return () => {
+      window.removeEventListener("resize", measure);
+      if (observer) observer.disconnect();
+    };
+  }, []);
+
+  const virtualizer = useWindowVirtualizer({
+    count,
+    estimateSize: () => estimateSize,
+    overscan,
+    scrollMargin,
+  });
+
+  return (
+    <div ref={parentRef} style={{ position: "relative", width: "100%", height: virtualizer.getTotalSize() }}>
+      {virtualizer.getVirtualItems().map((virtualRow) => (
+        <div
+          key={virtualRow.key}
+          data-index={virtualRow.index}
+          ref={virtualizer.measureElement}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            // flow-root - 새 BFC를 만들어서 자식의 margin-bottom(행 사이 8px 간격)이
+            // 바깥으로 새지 않고 이 칸의 높이에 포함되게 한다(그래야 실측 높이가 맞다).
+            display: "flow-root",
+            transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+          }}
+        >
+          {renderItem(virtualRow.index)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// 배열을 n개씩 잘라 2차원 배열로 만든다 - 2열 그리드를 "한 줄"씩 가상화할 때 쓴다.
+const chunkArray = (arr, size) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
 
 export default function Alloy() {
   // 아이폰 사파리는 100vh가 주소창을 뺀 실제 화면보다 커서 콘텐츠가 없어도
@@ -130,13 +205,12 @@ export default function Alloy() {
   };
 
   // 정렬 - 단일 "ABC" 버튼 하나로 가나다순 -> 숫자순 -> 알파벳순을 순환한다.
-  // 사용자 지정(꾹 눌러서 드래그) 정렬을 사용하면 배열 자체의 순서를 그대로 쓴다.
-  // customOrderActive는 아래 load/save 이펙트의 의존성 배열에서 참조하므로 그보다 먼저
-  // 선언해야 한다(안 그러면 TDZ로 "Cannot access before initialization" 런타임 에러가 난다).
+  // (예전에 있던 "사용자 지정"(꾹 눌러서 드래그로 순서 바꾸기) 정렬은 없앴다 - 꾹 누르기는
+  //  이제 선택 기능이다.)
   const SORT_MODES = ["ko", "num", "en"];
   const [sortModeIndex, setSortModeIndex] = useState(0);
-  const [customOrderActive, setCustomOrderActive] = useState(false);
-  // storageLimitGB도 같은 이유로 여기서 미리 선언한다(저장 공간 한도, 기본 10GB).
+  // storageLimitGB는 아래 load/save 이펙트의 의존성 배열에서 참조하므로 그보다 먼저
+  // 선언해야 한다(안 그러면 TDZ로 "Cannot access before initialization" 런타임 에러가 난다).
   const [storageLimitGB, setStorageLimitGB] = useState(10);
   // 업로드 방식 - 설정 탭의 "업로드" 카드에서 원본/최적화 스위치로 고른다. 최적화면
   // 이미지/움짤만 원본 해상도의 50%로 줄여서 올린다(기본값은 원본 - 손대지 않고 그대로 올림).
@@ -162,9 +236,8 @@ export default function Alloy() {
   const [authIdDraft, setAuthIdDraft] = useState("");
   const [authPasswordDraft, setAuthPasswordDraft] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
-  const sortMode = customOrderActive ? "custom" : SORT_MODES[sortModeIndex];
+  const sortMode = SORT_MODES[sortModeIndex];
   const cycleSortMode = () => {
-    setCustomOrderActive(false);
     setSortModeIndex((i) => (i + 1) % SORT_MODES.length);
   };
 
@@ -198,7 +271,6 @@ export default function Alloy() {
     const loadedFiles = (row.files || []).map(withDates);
     const loadedTrash = row.trash || [];
     setFolders(loadedFolders);
-    setCustomOrderActive(row.custom_order_active === true);
     setStorageLimitGB(typeof row.storage_limit_gb === "number" && row.storage_limit_gb > 0 ? row.storage_limit_gb : 10);
     setUploadOptimizeEnabled(row.upload_optimize_enabled === true);
     setGalleryViewPaths(row.gallery_view_paths && typeof row.gallery_view_paths === "object" ? row.gallery_view_paths : {});
@@ -304,7 +376,7 @@ export default function Alloy() {
     };
   }, []);
 
-  // 초기 로드가 끝난 뒤부터 folders/files/customOrderActive가 바뀔 때마다 살짝
+  // 초기 로드가 끝난 뒤부터 folders/files 등이 바뀔 때마다 살짝
   // 지연을 두고(짧은 시간 내 연속 변경을 한 번으로 묶어) Supabase에 저장한다. 로그인
   // 상태가 아니면 애초에 보여줄 데이터가 없으므로(웹드라이브는 로그인 전용) 절대
   // 저장을 시도하지 않는다 - 이 가드가 없으면 로그인 전 빈 상태가 실제 계정 데이터가
@@ -326,7 +398,8 @@ export default function Alloy() {
           vaults: [],
           folders,
           files: filesToSave,
-          custom_order_active: customOrderActive,
+          // 사용자 지정 정렬 기능은 없앴지만 컬럼은 그대로 두고 항상 false로 쓴다.
+          custom_order_active: false,
           storage_limit_gb: storageLimitGB,
           upload_optimize_enabled: uploadOptimizeEnabled,
           gallery_view_paths: galleryViewPaths,
@@ -346,7 +419,7 @@ export default function Alloy() {
         });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [folders, files, customOrderActive, storageLimitGB, uploadOptimizeEnabled, galleryViewPaths, dataLoaded, authUser, myRowId]);
+  }, [folders, files, storageLimitGB, uploadOptimizeEnabled, galleryViewPaths, dataLoaded, authUser, myRowId]);
 
   // 로그인 - 개인 웹사이트라 회원가입은 없고, Supabase Auth 대시보드에 미리 등록해 둔
   // 계정(이메일/비밀번호)으로만 로그인할 수 있다. 등록되지 않은 이메일이거나 비밀번호가
@@ -683,12 +756,10 @@ export default function Alloy() {
   };
 
   // 정렬 - 단일 "ABC" 버튼 하나로 가나다순 -> 숫자순 -> 알파벳순을 순환한다.
-  // 사용자 지정(꾹 눌러서 드래그) 정렬을 사용하면 배열 자체의 순서를 그대로 쓴다.
   // localeCompare에 { numeric: true }를 줘서 이름 안에 섞인 숫자를 문자 하나씩이 아니라
   // 값 그대로 비교한다 - 안 그러면 "예시(10)"이 "예시(2)"보다 앞에 온다("1" < "2"라서).
   // 이 옵션을 주면 "예시(1)", "예시(2)", ..., "예시(9)", "예시(10)" 순서로 정렬된다.
   const sortItems = (items) => {
-    if (sortMode === "custom") return items;
     const sorted = [...items];
     if (sortMode === "num") {
       sorted.sort((a, b) => {
@@ -709,80 +780,42 @@ export default function Alloy() {
     return sorted;
   };
 
-  // 검색 결과/"분류" 화면 전용 정렬 - 현재 정렬 모드(사용자 지정 드래그 순서 포함)와 무관하게
+  // 검색 결과/"분류" 화면 전용 정렬 - 현재 정렬 모드와 무관하게
   // 항상 가나다순으로 보여준다(폴더는 별도 섹션으로 이미지보다 먼저 렌더링되어 항상 최상단에 온다).
   // sortItems와 마찬가지로 숫자는 값 그대로 비교한다.
   const koSort = (items) => [...items].sort((a, b) => a.name.localeCompare(b.name, "ko", { numeric: true }));
 
-  // 폴더/문서 꾹 눌러서 드래그로 섹션 내 순서 변경(사용자 지정 정렬)
-  const [draggingItem, setDraggingItem] = useState(null); // { type: 'folder' | 'file', id }
-  const [dragOverKey, setDragOverKey] = useState(null);
-  const draggingItemRef = useRef(null);
-  const longPressTimerRef = useRef(null);
-  const longPressStartRef = useRef(null);
-  const justDraggedRef = useRef(false);
-  const dragScrollLockRef = useRef(null); // 드래그 시작 시점의 스크롤 위치 - 드래그 중 스크롤 밀림 방지용
-
-  useEffect(() => {
-    draggingItemRef.current = draggingItem;
-  }, [draggingItem]);
-
-  const reorderItem = (type, draggedId, targetId) => {
-    const setter = type === "folder" ? setFolders : setFiles;
-    setter((prev) => {
-      const list = [...prev];
-      const fromIndex = list.findIndex((it) => it.id === draggedId);
-      const toIndex = list.findIndex((it) => it.id === targetId);
-      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return prev;
-      const [moved] = list.splice(fromIndex, 1);
-      list.splice(toIndex, 0, moved);
-      return list;
+  // 선택 - 폴더/데이터를 꾹 누르면(롱프레스) 그 항목이 선택되고 선택 모드로 들어간다.
+  // (예전에는 꾹 누르면 드래그로 순서를 바꾸는 "사용자 지정 이동"이었는데 그 기능은 없앴다.)
+  // 선택 모드에서는 항목을 그냥 눌러도 폴더로 들어가거나 이미지 뷰어가 열리지 않고
+  // 선택/해제만 토글된다. 마지막 하나까지 해제하면 자동으로 선택 모드가 풀린다.
+  const [selectedKeys, setSelectedKeys] = useState({}); // { "folder-<id>": true, "file-<id>": true }
+  const selectionCount = Object.keys(selectedKeys).length;
+  const selectionMode = selectionCount > 0;
+  const isSelected = (type, id) => !!selectedKeys[`${type}-${id}`];
+  const toggleSelected = (type, id) => {
+    setSelectedKeys((prev) => {
+      const key = `${type}-${id}`;
+      const next = { ...prev };
+      if (next[key]) delete next[key];
+      else next[key] = true;
+      return next;
     });
   };
+  const clearSelection = () => setSelectedKeys({});
+  // 선택된 항목들을 실제 폴더/파일 객체로 되돌린다(다운로드/변환/태그에서 함께 쓴다).
+  const selectedFolders = useMemo(
+    () => folders.filter((f) => selectedKeys[`folder-${f.id}`]),
+    [folders, selectedKeys]
+  );
+  const selectedFiles = useMemo(
+    () => files.filter((f) => selectedKeys[`file-${f.id}`]),
+    [files, selectedKeys]
+  );
 
-  const handleDragPointerMove = (e) => {
-    const current = draggingItemRef.current;
-    if (!current) return;
-    // 드래그 중에는 화면이 같이 스크롤되면 목표 위치가 계속 움직여서 정렬하기 어려우므로,
-    // 스크롤이 밀리기 전에 막는다(터치 스크롤 기본 동작 억제 + 스크롤 위치 고정 둘 다).
-    e.preventDefault();
-    if (dragScrollLockRef.current !== null) {
-      if (window.scrollY !== dragScrollLockRef.current) window.scrollTo(0, dragScrollLockRef.current);
-    }
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    const targetEl = el && el.closest("[data-drag-type]");
-    if (!targetEl) return;
-    const targetType = targetEl.getAttribute("data-drag-type");
-    const targetId = parseFloat(targetEl.getAttribute("data-drag-id"));
-    if (targetType !== current.type || targetId === current.id) return;
-    setDragOverKey(`${targetType}-${targetId}`);
-    reorderItem(current.type, current.id, targetId);
-  };
-
-  const handleDragPointerUp = () => {
-    setDraggingItem(null);
-    setDragOverKey(null);
-    setCustomOrderActive(true);
-    justDraggedRef.current = true;
-    dragScrollLockRef.current = null;
-    document.body.style.overflow = "";
-    document.documentElement.style.overflow = "";
-    setTimeout(() => {
-      justDraggedRef.current = false;
-    }, 80);
-    window.removeEventListener("pointermove", handleDragPointerMove);
-    window.removeEventListener("pointerup", handleDragPointerUp);
-  };
-
-  const beginDrag = (type, id) => {
-    setDraggingItem({ type, id });
-    dragScrollLockRef.current = window.scrollY;
-    // body/html에 overflow:hidden을 주면 대부분의 브라우저에서 드래그 중 스크롤이 막힌다.
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    window.addEventListener("pointermove", handleDragPointerMove, { passive: false });
-    window.addEventListener("pointerup", handleDragPointerUp);
-  };
+  const longPressTimerRef = useRef(null);
+  const longPressStartRef = useRef(null);
+  const justLongPressedRef = useRef(false); // 롱프레스 직후 따라오는 click을 무시하기 위한 플래그
 
   const clearLongPressTimer = () => {
     if (longPressTimerRef.current) {
@@ -794,13 +827,18 @@ export default function Alloy() {
   const rowPointerDown = (type, id) => (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     longPressStartRef.current = { x: e.clientX, y: e.clientY };
+    // 새 누름이 시작됐으니 직전 롱프레스 표시는 지운다. 이 플래그는 시간이 아니라
+    // "뒤따라오는 click 한 번을 먹었는지"로 풀어야 한다 - 시간으로 풀면 손가락을
+    // 오래 대고 있다가 떼는 순간 그 click이 방금 선택한 항목을 도로 해제해 버린다.
+    justLongPressedRef.current = false;
     clearLongPressTimer();
     longPressTimerRef.current = setTimeout(() => {
-      beginDrag(type, id);
+      justLongPressedRef.current = true;
+      toggleSelected(type, id);
     }, 450);
   };
   const rowPointerMove = (e) => {
-    if (!longPressStartRef.current || draggingItemRef.current) return;
+    if (!longPressStartRef.current) return;
     const dx = e.clientX - longPressStartRef.current.x;
     const dy = e.clientY - longPressStartRef.current.y;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearLongPressTimer();
@@ -868,8 +906,12 @@ export default function Alloy() {
     return items.sort((a, b) => a.name.localeCompare(b.name, "ko"));
   }, [currentPath, folders, files]);
 
+  // 꾹 눌러 선택해 둔 항목이 있으면 그 항목들을 모달 목록에서 미리 체크한 채로 연다.
+  const checkedFromSelection = (targets) =>
+    Object.fromEntries(targets.filter((t) => selectedKeys[`${t.type}-${t.id}`]).map((t) => [t.id, true]));
+
   const openConvertModal = () => {
-    setConvertChecked({});
+    setConvertChecked(checkedFromSelection(convertTargets));
     setConvertDrafts({});
     setConvertInput("");
     setConvertModalOpen(true);
@@ -992,13 +1034,19 @@ export default function Alloy() {
   // 확인을 누르면 여러 태그가 한꺼번에 들어온다(OR 조건 - 그 중 하나라도 달려있으면 보임).
   const [tagScreenTags, setTagScreenTags] = useState([]);
 
+  // 화면이 바뀌면(다른 폴더로 이동/검색어 변경/분류 화면 전환) 선택은 초기화한다 - 지금
+  // 보이지도 않는 항목이 선택된 채로 남아 있으면 다운로드/변환 대상이 헷갈린다.
+  useEffect(() => {
+    setSelectedKeys({});
+  }, [currentPath, tagScreenTags, searchQuery]);
+
   const tagTargets = useMemo(() => convertTargets.map((t) => {
     const source = t.type === "folder" ? folders.find((f) => f.id === t.id) : files.find((f) => f.id === t.id);
     return { ...t, tags: (source && source.tags) || [] };
   }), [convertTargets, folders, files]);
 
   const openTagModal = () => {
-    setTagChecked({});
+    setTagChecked(checkedFromSelection(tagTargets));
     setTagDrafts(Object.fromEntries(tagTargets.map((t) => [t.id, t.tags])));
     setTagInput("");
     setTagModalOpen(true);
@@ -1494,6 +1542,130 @@ export default function Alloy() {
     return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB`;
   };
 
+  // ── 다운로드 ─────────────────────────────────────────────────────────────
+  // 삼점 메뉴의 "다운로드". 파일 하나면 그 파일을 그대로 받고, 폴더면 그 안의 하위
+  // 폴더/파일을 구조 그대로 담은 zip으로 받는다. 선택 모드에서는(꾹 눌러 선택해 둔 것이
+  // 있으면) 어느 항목의 메뉴에서 눌렀든 선택한 폴더/데이터 전체를 구조에 맞게 한 번에 받는다.
+  // 실제 바이트는 R2에 있으므로 presigned GET URL을 발급받아 브라우저가 직접 받아온다.
+  const [downloadBusy, setDownloadBusy] = useState(false);
+
+  const triggerBrowserDownload = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+
+  // 저장할 때 쓸 파일 이름 - 이름(name)에는 확장자를 담지 않으므로 ext를 다시 붙인다.
+  const downloadFileName = (file) => (file.ext ? `${file.name}.${file.ext}` : file.name);
+
+  const fetchFileBlob = async (file) => {
+    if (!file.r2Key) return null;
+    const { url } = await r2Presign({ action: "get", key: file.r2Key });
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`R2 다운로드 실패 (${res.status})`);
+    return await res.blob();
+  };
+
+  // zip 안에서 이름이 겹치지 않게 "이름(1).jpg" 식으로 번호를 붙인다.
+  const uniqueZipPath = (used, path) => {
+    if (!used.has(path)) {
+      used.add(path);
+      return path;
+    }
+    const slash = path.lastIndexOf("/");
+    const dir = slash === -1 ? "" : path.slice(0, slash + 1);
+    const base = slash === -1 ? path : path.slice(slash + 1);
+    const dot = base.lastIndexOf(".");
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    const ext = dot > 0 ? base.slice(dot) : "";
+    let n = 1;
+    let candidate;
+    do {
+      candidate = `${dir}${stem}(${n})${ext}`;
+      n += 1;
+    } while (used.has(candidate));
+    used.add(candidate);
+    return candidate;
+  };
+
+  // 폴더 하나를 zip에 통째로 담는다 - 빈 하위 폴더까지 포함해 구조를 그대로 재현한다.
+  // prefix는 zip 안에서 이 폴더가 놓일 위치("" 이면 zip 루트가 이 폴더의 내용).
+  const addFolderToZip = async (zip, folder, prefix, used) => {
+    const root = `${prefix}${folder.name}`;
+    zip.folder(root);
+    const descendantFolders = folders.filter((f) => f.id !== folder.id && pathStartsWith(f.path, folder.path));
+    descendantFolders.forEach((f) => {
+      zip.folder(`${root}/${f.path.slice(folder.path.length).join("/")}`);
+    });
+    const descendantFiles = files.filter((f) => pathStartsWith(f.path, folder.path));
+    for (const file of descendantFiles) {
+      const blob = await fetchFileBlob(file);
+      if (!blob) continue;
+      const rel = file.path.slice(folder.path.length).join("/");
+      const inZip = uniqueZipPath(used, `${root}/${rel ? `${rel}/` : ""}${downloadFileName(file)}`);
+      zip.file(inZip, blob);
+    }
+  };
+
+  // 실제 다운로드 실행 - targetFolders/targetFiles를 받아 하나면 그대로, 여럿이면 zip으로.
+  const runDownload = async (targetFolders, targetFiles, zipName) => {
+    if (downloadBusy) return;
+    if (!targetFolders.length && !targetFiles.length) {
+      showToast("다운로드할 항목이 없습니다");
+      return;
+    }
+    setDownloadBusy(true);
+    showToast("다운로드를 준비하고 있습니다");
+    try {
+      // 파일 딱 하나면 zip으로 감싸지 않고 원본 파일 그대로 받는다.
+      if (!targetFolders.length && targetFiles.length === 1) {
+        const blob = await fetchFileBlob(targetFiles[0]);
+        if (!blob) throw new Error("파일 데이터가 없습니다");
+        triggerBrowserDownload(blob, downloadFileName(targetFiles[0]));
+        return;
+      }
+      // zip은 용량이 큰 의존성이라 실제로 필요할 때만 불러온다(초기 로딩 속도 유지).
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      const used = new Set();
+      for (const folder of targetFolders) {
+        await addFolderToZip(zip, folder, "", used);
+      }
+      for (const file of targetFiles) {
+        const blob = await fetchFileBlob(file);
+        if (!blob) continue;
+        zip.file(uniqueZipPath(used, downloadFileName(file)), blob);
+      }
+      const content = await zip.generateAsync({ type: "blob" });
+      triggerBrowserDownload(content, zipName);
+    } catch (e) {
+      console.error("다운로드 실패:", e);
+      showToast("다운로드에 실패했습니다");
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+
+  // 삼점 메뉴의 "다운로드"에서 호출한다. 선택된 항목이 있으면 그 전체를, 없으면 이 항목만.
+  const handleDownload = (type, id) => {
+    if (selectionMode) {
+      runDownload(selectedFolders, selectedFiles, "Vaulty.zip");
+      return;
+    }
+    if (type === "folder") {
+      const folder = folders.find((f) => f.id === id);
+      if (folder) runDownload([folder], [], `${folder.name}.zip`);
+      return;
+    }
+    const file = files.find((f) => f.id === id);
+    if (file) runDownload([], [file], `${file.name}.zip`);
+  };
+
   const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
   const formatDate = (ts) => {
     if (!ts) return "-";
@@ -1950,6 +2122,30 @@ export default function Alloy() {
 
               {/* 마법사 - 예전 ABC 정렬 버튼 자리. 누르면 "정렬"/"변환" 드롭다운이 뜬다 */}
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* 선택 중일 때만 - 몇 개를 선택했는지와 한 번에 전부 해제하는 버튼 */}
+                {selectionMode && (
+                  <button
+                    onClick={clearSelection}
+                    onMouseDown={pressDown("scale(0.95)")}
+                    onMouseUp={pressUp("scale(1)")}
+                    style={{
+                      height: 30,
+                      padding: "0 10px",
+                      borderRadius: 8,
+                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                      background: "transparent",
+                      color: isLight ? "rgba(20,22,26,0.6)" : "rgba(255,255,255,0.65)",
+                      fontSize: 12,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      outline: "none",
+                      whiteSpace: "nowrap",
+                      transition: "background 0.2s ease, transform 0.15s ease",
+                    }}
+                  >
+                    {selectionCount}개 선택 해제
+                  </button>
+                )}
                 <button
                   ref={wizardButtonRef}
                   onClick={toggleWizardMenu}
@@ -2393,6 +2589,34 @@ export default function Alloy() {
                           >
                             이동
                           </button>
+                          {/* 다운로드 - 폴더면 하위 폴더/파일을 구조 그대로 담은 zip으로,
+                              파일이면 그 파일 그대로 받는다. 꾹 눌러 선택해 둔 항목이 있으면
+                              어느 항목의 메뉴에서 눌렀든 선택한 전체를 구조에 맞게 받는다. */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeItemMenu();
+                              handleDownload(type, item.id);
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "10px 12px",
+                              border: "none",
+                              background: "transparent",
+                              color: isLight ? "#14161A" : "#FFFFFF",
+                              fontSize: 15,
+                              fontWeight: 500,
+                              cursor: downloadBusy ? "default" : "pointer",
+                              opacity: downloadBusy ? 0.5 : 1,
+                              outline: "none",
+                              textAlign: "left",
+                              transition: "background 0.2s",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                          >
+                            다운로드
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2538,24 +2762,87 @@ export default function Alloy() {
                 );
               };
 
+              // 선택 체크박스 - 선택 모드일 때만 나온다. 리스트 행에서는 아이콘 왼쪽에 인라인으로,
+              // 이미지/폴더 갤러리 카드에서는 카드 왼쪽 상단에 겹쳐서(overlay) 놓는다.
+              const renderSelectCheckbox = (type, id, overlay) => {
+                if (!selectionMode) return null;
+                const checked = isSelected(type, id);
+                return (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // 롱프레스로 막 선택된 자리에 체크박스가 생겨난 경우, 손을 떼며
+                      // 따라오는 click이 방금 선택한 것을 도로 해제하지 않도록 한 번 넘긴다.
+                      if (justLongPressedRef.current) {
+                        justLongPressedRef.current = false;
+                        return;
+                      }
+                      toggleSelected(type, id);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    aria-label="선택"
+                    style={{
+                      flexShrink: 0,
+                      width: 20,
+                      height: 20,
+                      borderRadius: 6,
+                      boxSizing: "border-box",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                      border: `1.5px solid ${checked ? (isLight ? "#14161A" : "#FFFFFF") : (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)")}`,
+                      background: checked ? (isLight ? "#14161A" : "#FFFFFF") : (isLight ? "rgba(255,255,255,0.75)" : "rgba(20,20,19,0.6)"),
+                      ...(overlay ? { position: "absolute", top: 6, left: 6, zIndex: 2 } : {}),
+                    }}
+                  >
+                    {checked && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#FFFFFF" : "#14161A"} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    )}
+                  </div>
+                );
+              };
+
+              // 선택 모드에서 항목을 누르면 폴더로 들어가거나 뷰어를 여는 대신 선택만 토글한다.
+              // 롱프레스 직후 따라오는 click은 무시한다(그 클릭까지 처리하면 바로 해제돼 버린다).
+              const handleItemClick = (type, id, normalAction) => {
+                if (justLongPressedRef.current) {
+                  justLongPressedRef.current = false;
+                  return;
+                }
+                if (selectionMode) {
+                  toggleSelected(type, id);
+                  return;
+                }
+                normalAction();
+              };
+
+              // 선택된 항목의 테두리를 진하게 표시한다.
+              const itemBorderColor = (type, id) =>
+                isSelected(type, id)
+                  ? (isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.6)")
+                  : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)");
+
               // 폴더/문서 공용 행 렌더러 - 검색 결과 목록과 폴더 안 목록에서 함께 쓴다.
               const renderRow = (type, item, iconNode, subText, onNavigate) => {
-                const rowDragType = type === "folder" ? "folder" : "file";
-                const isPickedUp = draggingItem && draggingItem.type === rowDragType && draggingItem.id === item.id;
+                const rowType = type === "folder" ? "folder" : "file";
                 return (
                 <div
                   key={`${type}-${item.id}`}
-                  data-drag-type={rowDragType}
-                  data-drag-id={item.id}
-                  onClick={() => {
-                    if (justDraggedRef.current) return;
-                    if (onNavigate) {
-                      onNavigate();
-                      return;
-                    }
-                    if (type === "folder") setCurrentPath([...currentPath, item.name]);
-                  }}
-                  onPointerDown={rowPointerDown(rowDragType, item.id)}
+                  data-item-type={rowType}
+                  data-item-id={item.id}
+                  onClick={() =>
+                    handleItemClick(rowType, item.id, () => {
+                      if (onNavigate) {
+                        onNavigate();
+                        return;
+                      }
+                      if (type === "folder") setCurrentPath([...currentPath, item.name]);
+                    })
+                  }
+                  onPointerDown={rowPointerDown(rowType, item.id)}
                   onPointerMove={rowPointerMove}
                   onPointerUp={rowPointerUp}
                   onMouseDown={pressDown("scale(0.98)")}
@@ -2563,7 +2850,7 @@ export default function Alloy() {
                   onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.08)"}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)";
-                    e.currentTarget.style.transform = isPickedUp ? e.currentTarget.style.transform : "none";
+                    e.currentTarget.style.transform = "none";
                   }}
                   style={{
                     display: "flex",
@@ -2575,22 +2862,17 @@ export default function Alloy() {
                     background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
                     backdropFilter: "blur(20px) saturate(180%)",
                     WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                    border: `1px solid ${
-                      dragOverKey === `${rowDragType}-${item.id}` || isPickedUp
-                        ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
-                        : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
-                    }`,
-                    cursor: type === "folder" || onNavigate ? "pointer" : "default",
+                    border: `1px solid ${itemBorderColor(rowType, item.id)}`,
+                    cursor: type === "folder" || onNavigate || selectionMode ? "pointer" : "default",
                     touchAction: "manipulation",
                     userSelect: "none",
                     WebkitUserSelect: "none",
                     WebkitTouchCallout: "none",
-                    transform: isPickedUp ? "scale(1.03)" : "none",
-                    boxShadow: isPickedUp ? "0 12px 28px rgba(0,0,0,0.3)" : "none",
-                    zIndex: isPickedUp ? 5 : "auto",
-                    transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease",
+                    transition: "background 0.2s ease, transform 0.15s ease, border-color 0.15s ease",
                   }}
                 >
+                  {/* 선택 체크박스는 파일/폴더 아이콘 바로 왼쪽에 온다 */}
+                  {renderSelectCheckbox(rowType, item.id, false)}
                   <div style={{ flexShrink: 0 }}>{iconNode}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {renderEditableName(type === "folder" ? "folder" : "file", item, {
@@ -2616,80 +2898,95 @@ export default function Alloy() {
               // 이미지/움짤 콜라주(비율 유지한 2열 메이슨리) 렌더러 - 폴더 안 일반 목록과
               // "분류" 화면이 함께 쓴다. viewerImages는 뷰어를 열 때 넘길 전체 배열
               // (기본은 imagesArray 자신)로, "분류" 화면에서도 그 태그의 이미지들끼리 넘겨볼 수 있다.
+              const renderImageCard = (img, imagesArray) => (
+                <div
+                  key={img.id}
+                  data-item-type="file"
+                  data-item-id={img.id}
+                  onClick={() =>
+                    handleItemClick("file", img.id, () => {
+                      if (img.url) openViewer(imagesArray, imagesArray.findIndex((x) => x.id === img.id));
+                    })
+                  }
+                  onPointerDown={rowPointerDown("file", img.id)}
+                  onPointerMove={rowPointerMove}
+                  onPointerUp={rowPointerUp}
+                  onMouseDown={pressDown("scale(0.97)")}
+                  onMouseUp={pressUp("none")}
+                  style={{
+                    position: "relative",
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    border: `1px solid ${itemBorderColor("file", img.id)}`,
+                    background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                    cursor: img.url || selectionMode ? "pointer" : "default",
+                    touchAction: "manipulation",
+                    userSelect: "none",
+                    WebkitUserSelect: "none",
+                    WebkitTouchCallout: "none",
+                    transition: "border-color 0.15s ease, transform 0.15s ease",
+                  }}
+                >
+                  {/* 선택 체크박스는 이미지 카드 왼쪽 상단에 겹쳐서 */}
+                  {renderSelectCheckbox("file", img.id, true)}
+                  {img.url ? (
+                    <img
+                      src={img.url}
+                      alt={img.name}
+                      draggable={false}
+                      style={{ width: "100%", display: "block" }}
+                    />
+                  ) : (
+                    <div style={{ padding: 24, display: "flex", justifyContent: "center" }}>
+                      {getFileIcon(img.mimeType)}
+                    </div>
+                  )}
+                  {/* 이미지 제목(좌) + 삼점 메뉴(우) - 하단 제목열에 나란히 정렬 */}
+                  <div
+                    style={{ display: "flex", alignItems: "flex-start", gap: 4, padding: "6px 4px 6px 8px" }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {renderEditableName("file", img, {
+                        color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 12,
+                        fontWeight: 500,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      })}
+                      {renderTagPills(img)}
+                    </div>
+                    {renderItemMenu("file", img)}
+                  </div>
+                </div>
+              );
+
+              // 이미지가 아주 많으면(수백~수천) 2열 그리드를 "한 줄(2칸)"씩 잘라 가상 스크롤링으로
+              // 그린다. 그리드는 원래도 줄 단위로 높이가 정해지므로(alignItems: start) 줄로 잘라도
+              // 보이는 결과는 똑같고, 화면 밖 줄은 DOM에 아예 만들지 않아 훨씬 가볍다.
               const renderImageGrid = (imagesArray, marginTop) => {
                 if (imagesArray.length === 0) return null;
+                const gridStyle = { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", alignItems: "start", gap: 8 };
+                if (imagesArray.length <= VIRTUALIZE_THRESHOLD) {
+                  return (
+                    <div style={{ ...gridStyle, marginTop }}>
+                      {imagesArray.map((img) => renderImageCard(img, imagesArray))}
+                    </div>
+                  );
+                }
+                const rows = chunkArray(imagesArray, 2);
                 return (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", alignItems: "start", gap: 8, marginTop }}>
-                    {imagesArray.map((img) => {
-                      const isPickedUp = draggingItem && draggingItem.type === "file" && draggingItem.id === img.id;
-                      return (
-                      <div
-                        key={img.id}
-                        data-drag-type="file"
-                        data-drag-id={img.id}
-                        onClick={() => {
-                          if (justDraggedRef.current) return;
-                          if (img.url) openViewer(imagesArray, imagesArray.findIndex((x) => x.id === img.id));
-                        }}
-                        onPointerDown={rowPointerDown("file", img.id)}
-                        onPointerMove={rowPointerMove}
-                        onPointerUp={rowPointerUp}
-                        onMouseDown={pressDown("scale(0.97)")}
-                        onMouseUp={pressUp("none")}
-                        style={{
-                          position: "relative",
-                          borderRadius: 10,
-                          overflow: "hidden",
-                          border: `1px solid ${
-                            dragOverKey === `file-${img.id}` || isPickedUp
-                              ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
-                              : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
-                          }`,
-                          background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                          cursor: img.url ? "pointer" : "default",
-                          touchAction: "manipulation",
-                          userSelect: "none",
-                          WebkitUserSelect: "none",
-                          WebkitTouchCallout: "none",
-                          transform: isPickedUp ? "scale(1.04)" : "none",
-                          boxShadow: isPickedUp ? "0 12px 28px rgba(0,0,0,0.3)" : "none",
-                          zIndex: isPickedUp ? 5 : "auto",
-                          transition: "border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease",
-                        }}
-                      >
-                        {img.url ? (
-                          <img
-                            src={img.url}
-                            alt={img.name}
-                            draggable={false}
-                            style={{ width: "100%", display: "block" }}
-                          />
-                        ) : (
-                          <div style={{ padding: 24, display: "flex", justifyContent: "center" }}>
-                            {getFileIcon(img.mimeType)}
-                          </div>
-                        )}
-                        {/* 이미지 제목(좌) + 삼점 메뉴(우) - 하단 제목열에 나란히 정렬 */}
-                        <div
-                          style={{ display: "flex", alignItems: "flex-start", gap: 4, padding: "6px 4px 6px 8px" }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            {renderEditableName("file", img, {
-                              color: isLight ? "#14161A" : "#FFFFFF",
-                              fontSize: 12,
-                              fontWeight: 500,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            })}
-                            {renderTagPills(img)}
-                          </div>
-                          {renderItemMenu("file", img)}
+                  <div style={{ marginTop }}>
+                    <WindowVirtualList
+                      count={rows.length}
+                      estimateSize={220}
+                      renderItem={(index) => (
+                        <div style={{ ...gridStyle, paddingBottom: 8 }}>
+                          {rows[index].map((img) => renderImageCard(img, imagesArray))}
                         </div>
-                      </div>
-                      );
-                    })}
+                      )}
+                    />
                   </div>
                 );
               };
@@ -2699,96 +2996,100 @@ export default function Alloy() {
               // 크롭해 보여준다(aspectRatio 고정 박스 + objectFit: cover). 커버가 없으면
               // 옅은 폴더 아이콘만 가운데에 둔다. 썸네일 밑에는 작은 폴더 아이콘 + 제목 +
               // 삼점 메뉴를 나란히 둔다 - 그래서 정사각형보다 살짝 세로로 긴 카드가 된다.
+              const renderFolderGalleryCard = (folder) => {
+                const cover = files.find((f) => f.id === folder.coverFileId && f.kind === "image");
+                return (
+                  <div
+                    key={folder.id}
+                    data-item-type="folder"
+                    data-item-id={folder.id}
+                    onClick={() => handleItemClick("folder", folder.id, () => setCurrentPath(folder.path))}
+                    onPointerDown={rowPointerDown("folder", folder.id)}
+                    onPointerMove={rowPointerMove}
+                    onPointerUp={rowPointerUp}
+                    onMouseDown={pressDown("scale(0.97)")}
+                    onMouseUp={pressUp("none")}
+                    style={{
+                      position: "relative",
+                      borderRadius: 10,
+                      overflow: "hidden",
+                      border: `1px solid ${itemBorderColor("folder", folder.id)}`,
+                      background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                      cursor: "pointer",
+                      touchAction: "manipulation",
+                      userSelect: "none",
+                      WebkitUserSelect: "none",
+                      WebkitTouchCallout: "none",
+                      transition: "border-color 0.15s ease, transform 0.15s ease",
+                    }}
+                  >
+                    {/* 선택 체크박스는 갤러리형 폴더 카드 왼쪽 상단에 겹쳐서 */}
+                    {renderSelectCheckbox("folder", folder.id, true)}
+                    <div
+                      style={{
+                        position: "relative",
+                        width: "100%",
+                        aspectRatio: "1 / 1",
+                        overflow: "hidden",
+                        background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
+                      }}
+                    >
+                      {cover && cover.url ? (
+                        <img
+                          src={cover.url}
+                          alt={folder.name}
+                          draggable={false}
+                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                        />
+                      ) : (
+                        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <svg width="40" height="40" viewBox="0 0 24 24" fill={isLight ? "rgba(20,22,26,0.22)" : "rgba(255,255,255,0.22)"}>
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                    {/* 작은 폴더 아이콘(좌) + 제목 + 삼점 메뉴(우) */}
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 4px 6px 8px" }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"} style={{ flexShrink: 0 }}>
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {renderEditableName("folder", folder, {
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 12,
+                          fontWeight: 500,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        })}
+                      </div>
+                      {renderItemMenu("folder", folder)}
+                    </div>
+                  </div>
+                );
+              };
+
               const renderFolderGalleryGrid = (foldersArray) => {
                 if (foldersArray.length === 0) return null;
+                const gridStyle = { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", alignItems: "start", gap: 8 };
+                if (foldersArray.length <= VIRTUALIZE_THRESHOLD) {
+                  return <div style={gridStyle}>{foldersArray.map(renderFolderGalleryCard)}</div>;
+                }
+                const rows = chunkArray(foldersArray, 2);
                 return (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", alignItems: "start", gap: 8 }}>
-                    {foldersArray.map((folder) => {
-                      const isPickedUp = draggingItem && draggingItem.type === "folder" && draggingItem.id === folder.id;
-                      const cover = files.find((f) => f.id === folder.coverFileId && f.kind === "image");
-                      return (
-                        <div
-                          key={folder.id}
-                          data-drag-type="folder"
-                          data-drag-id={folder.id}
-                          onClick={() => {
-                            if (justDraggedRef.current) return;
-                            setCurrentPath(folder.path);
-                          }}
-                          onPointerDown={rowPointerDown("folder", folder.id)}
-                          onPointerMove={rowPointerMove}
-                          onPointerUp={rowPointerUp}
-                          onMouseDown={pressDown("scale(0.97)")}
-                          onMouseUp={pressUp("none")}
-                          style={{
-                            position: "relative",
-                            borderRadius: 10,
-                            overflow: "hidden",
-                            border: `1px solid ${
-                              dragOverKey === `folder-${folder.id}` || isPickedUp
-                                ? (isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.45)")
-                                : (isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)")
-                            }`,
-                            background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
-                            cursor: "pointer",
-                            touchAction: "manipulation",
-                            userSelect: "none",
-                            WebkitUserSelect: "none",
-                            WebkitTouchCallout: "none",
-                            transform: isPickedUp ? "scale(1.04)" : "none",
-                            boxShadow: isPickedUp ? "0 12px 28px rgba(0,0,0,0.3)" : "none",
-                            zIndex: isPickedUp ? 5 : "auto",
-                            transition: "border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease",
-                          }}
-                        >
-                          <div
-                            style={{
-                              position: "relative",
-                              width: "100%",
-                              aspectRatio: "1 / 1",
-                              overflow: "hidden",
-                              background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
-                            }}
-                          >
-                            {cover && cover.url ? (
-                              <img
-                                src={cover.url}
-                                alt={folder.name}
-                                draggable={false}
-                                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                              />
-                            ) : (
-                              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                <svg width="40" height="40" viewBox="0 0 24 24" fill={isLight ? "rgba(20,22,26,0.22)" : "rgba(255,255,255,0.22)"}>
-                                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                                </svg>
-                              </div>
-                            )}
-                          </div>
-                          {/* 작은 폴더 아이콘(좌) + 제목 + 삼점 메뉴(우) */}
-                          <div
-                            style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 4px 6px 8px" }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"} style={{ flexShrink: 0 }}>
-                              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                            </svg>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              {renderEditableName("folder", folder, {
-                                color: isLight ? "#14161A" : "#FFFFFF",
-                                fontSize: 12,
-                                fontWeight: 500,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              })}
-                            </div>
-                            {renderItemMenu("folder", folder)}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <WindowVirtualList
+                    count={rows.length}
+                    estimateSize={220}
+                    renderItem={(index) => (
+                      <div style={{ ...gridStyle, paddingBottom: 8 }}>
+                        {rows[index].map(renderFolderGalleryCard)}
+                      </div>
+                    )}
+                  />
                 );
               };
 
@@ -2939,7 +3240,29 @@ export default function Alloy() {
                 );
               }
 
-              // 폴더/문서 공용 행 렌더러
+              // 폴더/문서 행 목록 - 항목이 아주 많으면(수백~수천) 가상 스크롤링으로 그린다.
+              // 그 아래에서는 예전처럼 전부 그대로 그린다.
+              const renderRowList = (items, renderOne, estimateSize) => {
+                if (items.length <= VIRTUALIZE_THRESHOLD) return items.map(renderOne);
+                return (
+                  <WindowVirtualList
+                    count={items.length}
+                    estimateSize={estimateSize}
+                    renderItem={(index) => renderOne(items[index])}
+                  />
+                );
+              };
+
+              const renderFolderRow = (folder) =>
+                renderRow(
+                  "folder",
+                  folder,
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>,
+                  null
+                );
+
               return (
                 <>
                   {/* 폴더 - 마법사 "보기"로 이 위치가 갤러리형이면 커버 이미지 카드 그리드로,
@@ -2949,21 +3272,14 @@ export default function Alloy() {
                       {renderFolderGalleryGrid(visibleFolders)}
                     </div>
                   ) : (
-                    visibleFolders.map((folder) =>
-                      renderRow(
-                        "folder",
-                        folder,
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill={isLight ? "#14161A" : "#FFFFFF"}>
-                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                        </svg>,
-                        null
-                      )
-                    )
+                    renderRowList(visibleFolders, renderFolderRow, 68)
                   )}
 
                   {/* 문서(TXT) 행 */}
-                  {visibleDocs.map((doc) =>
-                    renderRow("file", doc, getFileIcon(doc.mimeType), formatFileSize(doc.size))
+                  {renderRowList(
+                    visibleDocs,
+                    (doc) => renderRow("file", doc, getFileIcon(doc.mimeType), formatFileSize(doc.size)),
+                    68
                   )}
 
                   {/* 이미지/움짤 콜라주 - 비율 유지한 2열 메이슨리 */}
