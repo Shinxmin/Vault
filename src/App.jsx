@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.93";
+const APP_VERSION = "0.1.94";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -2719,6 +2719,34 @@ export default function Alloy() {
                           }}
                           onClick={(e) => e.stopPropagation()}
                         >
+                          {/* 다운로드 - 폴더면 하위 폴더/파일을 구조 그대로 담은 zip으로,
+                              파일이면 그 파일 그대로 받는다. 꾹 눌러 선택해 둔 항목이 있으면
+                              어느 항목의 메뉴에서 눌렀든 선택한 전체를 구조에 맞게 받는다. */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeItemMenu();
+                              handleDownload(type, item.id);
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "10px 12px",
+                              border: "none",
+                              background: "transparent",
+                              color: isLight ? "#14161A" : "#FFFFFF",
+                              fontSize: 15,
+                              fontWeight: 500,
+                              cursor: downloadBusy ? "default" : "pointer",
+                              opacity: downloadBusy ? 0.5 : 1,
+                              outline: "none",
+                              textAlign: "left",
+                              transition: "background 0.2s",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                          >
+                            다운로드
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2766,34 +2794,6 @@ export default function Alloy() {
                             onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                           >
                             이동
-                          </button>
-                          {/* 다운로드 - 폴더면 하위 폴더/파일을 구조 그대로 담은 zip으로,
-                              파일이면 그 파일 그대로 받는다. 꾹 눌러 선택해 둔 항목이 있으면
-                              어느 항목의 메뉴에서 눌렀든 선택한 전체를 구조에 맞게 받는다. */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              closeItemMenu();
-                              handleDownload(type, item.id);
-                            }}
-                            style={{
-                              width: "100%",
-                              padding: "10px 12px",
-                              border: "none",
-                              background: "transparent",
-                              color: isLight ? "#14161A" : "#FFFFFF",
-                              fontSize: 15,
-                              fontWeight: 500,
-                              cursor: downloadBusy ? "default" : "pointer",
-                              opacity: downloadBusy ? 0.5 : 1,
-                              outline: "none",
-                              textAlign: "left",
-                              transition: "background 0.2s",
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                          >
-                            다운로드
                           </button>
                           <button
                             onClick={(e) => {
