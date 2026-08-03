@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.92";
+const APP_VERSION = "0.1.93";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -1547,7 +1547,12 @@ export default function Alloy() {
   // 폴더/파일을 구조 그대로 담은 zip으로 받는다. 선택 모드에서는(꾹 눌러 선택해 둔 것이
   // 있으면) 어느 항목의 메뉴에서 눌렀든 선택한 폴더/데이터 전체를 구조에 맞게 한 번에 받는다.
   // 실제 바이트는 R2에 있으므로 presigned GET URL을 발급받아 브라우저가 직접 받아온다.
+  // 진행 상황은 업로드와 똑같은 하단 우측 패널(대기/진행/완료/실패 + 받은 용량)로 보여준다.
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [downloadQueue, setDownloadQueue] = useState([]); // [{ qid, name, size, loaded, status }]
+  const [downloadPanelClosed, setDownloadPanelClosed] = useState(false);
+  const updateDownloadItem = (qid, patch) =>
+    setDownloadQueue((prev) => prev.map((it) => (it.qid === qid ? { ...it, ...patch } : it)));
 
   const triggerBrowserDownload = (blob, filename) => {
     const url = URL.createObjectURL(blob);
@@ -1563,12 +1568,25 @@ export default function Alloy() {
   // 저장할 때 쓸 파일 이름 - 이름(name)에는 확장자를 담지 않으므로 ext를 다시 붙인다.
   const downloadFileName = (file) => (file.ext ? `${file.name}.${file.ext}` : file.name);
 
-  const fetchFileBlob = async (file) => {
+  // 받는 중에 진행률을 알려면 응답 본문을 스트림으로 읽어야 한다(업로드의 XHR onprogress에
+  // 해당하는 역할). 스트림을 못 쓰는 환경에서는 그냥 통째로 받는다.
+  const fetchFileBlob = async (file, onProgress) => {
     if (!file.r2Key) return null;
     const { url } = await r2Presign({ action: "get", key: file.r2Key });
     const res = await fetch(url);
     if (!res.ok) throw new Error(`R2 다운로드 실패 (${res.status})`);
-    return await res.blob();
+    if (!onProgress || !res.body || typeof res.body.getReader !== "function") return await res.blob();
+    const reader = res.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      onProgress(loaded);
+    }
+    return new Blob(chunks, { type: res.headers.get("content-type") || "application/octet-stream" });
   };
 
   // zip 안에서 이름이 겹치지 않게 "이름(1).jpg" 식으로 번호를 붙인다.
@@ -1593,62 +1611,97 @@ export default function Alloy() {
     return candidate;
   };
 
-  // 폴더 하나를 zip에 통째로 담는다 - 빈 하위 폴더까지 포함해 구조를 그대로 재현한다.
-  // prefix는 zip 안에서 이 폴더가 놓일 위치("" 이면 zip 루트가 이 폴더의 내용).
-  const addFolderToZip = async (zip, folder, prefix, used) => {
-    const root = `${prefix}${folder.name}`;
-    zip.folder(root);
-    const descendantFolders = folders.filter((f) => f.id !== folder.id && pathStartsWith(f.path, folder.path));
-    descendantFolders.forEach((f) => {
-      zip.folder(`${root}/${f.path.slice(folder.path.length).join("/")}`);
+  // 받을 파일 목록과 zip 안에서의 위치를 먼저 전부 확정한다 - 그래야 시작하자마자
+  // 진행 패널에 "대기" 상태로 전체 목록을 보여줄 수 있다(업로드 패널과 동일한 흐름).
+  // 빈 하위 폴더까지 zip에 만들어서 구조를 그대로 재현한다.
+  const buildDownloadPlan = (targetFolders, targetFiles) => {
+    const used = new Set();
+    const entries = []; // { file, zipPath }
+    const emptyDirs = [];
+    targetFolders.forEach((folder) => {
+      const root = folder.name;
+      emptyDirs.push(root);
+      folders
+        .filter((f) => f.id !== folder.id && pathStartsWith(f.path, folder.path))
+        .forEach((f) => emptyDirs.push(`${root}/${f.path.slice(folder.path.length).join("/")}`));
+      files
+        .filter((f) => pathStartsWith(f.path, folder.path))
+        .forEach((file) => {
+          const rel = file.path.slice(folder.path.length).join("/");
+          entries.push({ file, zipPath: uniqueZipPath(used, `${root}/${rel ? `${rel}/` : ""}${downloadFileName(file)}`) });
+        });
     });
-    const descendantFiles = files.filter((f) => pathStartsWith(f.path, folder.path));
-    for (const file of descendantFiles) {
-      const blob = await fetchFileBlob(file);
-      if (!blob) continue;
-      const rel = file.path.slice(folder.path.length).join("/");
-      const inZip = uniqueZipPath(used, `${root}/${rel ? `${rel}/` : ""}${downloadFileName(file)}`);
-      zip.file(inZip, blob);
-    }
+    targetFiles.forEach((file) => {
+      entries.push({ file, zipPath: uniqueZipPath(used, downloadFileName(file)) });
+    });
+    return { entries, emptyDirs };
   };
 
-  // 실제 다운로드 실행 - targetFolders/targetFiles를 받아 하나면 그대로, 여럿이면 zip으로.
+  // 실제 다운로드 실행 - targetFolders/targetFiles를 받아 파일 하나면 그대로, 여럿이면 zip으로.
   const runDownload = async (targetFolders, targetFiles, zipName) => {
     if (downloadBusy) return;
     if (!targetFolders.length && !targetFiles.length) {
       showToast("다운로드할 항목이 없습니다");
       return;
     }
+    const { entries, emptyDirs } = buildDownloadPlan(targetFolders, targetFiles);
+    const receivable = entries.filter((e) => e.file.r2Key);
+    if (!receivable.length) {
+      showToast("다운로드할 항목이 없습니다");
+      return;
+    }
     setDownloadBusy(true);
-    showToast("다운로드를 준비하고 있습니다");
+    // 새 다운로드를 시작하면 이전 목록은 지우고 패널을 다시 연다(업로드와 동일).
+    const startedAt = Date.now();
+    const queued = receivable.map((e, i) => ({
+      qid: `${startedAt}-${i}`,
+      name: downloadFileName(e.file),
+      size: e.file.size || 0,
+      loaded: 0,
+      status: "queued",
+    }));
+    setDownloadQueue(queued);
+    setDownloadPanelClosed(false);
+
+    const blobs = [];
+    let anyError = false;
+    for (let i = 0; i < receivable.length; i++) {
+      const { file, zipPath } = receivable[i];
+      const qid = queued[i].qid;
+      updateDownloadItem(qid, { status: "downloading" });
+      try {
+        const blob = await fetchFileBlob(file, (loaded) => updateDownloadItem(qid, { loaded }));
+        if (!blob) throw new Error("파일 데이터가 없습니다");
+        blobs.push({ zipPath, blob });
+        updateDownloadItem(qid, { status: "done", loaded: blob.size, size: blob.size });
+      } catch (e) {
+        console.error("다운로드 실패:", e);
+        anyError = true;
+        updateDownloadItem(qid, { status: "error" });
+      }
+    }
+
     try {
       // 파일 딱 하나면 zip으로 감싸지 않고 원본 파일 그대로 받는다.
       if (!targetFolders.length && targetFiles.length === 1) {
-        const blob = await fetchFileBlob(targetFiles[0]);
-        if (!blob) throw new Error("파일 데이터가 없습니다");
-        triggerBrowserDownload(blob, downloadFileName(targetFiles[0]));
-        return;
+        if (blobs.length) triggerBrowserDownload(blobs[0].blob, downloadFileName(targetFiles[0]));
+      } else if (blobs.length || emptyDirs.length) {
+        // zip은 용량이 큰 의존성이라 실제로 필요할 때만 불러온다(초기 로딩 속도 유지).
+        const { default: JSZip } = await import("jszip");
+        const zip = new JSZip();
+        emptyDirs.forEach((dir) => zip.folder(dir));
+        blobs.forEach(({ zipPath, blob }) => zip.file(zipPath, blob));
+        const content = await zip.generateAsync({ type: "blob" });
+        triggerBrowserDownload(content, zipName);
       }
-      // zip은 용량이 큰 의존성이라 실제로 필요할 때만 불러온다(초기 로딩 속도 유지).
-      const { default: JSZip } = await import("jszip");
-      const zip = new JSZip();
-      const used = new Set();
-      for (const folder of targetFolders) {
-        await addFolderToZip(zip, folder, "", used);
-      }
-      for (const file of targetFiles) {
-        const blob = await fetchFileBlob(file);
-        if (!blob) continue;
-        zip.file(uniqueZipPath(used, downloadFileName(file)), blob);
-      }
-      const content = await zip.generateAsync({ type: "blob" });
-      triggerBrowserDownload(content, zipName);
     } catch (e) {
-      console.error("다운로드 실패:", e);
-      showToast("다운로드에 실패했습니다");
+      console.error("압축 실패:", e);
+      anyError = true;
+      setDownloadQueue((prev) => prev.map((it) => (it.status === "done" ? { ...it, status: "error" } : it)));
     } finally {
       setDownloadBusy(false);
     }
+    if (anyError) showToast("일부 항목을 받지 못했습니다");
   };
 
   // 삼점 메뉴의 "다운로드"에서 호출한다. 선택된 항목이 있으면 그 전체를, 없으면 이 항목만.
@@ -1664,6 +1717,120 @@ export default function Alloy() {
     }
     const file = files.find((f) => f.id === id);
     if (file) runDownload([], [file], `${file.name}.zip`);
+  };
+
+  // 업로드/다운로드 현황 패널 공용 렌더러 - 두 작업이 같은 디자인/동작을 쓰도록
+  // 마크업을 한 곳에 두고 제목과 목록만 갈아끼운다.
+  const renderTransferPanel = (title, queue, closed, onClose) => {
+    if (!queue.length || closed) return null;
+    return (
+      <div
+        style={{
+          width: 280,
+          maxWidth: "calc(100vw - 48px)",
+          borderRadius: 16,
+          background: isLight ? "rgba(255,255,255,0.85)" : "rgba(30,29,28,0.9)",
+          backdropFilter: "blur(20px) saturate(180%)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "12px 14px",
+            borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)"}`,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 14, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>{title}</span>
+          <button
+            onClick={onClose}
+            aria-label="닫기"
+            style={{
+              width: 22,
+              height: 22,
+              flexShrink: 0,
+              border: "none",
+              background: "transparent",
+              color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+              cursor: "pointer",
+              outline: "none",
+              borderRadius: 6,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div style={{ overflowY: "auto", maxHeight: 260, padding: "4px 0" }}>
+          {queue.map((item) => (
+            <div
+              key={item.qid}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "7px 14px",
+                fontSize: 12.5,
+              }}
+            >
+              <span
+                style={{
+                  flexShrink: 0,
+                  width: 28,
+                  fontWeight: 600,
+                  color: item.status === "error"
+                    ? "#ff6b6b"
+                    : item.status === "done"
+                      ? (isLight ? "#14161A" : "#FFFFFF")
+                      : (isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)"),
+                }}
+              >
+                {item.status === "queued" && "대기"}
+                {(item.status === "uploading" || item.status === "downloading") && "진행"}
+                {item.status === "done" && "완료"}
+                {item.status === "error" && "실패"}
+              </span>
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                }}
+              >
+                {item.name}
+              </span>
+              <span
+                style={{
+                  flexShrink: 0,
+                  fontSize: 11.5,
+                  color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
+                }}
+              >
+                ({formatMB(item.loaded)}/{formatMB(item.size)})
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
@@ -1916,8 +2083,12 @@ export default function Alloy() {
             </>
           ) : (
             <>
+              {/* Vaulty 제목 - 검색 중이면 검색어를 지우면서 홈으로 돌아간다. */}
               <h1
-                onClick={() => setCurrentPath([])}
+                onClick={() => {
+                  setSearchQuery("");
+                  setCurrentPath([]);
+                }}
                 style={{
                   margin: 0,
                   height: TOP_BUTTON_SIZE,
@@ -2061,10 +2232,17 @@ export default function Alloy() {
                 borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
               }}
             >
-              {/* 경로 표기 */}
+              {/* 경로 표기 - "홈"은 검색 중이면 검색어만 지워서(위치는 그대로) 보고 있던
+                  화면으로 돌아가고, 검색 중이 아니면 평소처럼 홈으로 이동한다. */}
               <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
                 <button
-                  onClick={() => setCurrentPath([])}
+                  onClick={() => {
+                    if (searchQuery) {
+                      setSearchQuery("");
+                      return;
+                    }
+                    setCurrentPath([]);
+                  }}
                   onMouseDown={pressDown("scale(0.92)")}
                   onMouseUp={pressUp("scale(1)")}
                   style={{
@@ -3152,8 +3330,21 @@ export default function Alloy() {
               //     (이미지는 그리드와 동일하게 뷰어가 뜬다). ──
               const trimmedQuery = searchQuery.trim().toLowerCase();
               if (trimmedQuery) {
-                const folderMatches = koSort(folders.filter((f) => f.name.toLowerCase().includes(trimmedQuery)));
-                const allFileMatches = files.filter((f) => f.name.toLowerCase().includes(trimmedQuery));
+                // 검색어는 이름뿐 아니라 태그값도 대상으로 한다.
+                // "#A #B"처럼 #으로 시작하는 낱말들을 쓰면 그 태그가 달린 항목을 모두
+                // 보여준다(OR 조건) - 별도의 "분류" 화면으로 넘어가지 않고 이 검색 화면에
+                // 그대로 나온다. #이 없는 낱말은 이름/태그 어디든 포함되면 걸린다.
+                const tokens = trimmedQuery.split(/\s+/).filter(Boolean);
+                const tagTokens = tokens.filter((t) => t.startsWith("#") && t.length > 1);
+                const textQuery = tokens.filter((t) => !t.startsWith("#")).join(" ");
+                const searchMatches = (item) => {
+                  const itemTags = (item.tags || []).map((t) => t.toLowerCase());
+                  if (tagTokens.length && !itemTags.some((t) => tagTokens.includes(t))) return false;
+                  if (!textQuery) return true;
+                  return item.name.toLowerCase().includes(textQuery) || itemTags.some((t) => t.includes(textQuery));
+                };
+                const folderMatches = koSort(folders.filter(searchMatches));
+                const allFileMatches = files.filter(searchMatches);
                 const docMatches = koSort(allFileMatches.filter((f) => f.kind !== "image"));
                 const imageMatches = koSort(allFileMatches.filter((f) => f.kind === "image"));
                 if (folderMatches.length === 0 && docMatches.length === 0 && imageMatches.length === 0) {
@@ -4887,121 +5078,27 @@ export default function Alloy() {
         </div>
       )}
 
-      {/* 업로드 현황 패널 - 화면 우측 하단에 떠서 파일별 진행/완료/대기 상태와 전송량을
-          보여준다. 업로드가 새로 시작되면 다시 나타나고, X를 누르면 닫힌다(업로드 자체는
-          백그라운드에서 계속된다). */}
-      {uploadQueue.length > 0 && !uploadPanelClosed && (
+      {/* 업로드/다운로드 현황 패널 - 화면 우측 하단에 떠서 파일별 진행/완료/대기 상태와
+          전송량을 보여준다. 두 패널은 완전히 같은 디자인/로직을 쓰며, 동시에 떠 있으면
+          겹치지 않도록 세로로 쌓인다. 새 작업이 시작되면 다시 나타나고, X를 누르면
+          닫힌다(작업 자체는 백그라운드에서 계속된다). */}
+      {(uploadQueue.length > 0 && !uploadPanelClosed) || (downloadQueue.length > 0 && !downloadPanelClosed) ? (
         <div
           style={{
             position: "fixed",
             bottom: 24,
             right: 24,
-            width: 280,
-            maxWidth: "calc(100vw - 48px)",
-            borderRadius: 16,
-            background: isLight ? "rgba(255,255,255,0.85)" : "rgba(30,29,28,0.9)",
-            backdropFilter: "blur(20px) saturate(180%)",
-            WebkitBackdropFilter: "blur(20px) saturate(180%)",
-            border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-            boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
             zIndex: 45,
             display: "flex",
             flexDirection: "column",
-            overflow: "hidden",
+            alignItems: "flex-end",
+            gap: 12,
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "12px 14px",
-              borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)"}`,
-              flexShrink: 0,
-            }}
-          >
-            <span style={{ fontSize: 14, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>업로드</span>
-            <button
-              onClick={() => setUploadPanelClosed(true)}
-              aria-label="닫기"
-              style={{
-                width: 22,
-                height: 22,
-                flexShrink: 0,
-                border: "none",
-                background: "transparent",
-                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                cursor: "pointer",
-                outline: "none",
-                borderRadius: 6,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <line x1="6" y1="6" x2="18" y2="18" />
-                <line x1="18" y1="6" x2="6" y2="18" />
-              </svg>
-            </button>
-          </div>
-          <div style={{ overflowY: "auto", maxHeight: 260, padding: "4px 0" }}>
-            {uploadQueue.map((item) => (
-              <div
-                key={item.qid}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "7px 14px",
-                  fontSize: 12.5,
-                }}
-              >
-                <span
-                  style={{
-                    flexShrink: 0,
-                    width: 28,
-                    fontWeight: 600,
-                    color: item.status === "error"
-                      ? "#ff6b6b"
-                      : item.status === "done"
-                        ? (isLight ? "#14161A" : "#FFFFFF")
-                        : (isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.5)"),
-                  }}
-                >
-                  {item.status === "queued" && "대기"}
-                  {item.status === "uploading" && "진행"}
-                  {item.status === "done" && "완료"}
-                  {item.status === "error" && "실패"}
-                </span>
-                <span
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                  }}
-                >
-                  {item.name}
-                </span>
-                <span
-                  style={{
-                    flexShrink: 0,
-                    fontSize: 11.5,
-                    color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
-                  }}
-                >
-                  ({formatMB(item.loaded)}/{formatMB(item.size)})
-                </span>
-              </div>
-            ))}
-          </div>
+          {renderTransferPanel("다운로드", downloadQueue, downloadPanelClosed, () => setDownloadPanelClosed(true))}
+          {renderTransferPanel("업로드", uploadQueue, uploadPanelClosed, () => setUploadPanelClosed(true))}
         </div>
-      )}
+      ) : null}
 
       {/* 안내 팝업 - 서브 액션바와 같은 리퀴드 글래스 배경을 쓰되, 하단 고정이 아니라
           눌린 물음표 아이콘 바로 밑 위치(infoPopupPos)에 뜬다. 레이아웃 흐름에 얹지 않고
