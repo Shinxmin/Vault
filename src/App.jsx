@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.96";
+const APP_VERSION = "0.1.97";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -78,6 +78,75 @@ const chunkArray = (arr, size) => {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+};
+
+// 마크다운 실시간 편집기(contentEditable) 커서 위치 저장/복원 - 문자 오프셋(전체
+// 텍스트 기준 몇 번째 글자인지) 하나로 표현한다. 매 입력마다 DOM을 통째로 다시 그리기
+// 때문에(문법 적용 결과를 그 자리에 바로 보여주려면 필요) 브라우저가 스스로 커서를
+// 옮겨주지 못하므로 직접 계산해서 되돌려야 한다.
+const getCaretOffset = (root) => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return 0;
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer)) return 0;
+  const preRange = range.cloneRange();
+  preRange.selectNodeContents(root);
+  preRange.setEnd(range.startContainer, range.startOffset);
+  return preRange.toString().length;
+};
+
+const setCaretOffset = (root, offset) => {
+  const sel = window.getSelection();
+  if (!sel) return;
+  let remaining = offset;
+  let targetNode = null;
+  let targetOffset = 0;
+  const walk = (el) => {
+    for (const child of el.childNodes) {
+      if (targetNode) return;
+      if (child.nodeType === Node.TEXT_NODE) {
+        const len = child.textContent.length;
+        if (remaining <= len) {
+          targetNode = child;
+          targetOffset = remaining;
+          return;
+        }
+        remaining -= len;
+      } else {
+        walk(child);
+      }
+    }
+  };
+  walk(root);
+  const range = document.createRange();
+  if (targetNode) {
+    range.setStart(targetNode, targetOffset);
+  } else {
+    range.selectNodeContents(root);
+    range.collapse(false);
+  }
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+};
+
+// 지금 선택 범위의 시작/끝을 문자 오프셋으로 - 아무것도 선택하지 않고 커서만 있으면
+// start===end(=getCaretOffset과 같은 값)이고, 드래그로 여러 글자를 선택한 채 타이핑/
+// 삭제하면 그 구간 전체를 교체해야 하므로 둘 다 필요하다.
+const getSelectionOffsets = (root) => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return { start: 0, end: 0 };
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return { start: 0, end: 0 };
+  const offsetOf = (container, off) => {
+    const r = document.createRange();
+    r.selectNodeContents(root);
+    r.setEnd(container, off);
+    return r.toString().length;
+  };
+  const start = offsetOf(range.startContainer, range.startOffset);
+  const end = offsetOf(range.endContainer, range.endOffset);
+  return start <= end ? { start, end } : { start: end, end: start };
 };
 
 export default function Alloy() {
@@ -215,14 +284,14 @@ export default function Alloy() {
   // 업로드 방식 - 설정 탭의 "업로드" 카드에서 원본/최적화 스위치로 고른다. 최적화면
   // 이미지/움짤만 원본 해상도의 50%로 줄여서 올린다(기본값은 원본 - 손대지 않고 그대로 올림).
   const [uploadOptimizeEnabled, setUploadOptimizeEnabled] = useState(false);
-  // 보기(리스트/갤러리) - 마법사 메뉴의 "보기"를 누르면 지금 보고 있는 위치의 폴더만
-  // 갤러리형으로 바뀐다(그 안의 이미지/문서는 영향 없음 - 이미지는 원래도 갤러리다).
-  // 위치별로 따로 기억한다(예: 홈에서 켜도 그 안의 하위 폴더까지 적용되지 않는다).
+  // 보기(리스트/갤러리) - 마법사 메뉴의 "보기"를 누르면 지금 보고 있는 위치의 폴더/문서/
+  // 이미지 전부가 똑같이 리스트형 <-> 갤러리형으로 바뀐다. 위치별로 따로 기억한다
+  // (예: 홈에서 켜도 그 안의 하위 폴더까지 적용되지 않는다).
   // gallery_view_paths 컬럼에 저장해 새로고침/로그아웃 후 다시 로그인해도 유지된다.
   const [galleryViewPaths, setGalleryViewPaths] = useState({}); // { [pathKey]: true }
   const currentPathKey = currentPath.join("/");
-  const folderGalleryMode = !!galleryViewPaths[currentPathKey];
-  const toggleFolderGalleryMode = () => {
+  const galleryMode = !!galleryViewPaths[currentPathKey];
+  const toggleGalleryMode = () => {
     setGalleryViewPaths((prev) => ({ ...prev, [currentPathKey]: !prev[currentPathKey] }));
   };
   // 로그인 - 개인 웹사이트라 회원가입 기능은 없고, Supabase Auth에 미리 등록해 둔
@@ -533,6 +602,10 @@ export default function Alloy() {
   // 화면을 하나 더 미는 방식(별도 탭이 아니라 이 설정 화면 안의 하위 화면).
   const [settingsScreenOpen, setSettingsScreenOpen] = useState(false);
   const [settingsButtonHovered, setSettingsButtonHovered] = useState(false);
+  // 문서 화면 상단의 수정하기/닫기 버튼 호버 상태 - 설정 버튼과 똑같은 리퀴드 글라스
+  // 원형 버튼 디자인을 그대로 쓴다.
+  const [docEditButtonHovered, setDocEditButtonHovered] = useState(false);
+  const [docCloseButtonHovered, setDocCloseButtonHovered] = useState(false);
   const [trashScreenOpen, setTrashScreenOpen] = useState(false);
   // 안내 팝업 - "청구 금액"/"업로드" 카드 제목 오른쪽 물음표 아이콘을 누르면 하단 서브
   // 액션바와 같은 리퀴드 글래스 배경을 가진 별도의 뜬 패널이 그 아이콘 바로 밑 위치에
@@ -801,6 +874,198 @@ export default function Alloy() {
       prev.map((f) => (f.id === id ? { ...f, content, size: new Blob([content]).size, updatedAt: Date.now() } : f))
     );
   };
+
+  // ── 마크다운 실시간 편집 ──────────────────────────────────────────────────
+  // 편집 화면은 별도 미리보기 없이, 지금 쓰고 있는 본문 그 자리에서 문법이 바로
+  // 적용되어 보인다(굵게/기울임/제목 등). 문법 기호(**, #, - 등)는 원문 보존과
+  // 안전한 다시 편집을 위해 화면에 흐리게 남겨 두고, 그 사이 내용만 스타일을 입힌다.
+  // 리액트가 매번 이 영역을 다시 그리면 커서가 튀고 한글 조합 입력(IME)이 깨지므로,
+  // 이 DOM은 리액트 트리 밖에서 우리가 직접 소유하고(ref), 입력마다 우리가 직접
+  // 다시 그린 뒤 커서 위치도 직접 계산해 되돌린다.
+  const docEditableRef = useRef(null);
+  const docComposingRef = useRef(false);
+
+  // 인접한 일반 텍스트(특히 빈 줄이 이어질 때 줄 사이 개행들)를 서로 다른 텍스트
+  // 노드로 쪼개 놓으면, 그 경계에 커서가 있을 때 브라우저가 실제로 타이핑을 어느
+  // 노드에 반영할지 애매해져 문자가 사라지는 경우가 있다(특히 내용 맨 끝의 개행).
+  // 그래서 실제 엘리먼트(문법 기호 span, 굵게/기울임 등)를 넣기 직전에만 지금까지
+  // 모아둔 일반 텍스트를 하나의 텍스트 노드로 묶어서 내보낸다.
+  const makeMarkdownSink = (container, colors) => {
+    let buffer = "";
+    const flush = () => {
+      if (buffer) {
+        container.appendChild(document.createTextNode(buffer));
+        buffer = "";
+      }
+    };
+    const pushText = (s) => { buffer += s; };
+    const pushEl = (el) => { flush(); container.appendChild(el); };
+    const pushMarker = (str) => {
+      const span = document.createElement("span");
+      span.style.color = colors.muted;
+      span.textContent = str;
+      pushEl(span);
+    };
+    const pushInline = (str) => {
+      const patterns = [
+        { re: /\*\*([^*]+)\*\*/, wrap: "strong", markerLen: 2 },
+        { re: /~~([^~]+)~~/, wrap: "s", markerLen: 2 },
+        { re: /`([^`]+)`/, wrap: "code", markerLen: 1 },
+        { re: /\*([^*]+)\*/, wrap: "em", markerLen: 1 },
+        { re: /_([^_]+)_/, wrap: "em", markerLen: 1 },
+      ];
+      let rest = str;
+      while (rest.length) {
+        let earliest = null;
+        let earliestPattern = null;
+        patterns.forEach((p) => {
+          const m = rest.match(p.re);
+          if (m && (earliest === null || m.index < earliest.index)) {
+            earliest = m;
+            earliestPattern = p;
+          }
+        });
+        if (!earliest) {
+          pushText(rest);
+          break;
+        }
+        if (earliest.index > 0) pushText(rest.slice(0, earliest.index));
+        const markLen = earliestPattern.markerLen;
+        pushMarker(earliest[0].slice(0, markLen));
+        const inner = document.createElement(earliestPattern.wrap);
+        if (earliestPattern.wrap === "code") {
+          inner.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, monospace";
+          inner.style.fontSize = "0.9em";
+          inner.style.padding = "1px 4px";
+          inner.style.borderRadius = "4px";
+          inner.style.background = colors.codeBg;
+        }
+        inner.appendChild(document.createTextNode(earliest[1]));
+        pushEl(inner);
+        pushMarker(earliest[0].slice(-markLen));
+        rest = rest.slice(earliest.index + earliest[0].length);
+      }
+    };
+    return { pushText, pushEl, pushMarker, pushInline, flush };
+  };
+
+  const headingSizes = { 1: "1.6em", 2: "1.35em", 3: "1.2em", 4: "1.1em", 5: "1em", 6: "0.95em" };
+
+  const buildLiveMarkdownFragment = (text) => {
+    const colors = {
+      muted: isLight ? "rgba(20,22,26,0.32)" : "rgba(255,255,255,0.38)",
+      codeBg: isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.12)",
+      quote: isLight ? "rgba(20,22,26,0.6)" : "rgba(255,255,255,0.65)",
+    };
+    const root = document.createDocumentFragment();
+    const sink = makeMarkdownSink(root, colors);
+    const lines = text.split("\n");
+    lines.forEach((line, i) => {
+      const headerMatch = line.match(/^(#{1,6})(\s+)(.*)$/);
+      const listMatch = line.match(/^(\s*)([-*+]|\d+\.)(\s+)(.*)$/);
+      const quoteMatch = line.match(/^(>\s?)(.*)$/);
+
+      if (headerMatch) {
+        sink.pushMarker(headerMatch[1] + headerMatch[2]);
+        const span = document.createElement("span");
+        span.style.fontWeight = "700";
+        span.style.fontSize = headingSizes[headerMatch[1].length] || "1em";
+        const innerSink = makeMarkdownSink(span, colors);
+        innerSink.pushInline(headerMatch[3]);
+        innerSink.flush();
+        sink.pushEl(span);
+      } else if (listMatch) {
+        if (listMatch[1]) sink.pushText(listMatch[1]);
+        sink.pushMarker(listMatch[2] + listMatch[3]);
+        sink.pushInline(listMatch[4]);
+      } else if (quoteMatch) {
+        sink.pushMarker(quoteMatch[1]);
+        const span = document.createElement("span");
+        span.style.color = colors.quote;
+        const innerSink = makeMarkdownSink(span, colors);
+        innerSink.pushInline(quoteMatch[2]);
+        innerSink.flush();
+        sink.pushEl(span);
+      } else {
+        sink.pushInline(line);
+      }
+      if (i < lines.length - 1) sink.pushText("\n");
+    });
+    sink.flush();
+    return root;
+  };
+
+  // 지금 입력창에 있는 텍스트를 다시 스타일링해서 그려 넣고, 편집 중이었다면 커서
+  // 위치도 그대로 되돌린다.
+  const restyleDocEditable = (text) => {
+    const el = docEditableRef.current;
+    if (!el) return;
+    const focused = document.activeElement === el;
+    const offset = focused ? getCaretOffset(el) : 0;
+    el.innerHTML = "";
+    el.appendChild(buildLiveMarkdownFragment(text));
+    if (focused) setCaretOffset(el, offset);
+  };
+
+  // 텍스트를 실제로 바꾸고 다시 그린다 - 타이핑/삭제/줄바꿈이 전부 이 한 함수를 거친다.
+  const applyDocEdit = (id, el, newText, newOffset) => {
+    updateDocContent(id, newText);
+    el.innerHTML = "";
+    el.appendChild(buildLiveMarkdownFragment(newText));
+    setCaretOffset(el, newOffset);
+  };
+
+  // 타이핑/삭제/줄바꿈을 브라우저의 기본 DOM 수정에 맡기지 않고 여기서 전부 직접
+  // 처리한다. white-space:pre-wrap + contentEditable 조합은 문서 끝에 빈 줄이
+  // 이어질 때 등 브라우저마다 미묘하게 문자를 잃어버리는 경우가 있어서(Range API나
+  // execCommand 모두 신뢰할 수 없었다), 문자열을 직접 잘라 끼워넣고 통째로 다시
+  // 그린 뒤 커서 위치도 직접 계산해 되돌리는 방식으로 통일했다. 한글 등 조합 입력
+  // (IME) 중에는 손대지 않고 조합이 끝난 뒤(compositionend)에만 반영한다 - 조합
+  // 중간에 DOM을 갈아치우면 조합이 끊긴다.
+  // 리액트의 onBeforeInput 합성 이벤트는 이 환경에서 실제 브라우저의 beforeinput
+  // (InputEvent, inputType 있음)이 아니라 옛 textInput 이벤트로 대체되어 넘어와
+  // inputType/data가 항상 undefined였다(Enter는 아예 발생하지도 않아 브라우저
+  // 기본 동작이 그대로 실행돼 <div>가 끼어들었다). 그래서 리액트를 거치지 않고
+  // ref로 DOM에 직접 네이티브 이벤트 리스너를 붙인다.
+  const handleDocEditableCompositionEnd = (id) => () => {
+    docComposingRef.current = false;
+    restyleDocEditable(docEditableRef.current.textContent);
+  };
+
+  // 편집 화면에 처음 들어올 때 또는 다른 문서로 바뀌었을 때 한 번 그려 넣고, 그
+  // 이후의 모든 타이핑/삭제/줄바꿈은 네이티브 beforeinput 리스너가 직접 처리한다
+  // (리액트 상태가 바뀌어도 이 DOM을 리액트가 다시 만지지 않아야 커서가 안 튄다).
+  useEffect(() => {
+    const el = docEditableRef.current;
+    if (docScreenMode !== "edit" || !el || !docScreenFile) return;
+    const id = docScreenFile.id;
+    el.innerHTML = "";
+    el.appendChild(buildLiveMarkdownFragment(docScreenFile.content || ""));
+
+    const onBeforeInput = (e) => {
+      if (docComposingRef.current) return;
+      const inputType = e.inputType;
+      if (inputType === "historyUndo" || inputType === "historyRedo") {
+        e.preventDefault();
+        return;
+      }
+      const handledTypes = ["insertText", "insertParagraph", "insertLineBreak", "deleteContentBackward", "deleteContentForward"];
+      if (!handledTypes.includes(inputType)) return;
+      e.preventDefault();
+      const text = el.textContent;
+      let { start, end } = getSelectionOffsets(el);
+      let insert = "";
+      if (inputType === "insertText") insert = e.data || "";
+      else if (inputType === "insertParagraph" || inputType === "insertLineBreak") insert = "\n";
+      else if (inputType === "deleteContentBackward" && start === end) start = Math.max(0, start - 1);
+      else if (inputType === "deleteContentForward" && start === end) end = Math.min(text.length, end + 1);
+      const newText = text.slice(0, start) + insert + text.slice(end);
+      applyDocEdit(id, el, newText, start + insert.length);
+    };
+    el.addEventListener("beforeinput", onBeforeInput);
+    return () => el.removeEventListener("beforeinput", onBeforeInput);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docScreenMode, docScreenId]);
 
   // 폴더를 지우면 그 안의 하위 폴더/파일도 통째로 하나의 휴지통 항목으로 담는다.
   const deleteFolder = (folderId) => {
@@ -2791,7 +3056,7 @@ export default function Alloy() {
                       <button
                         onClick={() => {
                           closeWizardMenu();
-                          toggleFolderGalleryMode();
+                          toggleGalleryMode();
                         }}
                         onMouseDown={pressDown("scale(0.97)")}
                         onMouseUp={pressUp("scale(1)")}
@@ -3153,7 +3418,7 @@ export default function Alloy() {
                             position: "fixed",
                             top: itemMenuAnchor.top,
                             right: itemMenuAnchor.right,
-                            minWidth: 128,
+                            width: 148,
                             background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
                             backdropFilter: "blur(20px) saturate(180%)",
                             WebkitBackdropFilter: "blur(20px) saturate(180%)",
@@ -3721,6 +3986,108 @@ export default function Alloy() {
                 );
               };
 
+              // 문서 갤러리 카드 - 폴더 갤러리 카드와 같은 골격을 쓴다. 문서는 커버 이미지가
+              // 없으니 위 칸에는 항상 옅은 문서 아이콘만 가운데 둔다.
+              const renderDocGalleryCard = (doc) => (
+                <div
+                  key={doc.id}
+                  data-item-type="file"
+                  data-item-id={doc.id}
+                  onClick={() => handleItemClick("file", doc.id, () => { if (doc.kind === "doc") openDocScreen(doc.id, "view"); })}
+                  onPointerDown={rowPointerDown("file", doc.id)}
+                  onPointerMove={rowPointerMove}
+                  onPointerUp={rowPointerUp}
+                  onMouseDown={pressDown("scale(0.97)")}
+                  onMouseUp={pressUp("none")}
+                  style={{
+                    position: "relative",
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    border: `1px solid ${itemBorderColor("file", doc.id)}`,
+                    background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                    cursor: doc.kind === "doc" || selectionMode ? "pointer" : "default",
+                    touchAction: "manipulation",
+                    userSelect: "none",
+                    WebkitUserSelect: "none",
+                    WebkitTouchCallout: "none",
+                    transition: "border-color 0.15s ease, transform 0.15s ease",
+                  }}
+                >
+                  {renderSelectCheckbox("file", doc.id, true)}
+                  <div
+                    style={{
+                      position: "relative",
+                      width: "100%",
+                      aspectRatio: "1 / 1",
+                      overflow: "hidden",
+                      background: isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <div style={{ opacity: 0.35 }}>{getFileIcon(doc.mimeType)}</div>
+                  </div>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 4px 6px 8px" }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div style={{ flexShrink: 0, transform: "scale(0.6)", transformOrigin: "center" }}>{getFileIcon(doc.mimeType)}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {renderEditableName("file", doc, {
+                        color: isLight ? "#14161A" : "#FFFFFF",
+                        fontSize: 12,
+                        fontWeight: 500,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      })}
+                    </div>
+                    {renderItemMenu("file", doc)}
+                  </div>
+                </div>
+              );
+
+              const renderDocGalleryGrid = (docsArray) => {
+                if (docsArray.length === 0) return null;
+                const gridStyle = { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", alignItems: "start", gap: 8 };
+                if (docsArray.length <= VIRTUALIZE_THRESHOLD) {
+                  return <div style={gridStyle}>{docsArray.map(renderDocGalleryCard)}</div>;
+                }
+                const rows = chunkArray(docsArray, 2);
+                return (
+                  <WindowVirtualList
+                    count={rows.length}
+                    estimateSize={220}
+                    renderItem={(index) => (
+                      <div style={{ ...gridStyle, paddingBottom: 8 }}>
+                        {rows[index].map(renderDocGalleryCard)}
+                      </div>
+                    )}
+                  />
+                );
+              };
+
+              // 이미지 리스트 행 - 리스트형 보기일 때 이미지도 폴더/문서와 똑같은 행 모양으로
+              // 보여준다(왼쪽에 정사각형으로 크롭한 작은 썸네일). renderRow를 그대로 쓴다.
+              const renderImageRow = (img, imagesArray) =>
+                renderRow(
+                  "file",
+                  img,
+                  img.url ? (
+                    <img
+                      src={img.url}
+                      alt={img.name}
+                      draggable={false}
+                      style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", display: "block" }}
+                    />
+                  ) : (
+                    getFileIcon(img.mimeType)
+                  ),
+                  formatFileSize(img.size),
+                  () => img.url && openViewer(imagesArray, imagesArray.findIndex((x) => x.id === img.id))
+                );
+
               // ── "분류" 화면 - 태그 팔레트/분류 모달에서 태그를 고르면(tagScreenTags) 지금 어느 위치에
               //     있었든 상관없이 그 태그가 달린 폴더가 먼저 리스트로, 그 아래 이미지/움짤이
               //     갤러리로 온다. 폴더/이미지 모두 평소와 같은 삼점 메뉴 등 전체 레이아웃을 그대로 쓴다. ──
@@ -3911,11 +4278,21 @@ export default function Alloy() {
                   null
                 );
 
+              const renderDocRow = (doc) =>
+                renderRow(
+                  "file",
+                  doc,
+                  getFileIcon(doc.mimeType),
+                  formatFileSize(doc.size),
+                  doc.kind === "doc" ? () => openDocScreen(doc.id, "view") : null
+                );
+
+              // 마법사 "보기"는 폴더/문서/이미지 전부에 똑같이 적용된다 - 갤러리형이면
+              // 셋 다 커버/아이콘이 있는 정사각형 카드 그리드로, 리스트형이면 셋 다 똑같은
+              // 모양의 행으로 보여준다.
               return (
                 <>
-                  {/* 폴더 - 마법사 "보기"로 이 위치가 갤러리형이면 커버 이미지 카드 그리드로,
-                      아니면 기존처럼 리스트 행으로 보여준다. */}
-                  {folderGalleryMode ? (
+                  {galleryMode ? (
                     <div style={{ marginBottom: visibleDocs.length || visibleImages.length ? 8 : 0 }}>
                       {renderFolderGalleryGrid(visibleFolders)}
                     </div>
@@ -3923,22 +4300,19 @@ export default function Alloy() {
                     renderRowList(visibleFolders, renderFolderRow, 68)
                   )}
 
-                  {/* 문서 행 - 마크다운 문서(.md)는 눌렀을 때 읽기 화면이 열린다. */}
-                  {renderRowList(
-                    visibleDocs,
-                    (doc) =>
-                      renderRow(
-                        "file",
-                        doc,
-                        getFileIcon(doc.mimeType),
-                        formatFileSize(doc.size),
-                        doc.kind === "doc" ? () => openDocScreen(doc.id, "view") : null
-                      ),
-                    68
+                  {galleryMode ? (
+                    <div style={{ marginBottom: visibleImages.length ? 8 : 0 }}>
+                      {renderDocGalleryGrid(visibleDocs)}
+                    </div>
+                  ) : (
+                    renderRowList(visibleDocs, renderDocRow, 68)
                   )}
 
-                  {/* 이미지/움짤 콜라주 - 비율 유지한 2열 메이슨리 */}
-                  {renderImageGrid(visibleImages, visibleFolders.length || visibleDocs.length ? 8 : 0)}
+                  {galleryMode ? (
+                    renderImageGrid(visibleImages, 0)
+                  ) : (
+                    renderRowList(visibleImages, (img) => renderImageRow(img, visibleImages), 68)
+                  )}
                 </>
               );
             })()}
@@ -4781,7 +5155,7 @@ export default function Alloy() {
                                 position: "fixed",
                                 top: trashItemMenuAnchor.top,
                                 right: trashItemMenuAnchor.right,
-                                minWidth: 128,
+                                width: 148,
                                 background: isLight ? "rgba(255,255,255,0.95)" : "rgba(20,20,19,0.95)",
                                 backdropFilter: "blur(20px) saturate(180%)",
                                 WebkitBackdropFilter: "blur(20px) saturate(180%)",
@@ -5448,29 +5822,43 @@ export default function Alloy() {
                 {docScreenFile.name}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                {/* 편집/보기 전환 - 다른 화면들과 동일하게 아이콘 버튼 하나로 토글한다. */}
+                {/* 수정하기 - 우상단 설정 버튼과 동일한 크기의 리퀴드 글라스 원형 버튼. */}
                 <button
                   onClick={() => setDocScreenMode((m) => (m === "edit" ? "view" : "edit"))}
-                  onMouseDown={pressDown("scale(0.85)")}
-                  onMouseUp={pressUp("scale(1)")}
-                  aria-label={docScreenMode === "edit" ? "완료" : "편집"}
-                  title={docScreenMode === "edit" ? "완료" : "편집"}
+                  onMouseEnter={() => setDocEditButtonHovered(true)}
+                  onMouseLeave={(e) => {
+                    setDocEditButtonHovered(false);
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                  onMouseDown={pressDown("scale(0.9)")}
+                  onMouseUp={pressUp(docEditButtonHovered ? "scale(1.08)" : "scale(1)")}
+                  onTouchStart={pressDown("scale(0.9)")}
+                  onTouchEnd={pressUp("scale(1)")}
+                  aria-label={docScreenMode === "edit" ? "완료" : "수정하기"}
+                  title={docScreenMode === "edit" ? "완료" : "수정하기"}
                   style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 8,
-                    border: "none",
-                    background: docScreenMode === "edit" ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
-                    color: docScreenMode === "edit" ? (isLight ? "#FFFFFF" : "#14161A") : (isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)"),
-                    cursor: "pointer",
-                    outline: "none",
+                    width: TOP_BUTTON_SIZE,
+                    height: TOP_BUTTON_SIZE,
+                    flexShrink: 0,
+                    borderRadius: "50%",
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: docEditButtonHovered
+                      ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                      : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                    backdropFilter: "blur(20px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                    boxShadow: docEditButtonHovered
+                      ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                      : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    transition: "background 0.2s ease, color 0.2s ease",
+                    cursor: "pointer",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    outline: "none",
+                    transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                    transform: docEditButtonHovered ? "scale(1.08)" : "scale(1)",
                   }}
-                  onMouseEnter={(e) => { if (docScreenMode !== "edit") e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"; }}
-                  onMouseLeave={(e) => { if (docScreenMode !== "edit") e.currentTarget.style.background = "transparent"; }}
                 >
                   {docScreenMode === "edit" ? (
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -5483,29 +5871,44 @@ export default function Alloy() {
                     </svg>
                   )}
                 </button>
+                {/* 닫기 - 설정 버튼과 완전히 동일한 디자인/크기. */}
                 <button
                   onClick={closeDocScreen}
-                  onMouseDown={pressDown("scale(0.85)")}
-                  onMouseUp={pressUp("scale(1)")}
+                  onMouseEnter={() => setDocCloseButtonHovered(true)}
+                  onMouseLeave={(e) => {
+                    setDocCloseButtonHovered(false);
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                  onMouseDown={pressDown("scale(0.9)")}
+                  onMouseUp={pressUp(docCloseButtonHovered ? "scale(1.08)" : "scale(1)")}
+                  onTouchStart={pressDown("scale(0.9)")}
+                  onTouchEnd={pressUp("scale(1)")}
                   aria-label="닫기"
                   style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 8,
-                    border: "none",
-                    background: "transparent",
-                    color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-                    cursor: "pointer",
-                    outline: "none",
+                    width: TOP_BUTTON_SIZE,
+                    height: TOP_BUTTON_SIZE,
+                    flexShrink: 0,
+                    borderRadius: "50%",
+                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                    background: docCloseButtonHovered
+                      ? (isLight ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.14)")
+                      : (isLight ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.06)"),
+                    backdropFilter: "blur(20px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                    boxShadow: docCloseButtonHovered
+                      ? "0 10px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)"
+                      : "0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    transition: "background 0.2s ease",
+                    cursor: "pointer",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    outline: "none",
+                    transition: "background 0.3s ease, box-shadow 0.3s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                    transform: docCloseButtonHovered ? "scale(1.08)" : "scale(1)",
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                     <line x1="6" y1="6" x2="18" y2="18" />
                     <line x1="18" y1="6" x2="6" y2="18" />
                   </svg>
@@ -5518,31 +5921,45 @@ export default function Alloy() {
                 {renderMarkdown(docScreenFile.content || "")}
               </div>
             ) : (
-              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-                <textarea
-                  value={docScreenFile.content || ""}
-                  onChange={(e) => updateDocContent(docScreenFile.id, e.target.value)}
-                  placeholder="마크다운으로 적어보세요 - # 제목, **굵게**, - 목록 ..."
+              // 편집 - 별도 미리보기 없이 이 자리에서 바로 문법이 적용되어 보인다.
+              // 문법 기호는 흐리게 남아있어 원문이 그대로 보존된다.
+              <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                {!docScreenFile.content && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 18,
+                      left: 20,
+                      color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.35)",
+                      fontSize: 15,
+                      lineHeight: 1.7,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    마크다운으로 적어보세요 - # 제목, **굵게**, - 목록 ...
+                  </div>
+                )}
+                <div
+                  ref={docEditableRef}
+                  contentEditable
+                  suppressContentEditableWarning
                   autoFocus
+                  onCompositionStart={() => { docComposingRef.current = true; }}
+                  onCompositionEnd={handleDocEditableCompositionEnd(docScreenFile.id)}
                   style={{
-                    flex: 1,
-                    minHeight: 140,
-                    resize: "none",
-                    border: "none",
+                    height: "100%",
+                    overflowY: "auto",
                     outline: "none",
-                    padding: "18px 20px",
-                    background: "transparent",
+                    padding: "18px 20px 40px 20px",
                     color: isLight ? "#14161A" : "#FFFFFF",
                     fontSize: 15,
                     lineHeight: 1.7,
                     fontFamily: "inherit",
                     boxSizing: "border-box",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
                   }}
                 />
-                <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)", flexShrink: 0 }} />
-                <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "18px 20px 40px 20px" }}>
-                  {renderMarkdown(docScreenFile.content || "")}
-                </div>
               </div>
             )}
           </div>
