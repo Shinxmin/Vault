@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.95";
+const APP_VERSION = "0.1.96";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -735,6 +735,73 @@ export default function Alloy() {
     closeFolderModal();
   };
 
+  // 새 문서 만들기 모달 - 신규 메뉴의 "새 문서"를 누르면 뜬다. 폴더 만들기와 똑같은
+  // 모달 UI(제목 입력 + 취소/확인)를 그대로 쓰고, 확인하면 지금 위치에 빈 마크다운
+  // 문서(.md)를 만들어 바로 편집 화면을 연다. 파일의 실제 내용(content)은 이미지처럼
+  // R2에 올리지 않고 다른 텍스트 필드(태그 등)와 마찬가지로 vaulty_state에 그대로 저장한다.
+  const [docCreateModalOpen, setDocCreateModalOpen] = useState(false);
+  const [docCreateModalVisible, setDocCreateModalVisible] = useState(false);
+  const [docNameDraft, setDocNameDraft] = useState("");
+  const openDocCreateModal = () => {
+    setDocNameDraft("");
+    setDocCreateModalOpen(true);
+    requestAnimationFrame(() => setDocCreateModalVisible(true));
+  };
+  const closeDocCreateModal = () => {
+    setDocCreateModalVisible(false);
+    setTimeout(() => {
+      setDocCreateModalOpen(false);
+      setDocNameDraft("");
+    }, 200);
+  };
+  const createDoc = () => {
+    const name = docNameDraft.trim();
+    if (!name) {
+      closeDocCreateModal();
+      return;
+    }
+    const now = Date.now();
+    const id = now;
+    const newDoc = {
+      id,
+      name,
+      ext: "md",
+      kind: "doc",
+      mimeType: "text/markdown",
+      content: "",
+      size: 0,
+      path: currentPath,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setFiles((prev) => [...prev, newDoc]);
+    closeDocCreateModal();
+    openDocScreen(id, "edit");
+  };
+
+  // 문서 화면 - 마크다운 문서를 읽거나 편집하는 전체화면. 별도 저장 버튼 없이 다른
+  // 항목들과 동일하게 편집하는 즉시 자동 저장된다(디바운스 저장 이펙트가 files 전체를
+  // 지켜본다). "편집" 모드에서는 원문 입력창과 그 아래 실시간 렌더링 미리보기를 함께
+  // 보여주고, "보기" 모드에서는 렌더링 결과만 전체 화면에 꽉 차게 보여준다.
+  const [docScreenOpen, setDocScreenOpen] = useState(false);
+  const [docScreenId, setDocScreenId] = useState(null);
+  const [docScreenMode, setDocScreenMode] = useState("view"); // "view" | "edit"
+  const openDocScreen = (id, mode = "view") => {
+    setDocScreenId(id);
+    setDocScreenMode(mode);
+    setDocScreenOpen(true);
+  };
+  const closeDocScreen = () => {
+    setDocScreenOpen(false);
+    setDocScreenId(null);
+  };
+  const docScreenFile = docScreenId ? files.find((f) => f.id === docScreenId) : null;
+  const updateDocContent = (id, content) => {
+    setFiles((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, content, size: new Blob([content]).size, updatedAt: Date.now() } : f))
+    );
+  };
+
   // 폴더를 지우면 그 안의 하위 폴더/파일도 통째로 하나의 휴지통 항목으로 담는다.
   const deleteFolder = (folderId) => {
     const folder = folders.find((f) => f.id === folderId);
@@ -1218,7 +1285,6 @@ export default function Alloy() {
 
   const movingFolder = moveTarget && moveTarget.type === "folder" ? folders.find((f) => f.id === moveTarget.id) : null;
   const movingFile = moveTarget && moveTarget.type === "file" ? files.find((f) => f.id === moveTarget.id) : null;
-  const movingIsDoc = movingFile && (movingFile.kind === "doc" || movingFile.kind === "text");
   const isBlockedMoveFolder = (folder) => {
     if (!movingFolder) return false;
     if (folder.id === movingFolder.id) return true;
@@ -1227,11 +1293,9 @@ export default function Alloy() {
       movingFolder.path.every((seg, i) => folder.path[i] === seg)
     );
   };
-  // 이동 모달의 탐색 목록 - 홈부터 폴더를 타고 들어간다. 문서(doc, 레거시 데이터에만
-  // 남아있을 수 있음)는 홈 바로 아래에만 둘 수 있으므로 그 안에서는 하위 폴더를 노출하지 않는다.
+  // 이동 모달의 탐색 목록 - 홈부터 폴더를 타고 들어간다. 폴더/이미지/문서 모두 홈을
+  // 포함해 어디로든 옮길 수 있다.
   const moveModalEntries = !moveModalOpen
-    ? []
-    : movingIsDoc
     ? []
     : folders
         .filter(
@@ -1241,8 +1305,7 @@ export default function Alloy() {
             !isBlockedMoveFolder(f)
         )
         .map((f) => ({ id: f.id, name: f.name }));
-  // "여기로 이동" 활성화 조건: 폴더/이미지는 홈 포함 어디든, 문서는 홈(길이===0)에만.
-  const canDropHere = movingIsDoc ? moveBrowsePath.length === 0 : true;
+  const canDropHere = true;
 
   const confirmMove = () => {
     if (!moveTarget || !canDropHere) {
@@ -1632,7 +1695,15 @@ export default function Alloy() {
   // 받는 중에 진행률을 알려면 응답 본문을 스트림으로 읽어야 한다(업로드의 XHR onprogress에
   // 해당하는 역할). 스트림을 못 쓰는 환경에서는 그냥 통째로 받는다.
   const fetchFileBlob = async (file, onProgress) => {
-    if (!file.r2Key) return null;
+    // 마크다운 문서 등 R2에 올리지 않고 내용을 그대로 저장하는 파일은 바로 blob으로 만든다.
+    if (!file.r2Key) {
+      if (typeof file.content === "string") {
+        const blob = new Blob([file.content], { type: file.mimeType || "text/plain" });
+        if (onProgress) onProgress(blob.size);
+        return blob;
+      }
+      return null;
+    }
     const { url } = await r2Presign({ action: "get", key: file.r2Key });
     const res = await fetch(url);
     if (!res.ok) throw new Error(`R2 다운로드 실패 (${res.status})`);
@@ -1706,7 +1777,7 @@ export default function Alloy() {
       return;
     }
     const { entries, emptyDirs } = buildDownloadPlan(targetFolders, targetFiles);
-    const receivable = entries.filter((e) => e.file.r2Key);
+    const receivable = entries.filter((e) => e.file.r2Key || typeof e.file.content === "string");
     if (!receivable.length) {
       showToast("다운로드할 항목이 없습니다");
       return;
@@ -2000,6 +2071,254 @@ export default function Alloy() {
         <path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" />
         <path d="M14 2v5h5" />
       </svg>
+    );
+  };
+
+  // ── 마크다운 렌더링 ──────────────────────────────────────────────────────
+  // 무거운 외부 라이브러리 없이 "새 문서"가 실제로 필요한 문법만(제목/굵게/기울임/
+  // 취소선/인라인 코드/코드 블록/링크/목록/인용/구분선) 가볍게 지원한다. 편집 화면의
+  // 실시간 미리보기와 읽기 화면 양쪽에서 이 함수 하나를 그대로 함께 쓴다.
+  // 인라인 문법(굵게/기울임/취소선/코드/링크) - 가장 먼저 나오는 패턴을 찾아 그 앞은
+  // 그대로 텍스트로 두고 나머지를 재귀적으로 처리한다. 이렇게 해야 **굵게 *기울임***처럼
+  // 문법이 겹쳐도 깨지지 않는다.
+  const renderInlineMarkdown = (text, keyPrefix) => {
+    const patterns = [
+      {
+        re: /\[([^\]]+)\]\(([^)]+)\)/,
+        render: (m, key) => (
+          <a key={key} href={m[2]} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "underline" }}>
+            {renderInlineMarkdown(m[1], `${key}-c`)}
+          </a>
+        ),
+      },
+      { re: /\*\*([^*]+)\*\*/, render: (m, key) => <strong key={key}>{renderInlineMarkdown(m[1], `${key}-c`)}</strong> },
+      { re: /~~([^~]+)~~/, render: (m, key) => <s key={key}>{renderInlineMarkdown(m[1], `${key}-c`)}</s> },
+      {
+        re: /`([^`]+)`/,
+        render: (m, key) => (
+          <code
+            key={key}
+            style={{
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: "0.9em",
+              padding: "2px 5px",
+              borderRadius: 4,
+              background: isLight ? "rgba(20,22,26,0.08)" : "rgba(255,255,255,0.12)",
+            }}
+          >
+            {m[1]}
+          </code>
+        ),
+      },
+      { re: /\*([^*]+)\*/, render: (m, key) => <em key={key}>{renderInlineMarkdown(m[1], `${key}-c`)}</em> },
+      { re: /_([^_]+)_/, render: (m, key) => <em key={key}>{renderInlineMarkdown(m[1], `${key}-c`)}</em> },
+    ];
+    const out = [];
+    let rest = text;
+    let idx = 0;
+    while (rest.length) {
+      let earliest = null;
+      let earliestPattern = null;
+      patterns.forEach((p) => {
+        const m = rest.match(p.re);
+        if (m && (earliest === null || m.index < earliest.index)) {
+          earliest = m;
+          earliestPattern = p;
+        }
+      });
+      if (!earliest) {
+        out.push(rest);
+        break;
+      }
+      if (earliest.index > 0) out.push(rest.slice(0, earliest.index));
+      out.push(earliestPattern.render(earliest, `${keyPrefix}-${idx++}`));
+      rest = rest.slice(earliest.index + earliest[0].length);
+    }
+    return out;
+  };
+
+  // 블록 문법(제목/코드블록/구분선/인용/목록/문단) - 줄 단위로 훑어 블록으로 나눈 뒤
+  // 각 블록을 리액트 엘리먼트로 그린다.
+  const renderMarkdown = (text) => {
+    const textColor = isLight ? "#14161A" : "#FFFFFF";
+    const mutedColor = isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.6)";
+    if (!text || !text.trim()) {
+      return <div style={{ color: mutedColor, fontSize: 14 }}>내용이 없습니다</div>;
+    }
+    const lines = text.replace(/\r\n/g, "\n").split("\n");
+    const blocks = [];
+    let listBuffer = null; // { ordered: bool, items: [] }
+    const flushList = () => {
+      if (listBuffer) {
+        blocks.push(listBuffer);
+        listBuffer = null;
+      }
+    };
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+
+      if (/^```/.test(line)) {
+        flushList();
+        const codeLines = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i])) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        i++; // 닫는 ``` 건너뛰기
+        blocks.push({ type: "code", content: codeLines.join("\n") });
+        continue;
+      }
+
+      if (/^(---|\*\*\*|___)\s*$/.test(line)) {
+        flushList();
+        blocks.push({ type: "hr" });
+        i++;
+        continue;
+      }
+
+      const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
+      if (headerMatch) {
+        flushList();
+        blocks.push({ type: "heading", level: headerMatch[1].length, text: headerMatch[2] });
+        i++;
+        continue;
+      }
+
+      if (/^>\s?/.test(line)) {
+        flushList();
+        const quoteLines = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) {
+          quoteLines.push(lines[i].replace(/^>\s?/, ""));
+          i++;
+        }
+        blocks.push({ type: "quote", text: quoteLines.join("\n") });
+        continue;
+      }
+
+      const ulMatch = line.match(/^[-*+]\s+(.*)$/);
+      if (ulMatch) {
+        if (!listBuffer || listBuffer.ordered) {
+          flushList();
+          listBuffer = { ordered: false, items: [] };
+        }
+        listBuffer.items.push(ulMatch[1]);
+        i++;
+        continue;
+      }
+
+      const olMatch = line.match(/^\d+\.\s+(.*)$/);
+      if (olMatch) {
+        if (!listBuffer || !listBuffer.ordered) {
+          flushList();
+          listBuffer = { ordered: true, items: [] };
+        }
+        listBuffer.items.push(olMatch[1]);
+        i++;
+        continue;
+      }
+
+      flushList();
+
+      if (line.trim() === "") {
+        i++;
+        continue;
+      }
+
+      const paraLines = [line];
+      i++;
+      while (
+        i < lines.length &&
+        lines[i].trim() !== "" &&
+        !/^```/.test(lines[i]) &&
+        !/^(---|\*\*\*|___)\s*$/.test(lines[i]) &&
+        !/^#{1,6}\s+/.test(lines[i]) &&
+        !/^>\s?/.test(lines[i]) &&
+        !/^[-*+]\s+/.test(lines[i]) &&
+        !/^\d+\.\s+/.test(lines[i])
+      ) {
+        paraLines.push(lines[i]);
+        i++;
+      }
+      blocks.push({ type: "paragraph", text: paraLines.join("\n") });
+    }
+    flushList();
+
+    const headingSizes = { 1: 24, 2: 20, 3: 18, 4: 16, 5: 15, 6: 14 };
+
+    return (
+      <>
+        {blocks.map((block, bi) => {
+          if (block.type === "heading") {
+            return (
+              <div
+                key={bi}
+                style={{ fontSize: headingSizes[block.level] || 15, fontWeight: 700, color: textColor, margin: "20px 0 10px 0", lineHeight: 1.35 }}
+              >
+                {renderInlineMarkdown(block.text, `h${bi}`)}
+              </div>
+            );
+          }
+          if (block.type === "hr") {
+            return <div key={bi} style={{ height: 1, background: isLight ? "rgba(20,22,26,0.15)" : "rgba(255,255,255,0.15)", margin: "20px 0" }} />;
+          }
+          if (block.type === "code") {
+            return (
+              <pre
+                key={bi}
+                style={{
+                  margin: "12px 0",
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  background: isLight ? "rgba(20,22,26,0.05)" : "rgba(255,255,255,0.06)",
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.1)" : "rgba(255,255,255,0.1)"}`,
+                  overflowX: "auto",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  color: textColor,
+                }}
+              >
+                {block.content}
+              </pre>
+            );
+          }
+          if (block.type === "quote") {
+            return (
+              <div
+                key={bi}
+                style={{
+                  margin: "12px 0",
+                  padding: "2px 14px",
+                  borderLeft: `3px solid ${isLight ? "rgba(20,22,26,0.25)" : "rgba(255,255,255,0.3)"}`,
+                  color: mutedColor,
+                  fontSize: 15,
+                  lineHeight: 1.6,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {renderInlineMarkdown(block.text, `q${bi}`)}
+              </div>
+            );
+          }
+          if (block.items) {
+            const Tag = block.ordered ? "ol" : "ul";
+            return (
+              <Tag key={bi} style={{ margin: "10px 0", paddingLeft: 22, color: textColor, fontSize: 15, lineHeight: 1.7 }}>
+                {block.items.map((item, ii) => (
+                  <li key={ii}>{renderInlineMarkdown(item, `l${bi}-${ii}`)}</li>
+                ))}
+              </Tag>
+            );
+          }
+          return (
+            <p key={bi} style={{ margin: "0 0 12px 0", color: textColor, fontSize: 15, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+              {renderInlineMarkdown(block.text, `p${bi}`)}
+            </p>
+          );
+        })}
+      </>
     );
   };
 
@@ -2560,8 +2879,8 @@ export default function Alloy() {
                   onClick={toggleUploadMenu}
                   onMouseDown={pressDown("scale(0.9)")}
                   onMouseUp={pressUp("scale(1)")}
-                  aria-label="신규"
-                  title="신규"
+                  aria-label="업로드"
+                  title="업로드"
                   style={{
                     minWidth: 36,
                     height: 30,
@@ -2594,7 +2913,7 @@ export default function Alloy() {
                       <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
                   )}
-                  신규
+                  업로드
                 </button>
 
                 {/* 숨겨진 파일 입력 - "파일 업로드": 이미지·움짤만 받는다. accept를 이미지로
@@ -2673,6 +2992,34 @@ export default function Alloy() {
                         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                       >
                         새 폴더
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      {/* 새 문서 - 마크다운 문법을 쓸 수 있는 텍스트 문서(.md)를 지금 보고
+                          있는 위치에 만들고, 만들자마자 바로 편집 화면을 연다. */}
+                      <button
+                        onClick={() => {
+                          closeUploadMenu();
+                          openDocCreateModal();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        새 문서
                       </button>
                       <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
                       <button
@@ -3414,10 +3761,12 @@ export default function Alloy() {
                         doc,
                         getFileIcon(doc.mimeType),
                         doc.path.join(" / ") || "홈",
-                        () => {
-                          setCurrentPath(doc.path);
-                          closeTagScreen();
-                        }
+                        doc.kind === "doc"
+                          ? () => openDocScreen(doc.id, "view")
+                          : () => {
+                              setCurrentPath(doc.path);
+                              closeTagScreen();
+                            }
                       )
                     )}
                     {renderImageGrid(koSort(taggedImages), taggedFolders.length || taggedDocs.length ? 8 : 0)}
@@ -3489,10 +3838,15 @@ export default function Alloy() {
                         item,
                         getFileIcon(item.mimeType),
                         item.path.join(" / ") || "홈",
-                        () => {
-                          setCurrentPath(item.path);
-                          setSearchQuery("");
-                        }
+                        item.kind === "doc"
+                          ? () => {
+                              setSearchQuery("");
+                              openDocScreen(item.id, "view");
+                            }
+                          : () => {
+                              setCurrentPath(item.path);
+                              setSearchQuery("");
+                            }
                       )
                     )}
                     {renderImageGrid(imageMatches, folderMatches.length || docMatches.length ? 8 : 0)}
@@ -3569,10 +3923,17 @@ export default function Alloy() {
                     renderRowList(visibleFolders, renderFolderRow, 68)
                   )}
 
-                  {/* 문서(TXT) 행 */}
+                  {/* 문서 행 - 마크다운 문서(.md)는 눌렀을 때 읽기 화면이 열린다. */}
                   {renderRowList(
                     visibleDocs,
-                    (doc) => renderRow("file", doc, getFileIcon(doc.mimeType), formatFileSize(doc.size)),
+                    (doc) =>
+                      renderRow(
+                        "file",
+                        doc,
+                        getFileIcon(doc.mimeType),
+                        formatFileSize(doc.size),
+                        doc.kind === "doc" ? () => openDocScreen(doc.id, "view") : null
+                      ),
                     68
                   )}
 
@@ -4906,6 +5267,286 @@ export default function Alloy() {
             </div>
           </div>
         </>
+      )}
+
+      {/* 문서 만들기 모달 - 폴더 만들기와 완전히 동일한 UI를 쓴다. 확인하면 지금 위치에
+          빈 마크다운 문서를 만들고 바로 편집 화면을 연다. */}
+      {docCreateModalOpen && (
+        <>
+          <div
+            onClick={closeDocCreateModal}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 39,
+              opacity: docCreateModalVisible ? 1 : 0,
+              transition: "opacity 0.2s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: docCreateModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
+              opacity: docCreateModalVisible ? 1 : 0,
+              background: isLight ? "#FFFFFF" : "#1a1918",
+              borderRadius: 16,
+              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+              padding: "24px 30px",
+              width: "84vw",
+              boxSizing: "border-box",
+              zIndex: 40,
+              boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
+              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              style={{
+                margin: "0 0 16px 0",
+                fontSize: 19,
+                fontWeight: 700,
+                color: isLight ? "#14161A" : "#FFFFFF",
+              }}
+            >
+              문서 만들기
+            </h2>
+            <input
+              type="text"
+              value={docNameDraft}
+              onChange={(e) => setDocNameDraft(e.target.value)}
+              placeholder="문서 이름"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") createDoc();
+                if (e.key === "Escape") closeDocCreateModal();
+              }}
+              style={{
+                width: "100%",
+                padding: 12,
+                marginBottom: 20,
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                borderRadius: 8,
+                background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                color: isLight ? "#14161A" : "#FFFFFF",
+                fontSize: 15,
+                outline: "none",
+                boxSizing: "border-box",
+                transition: "border-color 0.2s ease",
+              }}
+            />
+            <div style={{ display: "flex", gap: 12 }}>
+              <button
+                onClick={closeDocCreateModal}
+                onMouseDown={pressDown("scale(0.95)")}
+                onMouseUp={pressUp("scale(1)")}
+                style={{
+                  flex: 1,
+                  padding: 10,
+                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                  borderRadius: 8,
+                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  outline: "none",
+                  transition: "background 0.2s ease, transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                취소
+              </button>
+              <button
+                onClick={createDoc}
+                onMouseDown={pressDown("scale(0.95)")}
+                onMouseUp={pressUp("scale(1)")}
+                style={{
+                  flex: 1,
+                  padding: 10,
+                  border: "none",
+                  borderRadius: 8,
+                  background: isLight ? "#14161A" : "#FFFFFF",
+                  color: isLight ? "#FFFFFF" : "#14161A",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  outline: "none",
+                  transition: "transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
+                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 문서 화면 - 마크다운 문서를 읽거나 편집하는 전체화면. 설정 화면과 같은 패턴의
+          position:fixed 전체화면 오버레이다. "보기"에서는 렌더링 결과만 꽉 차게, "편집"에서는
+          원문 입력창과 그 아래 실시간 미리보기를 함께 보여준다(타이핑하는 즉시 반영). 저장은
+          별도 버튼 없이 다른 항목들과 동일하게 편집하는 즉시 자동 저장된다. */}
+      {docScreenOpen && docScreenFile && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: isLight ? "#FAF9F5" : "#141413",
+            zIndex: 49,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: CONTENT_MAX_WIDTH,
+              margin: "0 auto",
+              minHeight: 0,
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                padding: "20px 16px 12px 20px",
+                paddingTop: "max(20px, env(safe-area-inset-top))",
+                borderBottom: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 18,
+                  fontWeight: 700,
+                  color: isLight ? "#14161A" : "#FFFFFF",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  minWidth: 0,
+                }}
+              >
+                {docScreenFile.name}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {/* 편집/보기 전환 - 다른 화면들과 동일하게 아이콘 버튼 하나로 토글한다. */}
+                <button
+                  onClick={() => setDocScreenMode((m) => (m === "edit" ? "view" : "edit"))}
+                  onMouseDown={pressDown("scale(0.85)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label={docScreenMode === "edit" ? "완료" : "편집"}
+                  title={docScreenMode === "edit" ? "완료" : "편집"}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 8,
+                    border: "none",
+                    background: docScreenMode === "edit" ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
+                    color: docScreenMode === "edit" ? (isLight ? "#FFFFFF" : "#14161A") : (isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)"),
+                    cursor: "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s ease, color 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => { if (docScreenMode !== "edit") e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"; }}
+                  onMouseLeave={(e) => { if (docScreenMode !== "edit") e.currentTarget.style.background = "transparent"; }}
+                >
+                  {docScreenMode === "edit" ? (
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  onClick={closeDocScreen}
+                  onMouseDown={pressDown("scale(0.85)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="닫기"
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 8,
+                    border: "none",
+                    background: "transparent",
+                    color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                    cursor: "pointer",
+                    outline: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {docScreenMode === "view" ? (
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "20px 20px 40px 20px" }}>
+                {renderMarkdown(docScreenFile.content || "")}
+              </div>
+            ) : (
+              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <textarea
+                  value={docScreenFile.content || ""}
+                  onChange={(e) => updateDocContent(docScreenFile.id, e.target.value)}
+                  placeholder="마크다운으로 적어보세요 - # 제목, **굵게**, - 목록 ..."
+                  autoFocus
+                  style={{
+                    flex: 1,
+                    minHeight: 140,
+                    resize: "none",
+                    border: "none",
+                    outline: "none",
+                    padding: "18px 20px",
+                    background: "transparent",
+                    color: isLight ? "#14161A" : "#FFFFFF",
+                    fontSize: 15,
+                    lineHeight: 1.7,
+                    fontFamily: "inherit",
+                    boxSizing: "border-box",
+                  }}
+                />
+                <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)", flexShrink: 0 }} />
+                <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "18px 20px 40px 20px" }}>
+                  {renderMarkdown(docScreenFile.content || "")}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* 이동 모달 - 최상위 홈부터 폴더를 탐색하며 옮길 위치를 고른다.
