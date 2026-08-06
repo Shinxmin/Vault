@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.94";
+const APP_VERSION = "0.1.95";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -526,6 +526,7 @@ export default function Alloy() {
   // 버튼을 한 번 더 누르면 그때 실제로 삭제된다. 폴더/파일(이미지) 전부 공용.
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
+  const folderUploadInputRef = useRef(null);
 
 
   // 설정 화면 - 상단 우측 설정(⚙) 버튼을 누르면 전체화면으로 열린다. 그 안에서 휴지통은
@@ -1378,17 +1379,14 @@ export default function Alloy() {
       img.src = objectUrl;
     });
 
-  const handleFilesPicked = async (e) => {
-    const selected = Array.from(e.target.files || []);
-    e.target.value = "";
-    const toUpload = selected
-      .map((f) => ({ file: f, kind: getKindFromName(f.name) }))
-      .filter((x) => x.kind); // 미지원 형식은 건너뛴다
-
-    if (!toUpload.length) return;
+  // 실제 업로드 실행 - entries: [{ file, kind, path }]. path는 이 파일이 놓일 폴더의
+  // 전체 경로로, "파일 업로드"는 항상 지금 보고 있는 위치(currentPath)를 쓰고 "폴더 업로드"는
+  // 선택한 폴더 안에서 그 파일이 원래 있던 하위 경로를 그대로 쓴다(handleFolderPicked 참고).
+  const uploadEntries = async (entries) => {
+    if (!entries.length) return;
 
     // 이 업로드로 저장 공간 한도를 넘기면 하나도 올리지 않고 안내만 띄운다.
-    const incomingBytes = toUpload.reduce((s, x) => s + x.file.size, 0);
+    const incomingBytes = entries.reduce((s, x) => s + x.file.size, 0);
     if (usedStorageBytes + incomingBytes > STORAGE_MAX_BYTES) {
       showToast("저장공간이 부족합니다");
       return;
@@ -1399,16 +1397,17 @@ export default function Alloy() {
     // (또는 진행 중인 배치가 끝난 뒤 새로 시작하는 업로드)부터 새 값이 적용된다.
     const optimizeThisBatch = uploadOptimizeEnabled;
 
-    const queueItems = toUpload.map(({ file, kind }) => ({
+    const queueItems = entries.map(({ file, kind, path }) => ({
       qid: `${Date.now()}-${Math.random()}`,
       file,
       kind,
+      path,
       name: file.name,
       size: file.size,
       loaded: 0,
       status: "queued",
     }));
-    setUploadQueue(queueItems.map(({ file, kind, ...rest }) => rest));
+    setUploadQueue(queueItems.map(({ file, kind, path, ...rest }) => rest));
     setUploadPanelClosed(false);
 
     const updateItem = (qid, patch) => {
@@ -1419,7 +1418,7 @@ export default function Alloy() {
     const runNext = async () => {
       const idx = cursor++;
       if (idx >= queueItems.length) return;
-      const { qid, file, kind, size } = queueItems[idx];
+      const { qid, file, kind, path, size } = queueItems[idx];
       updateItem(qid, { status: "uploading" });
       const id = Date.now() + Math.random();
       let accepted = null;
@@ -1445,7 +1444,7 @@ export default function Alloy() {
           url = presigned.url;
         }
         const now = Date.now();
-        accepted = { id, name: base, ext, size: uploadSize, mimeType: uploadType, kind, r2Key, url, path: currentPath, createdAt: now, updatedAt: now };
+        accepted = { id, name: base, ext, size: uploadSize, mimeType: uploadType, kind, r2Key, url, path, createdAt: now, updatedAt: now };
         updateItem(qid, { status: "done", loaded: uploadSize });
       } catch (err) {
         console.error("파일 업로드 실패:", file.name, err);
@@ -1456,6 +1455,68 @@ export default function Alloy() {
     };
 
     await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, queueItems.length) }, runNext));
+  };
+
+  // "파일 업로드" - 지금 보고 있는 위치에 파일 하나하나를 그대로 올린다.
+  const handleFilesPicked = async (e) => {
+    const selected = Array.from(e.target.files || []);
+    e.target.value = "";
+    const entries = selected
+      .map((file) => ({ file, kind: getKindFromName(file.name), path: currentPath }))
+      .filter((x) => x.kind); // 미지원 형식은 건너뛴다
+    await uploadEntries(entries);
+  };
+
+  // "폴더 업로드" - 선택한 폴더(하위 폴더 포함)의 구조를 지금 보고 있는 위치 아래에 그대로
+  // 만들고, 그 안의 이미지들을 각자 원래 있던 자리에 올린다. 브라우저가 각 파일에 담아주는
+  // webkitRelativePath(예: "MyFolder/Sub/photo.jpg")로 원래 폴더 구조를 그대로 읽어낸다.
+  const handleFolderPicked = async (e) => {
+    const selected = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!selected.length) return;
+
+    const now = Date.now();
+    const dirKeys = new Set();
+    const fileEntries = [];
+    selected.forEach((file) => {
+      const rel = file.webkitRelativePath || file.name;
+      const segs = rel.split("/");
+      segs.pop(); // 파일 이름 자체는 버리고 담고 있던 폴더 경로만 남긴다.
+      for (let i = 1; i <= segs.length; i++) dirKeys.add(segs.slice(0, i).join("/"));
+      const kind = getKindFromName(file.name);
+      if (!kind) return; // 미지원 형식(문서 등)은 건너뛴다 - 파일 업로드와 동일.
+      fileEntries.push({ file, kind, dirKey: segs.join("/") });
+    });
+
+    if (!fileEntries.length) {
+      showToast("업로드할 수 있는 파일이 없습니다");
+      return;
+    }
+
+    // 얕은 경로부터 순서대로 만들어야 부모 폴더가 먼저 존재한다. 이미 같은 자리에
+    // 같은 이름의 폴더가 있으면 새로 만들지 않고 그 폴더를 그대로 이어서 쓴다.
+    const sortedDirKeys = [...dirKeys].sort((a, b) => a.split("/").length - b.split("/").length);
+    const dirKeyToPath = {};
+    const newFolders = [];
+    let idOffset = 0;
+    const folderExists = (fullPath) =>
+      folders.some((f) => f.path.length === fullPath.length && f.path.every((p, i) => p === fullPath[i])) ||
+      newFolders.some((f) => f.path.length === fullPath.length && f.path.every((p, i) => p === fullPath[i]));
+    sortedDirKeys.forEach((key) => {
+      const segs = key.split("/");
+      const fullPath = [...currentPath, ...segs];
+      dirKeyToPath[key] = fullPath;
+      if (folderExists(fullPath)) return;
+      newFolders.push({ id: now + idOffset++, name: segs[segs.length - 1], path: fullPath, createdAt: now, updatedAt: now });
+    });
+    if (newFolders.length) setFolders((prev) => [...prev, ...newFolders]);
+
+    const entries = fileEntries.map(({ file, kind, dirKey }) => ({
+      file,
+      kind,
+      path: dirKey ? dirKeyToPath[dirKey] : currentPath,
+    }));
+    await uploadEntries(entries);
   };
 
   const deleteFile = (fileId) => {
@@ -2499,8 +2560,8 @@ export default function Alloy() {
                   onClick={toggleUploadMenu}
                   onMouseDown={pressDown("scale(0.9)")}
                   onMouseUp={pressUp("scale(1)")}
-                  aria-label="업로드"
-                  title="업로드"
+                  aria-label="신규"
+                  title="신규"
                   style={{
                     minWidth: 36,
                     height: 30,
@@ -2533,10 +2594,12 @@ export default function Alloy() {
                       <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
                   )}
-                  업로드
+                  신규
                 </button>
 
-                {/* 숨겨진 파일 입력 - 이미지·움짤만 받는다 */}
+                {/* 숨겨진 파일 입력 - "파일 업로드": 이미지·움짤만 받는다. accept를 이미지로
+                    좁혀 뒀기 때문에 모바일(iOS/Android)에서는 갤러리(사진 앱)가 열리고,
+                    데스크탑에서는 그 형식으로 필터링된 일반 파일 탐색창이 열린다. */}
                 <input
                   ref={galleryInputRef}
                   type="file"
@@ -2546,8 +2609,22 @@ export default function Alloy() {
                   style={{ display: "none" }}
                 />
 
-                {/* 업로드 메뉴 - 홈을 포함해 어디서든 업로드 버튼을 누르면 뜬다.
-                    텍스트 문서 생성 옵션은 더 이상 없다. */}
+                {/* 숨겨진 폴더 입력 - "폴더 업로드": webkitdirectory로 폴더 자체를 고르게 한다.
+                    이미지로 accept를 좁히지 않아야(폴더 선택은 사진 앱이 못 하는 일이라)
+                    모바일에서 자연스럽게 파일 앱이 열리고, 데스크탑에서는 폴더를 고르는
+                    탐색창이 열린다. */}
+                <input
+                  ref={folderUploadInputRef}
+                  type="file"
+                  webkitdirectory=""
+                  directory=""
+                  multiple
+                  onChange={handleFolderPicked}
+                  style={{ display: "none" }}
+                />
+
+                {/* 신규 메뉴 - 홈을 포함해 어디서든 신규 버튼을 누르면 뜬다.
+                    새 폴더 / 파일 업로드 / 폴더 업로드 세 가지를 고를 수 있다. */}
                 {uploadMenuOpen && createPortal(
                   <>
                     <div onClick={closeUploadMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 19 }} />
@@ -2575,32 +2652,6 @@ export default function Alloy() {
                       <button
                         onClick={() => {
                           closeUploadMenu();
-                          galleryInputRef.current && galleryInputRef.current.click();
-                        }}
-                        onMouseDown={pressDown("scale(0.97)")}
-                        onMouseUp={pressUp("scale(1)")}
-                        style={{
-                          width: "100%",
-                          padding: "10px 12px",
-                          border: "none",
-                          background: "transparent",
-                          color: isLight ? "#14161A" : "#FFFFFF",
-                          fontSize: 15,
-                          fontWeight: 500,
-                          cursor: "pointer",
-                          outline: "none",
-                          textAlign: "left",
-                          transition: "background 0.2s, transform 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                      >
-                        업로드
-                      </button>
-                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-                      <button
-                        onClick={() => {
-                          closeUploadMenu();
                           openFolderModal();
                         }}
                         onMouseDown={pressDown("scale(0.97)")}
@@ -2621,7 +2672,59 @@ export default function Alloy() {
                         onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
                         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                       >
-                        폴더
+                        새 폴더
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      <button
+                        onClick={() => {
+                          closeUploadMenu();
+                          galleryInputRef.current && galleryInputRef.current.click();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        파일 업로드
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
+                      <button
+                        onClick={() => {
+                          closeUploadMenu();
+                          folderUploadInputRef.current && folderUploadInputRef.current.click();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        폴더 업로드
                       </button>
                     </div>
                   </>,
@@ -2719,6 +2822,30 @@ export default function Alloy() {
                           }}
                           onClick={(e) => e.stopPropagation()}
                         >
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeItemMenu();
+                              startInlineEdit(type, item.id, item.name);
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "10px 12px",
+                              border: "none",
+                              background: "transparent",
+                              color: isLight ? "#14161A" : "#FFFFFF",
+                              fontSize: 15,
+                              fontWeight: 500,
+                              cursor: "pointer",
+                              outline: "none",
+                              textAlign: "left",
+                              transition: "background 0.2s",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                          >
+                            이름 바꾸기
+                          </button>
                           {/* 다운로드 - 폴더면 하위 폴더/파일을 구조 그대로 담은 zip으로,
                               파일이면 그 파일 그대로 받는다. 꾹 눌러 선택해 둔 항목이 있으면
                               어느 항목의 메뉴에서 눌렀든 선택한 전체를 구조에 맞게 받는다. */}
@@ -2746,30 +2873,6 @@ export default function Alloy() {
                             onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                           >
                             다운로드
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              closeItemMenu();
-                              startInlineEdit(type, item.id, item.name);
-                            }}
-                            style={{
-                              width: "100%",
-                              padding: "10px 12px",
-                              border: "none",
-                              background: "transparent",
-                              color: isLight ? "#14161A" : "#FFFFFF",
-                              fontSize: 15,
-                              fontWeight: 500,
-                              cursor: "pointer",
-                              outline: "none",
-                              textAlign: "left",
-                              transition: "background 0.2s",
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                          >
-                            이름 바꾸기
                           </button>
                           <button
                             onClick={(e) => {
