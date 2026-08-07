@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.101";
+const APP_VERSION = "0.1.102";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -2616,6 +2616,10 @@ export default function Alloy() {
     // 우측 원형 버튼(추가/닫기)이 화면 우측 끝에 너무 딱 붙지 않으면서도 여백이 과하지
     // 않도록, 좌측(제목)보다 살짝 좁힌 값을 오른쪽 패딩으로 쓴다.
     padding: "22px 16px 14px 20px",
+    // 아이폰에서 홈 화면에 추가해 PWA(standalone)로 실행하면 viewport-fit=cover 때문에
+    // 콘텐츠가 상태 표시줄 영역까지 올라간다 - 설정/휴지통 화면 헤더와 똑같이 안전 영역
+    // 만큼 위쪽 여백을 더 준다(safe-area-inset-top이 0인 일반 브라우저에서는 기존 22px 그대로).
+    paddingTop: "max(22px, env(safe-area-inset-top))",
     background: isLight ? "rgba(255,255,255,0.45)" : "rgba(20,20,19,0.45)",
     backdropFilter: "blur(20px) saturate(180%)",
     WebkitBackdropFilter: "blur(20px) saturate(180%)",
