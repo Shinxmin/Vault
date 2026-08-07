@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.106";
+const APP_VERSION = "0.1.107";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -4459,6 +4459,64 @@ export default function Alloy() {
             <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 24px 20px" }}>
             {!trashScreenOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* 일반 카드 - 테마 카드 바로 위. 지금은 섬네일 블러 하나뿐이지만, 테마/보기 같은
+                구체적인 분류에 속하지 않는 전역 설정을 앞으로 여기 모은다. */}
+            <div
+              style={{
+                borderRadius: 14,
+                background: isLight ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.04)",
+                backdropFilter: "blur(20px) saturate(180%)",
+                WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
+                overflow: "hidden",
+              }}
+            >
+              {/* 섬네일 블러 - 켜면 폴더/이미지 갤러리 카드와 커버 선택 모달의 모든 썸네일에
+                  강한 블러가 걸린다(원본 파일은 그대로, 화면 표시만 가림). */}
+              <div
+                onClick={toggleBlurThumbnails}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "16px 18px",
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>
+                  섬네일 블러
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleBlurThumbnails(); }}
+                  onMouseDown={pressDown("scale(0.9)")}
+                  onMouseUp={pressUp("scale(1)")}
+                  aria-label="썸네일 블러 사용"
+                  role="checkbox"
+                  aria-checked={blurThumbnailsEnabled}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    flexShrink: 0,
+                    borderRadius: 5,
+                    border: `1.5px solid ${blurThumbnailsEnabled ? "transparent" : (isLight ? "rgba(20,22,26,0.30)" : "rgba(255,255,255,0.30)")}`,
+                    background: blurThumbnailsEnabled ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
+                    cursor: "pointer",
+                    outline: "none",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s ease, border-color 0.2s ease",
+                  }}
+                >
+                  {blurThumbnailsEnabled && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#FFFFFF" : "#14161A"} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
             <div
               style={{
                 borderRadius: 14,
@@ -4597,52 +4655,6 @@ export default function Alloy() {
                   }}
                 >
                   {useSystemTheme && (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#FFFFFF" : "#14161A"} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M20 6 9 17l-5-5" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-
-              {/* 섬네일 블러 - "시스템 설정" 바로 아래. 켜면 폴더/이미지 갤러리 카드와 커버
-                  선택 모달의 모든 썸네일에 강한 블러가 걸린다(원본 파일은 그대로, 화면 표시만 가림). */}
-              <div
-                onClick={toggleBlurThumbnails}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "0 18px 14px 18px",
-                  cursor: "pointer",
-                }}
-              >
-                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)" }}>
-                  섬네일 블러
-                </span>
-                <button
-                  onClick={(e) => { e.stopPropagation(); toggleBlurThumbnails(); }}
-                  onMouseDown={pressDown("scale(0.9)")}
-                  onMouseUp={pressUp("scale(1)")}
-                  aria-label="썸네일 블러 사용"
-                  role="checkbox"
-                  aria-checked={blurThumbnailsEnabled}
-                  style={{
-                    width: 18,
-                    height: 18,
-                    flexShrink: 0,
-                    borderRadius: 5,
-                    border: `1.5px solid ${blurThumbnailsEnabled ? "transparent" : (isLight ? "rgba(20,22,26,0.30)" : "rgba(255,255,255,0.30)")}`,
-                    background: blurThumbnailsEnabled ? (isLight ? "#14161A" : "#FFFFFF") : "transparent",
-                    cursor: "pointer",
-                    outline: "none",
-                    padding: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    transition: "background 0.2s ease, border-color 0.2s ease",
-                  }}
-                >
-                  {blurThumbnailsEnabled && (
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isLight ? "#FFFFFF" : "#14161A"} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M20 6 9 17l-5-5" />
                     </svg>
@@ -5046,6 +5058,19 @@ export default function Alloy() {
                 </div>
               </div>
             )}
+
+            {/* 버전 표기 - 계정 카드 바로 아래, 작은 글씨. APP_VERSION 상수를 그대로
+                보여주므로 버전을 올릴 때마다(매 라운드) 따로 손댈 필요 없이 자동으로
+                반영된다. 맨 뒷자리가 지금까지 반영된 PR(변경 라운드) 번호다. */}
+            <div
+              style={{
+                textAlign: "center",
+                fontSize: 11,
+                color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.4)",
+              }}
+            >
+              v{APP_VERSION}
+            </div>
           </div>
             )}
 
@@ -6039,7 +6064,7 @@ export default function Alloy() {
                       pointerEvents: "none",
                     }}
                   >
-                    마크다운으로 적어보세요 - # 제목, **굵게**, - 목록 ...
+                    마크다운 문법을 지원하는 문서
                   </div>
                 )}
                 <div
