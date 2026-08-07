@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.105";
+const APP_VERSION = "0.1.106";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -462,39 +462,45 @@ export default function Alloy() {
   useEffect(() => {
     if (!dataLoaded || !authUser) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
+    saveTimerRef.current = setTimeout(async () => {
       // url은 만료되는 presigned URL이라 저장하지 않고 r2Key만 저장한다.
       const filesToSave = files.map(({ url, ...rest }) => rest);
-      supabase
+      const basePayload = {
+        id: myRowId,
+        user_id: authUser.id,
+        // vaults는 더 이상 쓰지 않는 예전 컬럼 - 로드 시 폴더로 변환해 흡수했으므로
+        // 매번 빈 배열로 써서 다음 로드 때 같은 항목이 폴더로 중복 변환되지 않게 한다.
+        vaults: [],
+        folders,
+        files: filesToSave,
+        // 사용자 지정 정렬 기능은 없앴지만 컬럼은 그대로 두고 항상 false로 쓴다.
+        custom_order_active: false,
+        storage_limit_gb: storageLimitGB,
+        upload_optimize_enabled: uploadOptimizeEnabled,
+        gallery_view_paths: galleryViewPaths,
+        updated_at: new Date().toISOString(),
+      };
+      let { error } = await supabase
         .from("vaulty_state")
-        .upsert({
-          id: myRowId,
-          user_id: authUser.id,
-          // vaults는 더 이상 쓰지 않는 예전 컬럼 - 로드 시 폴더로 변환해 흡수했으므로
-          // 매번 빈 배열로 써서 다음 로드 때 같은 항목이 폴더로 중복 변환되지 않게 한다.
-          vaults: [],
-          folders,
-          files: filesToSave,
-          // 사용자 지정 정렬 기능은 없앴지만 컬럼은 그대로 두고 항상 false로 쓴다.
-          custom_order_active: false,
-          storage_limit_gb: storageLimitGB,
-          upload_optimize_enabled: uploadOptimizeEnabled,
-          blur_thumbnails_enabled: blurThumbnailsEnabled,
-          gallery_view_paths: galleryViewPaths,
-          updated_at: new Date().toISOString(),
-        })
-        .then(({ error }) => {
-          if (error) {
-            // 저장이 실패하면(예: 컬럼 스키마가 아직 반영되지 않은 경우) 콘솔 로그만으로는
-            // 사용자가 알아챌 방법이 없어 새로고침하면 변경 내용이 통째로 사라진 것처럼
-            // 보인다 - 눈에 보이는 안내를 반드시 함께 띄운다.
-            console.error("Vaulty 상태 저장 실패:", error);
-            showToast("저장에 실패했습니다. 새로고침하지 마세요");
-            setDbSyncOk(false);
-          } else {
-            setDbSyncOk(true);
-          }
-        });
+        .upsert({ ...basePayload, blur_thumbnails_enabled: blurThumbnailsEnabled });
+      // 42703 = undefined_column - 새로 추가된 컬럼(예: blur_thumbnails_enabled)이 아직
+      // 이 프로젝트의 실제 테이블에 반영되지 않은 경우. 이 필드 하나 때문에 폴더/파일 같은
+      // 핵심 데이터까지 통째로 저장이 실패해서는 안 되므로, 그 필드만 빼고 한 번 더
+      // 시도한다 - 해당 설정만 이번엔 저장되지 않고 나머지는 정상적으로 저장된다.
+      if (error && error.code === "42703") {
+        console.warn("일부 컬럼이 아직 없어 그 설정 없이 다시 저장합니다(vaulty_schema.sql 마이그레이션 필요):", error.message);
+        ({ error } = await supabase.from("vaulty_state").upsert(basePayload));
+      }
+      if (error) {
+        // 저장이 실패하면(예: 컬럼 스키마가 아직 반영되지 않은 경우) 콘솔 로그만으로는
+        // 사용자가 알아챌 방법이 없어 새로고침하면 변경 내용이 통째로 사라진 것처럼
+        // 보인다 - 눈에 보이는 안내를 반드시 함께 띄운다.
+        console.error("Vaulty 상태 저장 실패:", error);
+        showToast("저장에 실패했습니다. 새로고침하지 마세요");
+        setDbSyncOk(false);
+      } else {
+        setDbSyncOk(true);
+      }
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
   }, [folders, files, storageLimitGB, uploadOptimizeEnabled, blurThumbnailsEnabled, galleryViewPaths, dataLoaded, authUser, myRowId]);
