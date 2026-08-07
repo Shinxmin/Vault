@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.99";
+const APP_VERSION = "0.1.100";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -1332,8 +1332,10 @@ export default function Alloy() {
     });
   };
   // 변환 - 실제로 적용한다. 지우기로 비워둔 채 적용하면(빈 이름) 원래 이름으로 되돌리지
-  // 않고, 목록 위에서부터(convertTargets 순서) 1, 2, 3...으로 순번을 붙인다(예: 12개를
-  // 지우고 그대로 적용하면 1~12로 일괄 번호가 매겨진다). 그 외에 이름이 겹치는 경우는
+  // 않고, 목록 위에서부터(convertTargets 순서) 순번을 붙인다. 자릿수는 번호를 매길
+  // 개수에 맞춰 0으로 채운다(최소 3자리) - 예: 11개면 001~011, 1500개면 0001~1500처럼
+  // 총 개수의 자릿수(최소 3자리)에 맞춰 앞자리를 0으로 채우고, 이미 그 자릿수를 채우는
+  // 큰 번호(1000, 1001...)는 자연스럽게 그대로 나온다. 그 외에 이름이 겹치는 경우는
   // 기존처럼 뒤에 (1), (2)...를 붙여 구분한다.
   const handleConvertApply = () => {
     const checkedItems = convertTargets.filter((item) => convertChecked[item.id]);
@@ -1345,11 +1347,13 @@ export default function Alloy() {
       id: item.id,
       name: (convertDrafts[item.id] !== undefined ? convertDrafts[item.id] : item.name).trim(),
     }));
+    const blankCount = finalNames.filter((f) => f.name === "").length;
+    const numberPadWidth = Math.max(3, String(blankCount).length);
     let blankCounter = 0;
     const withBlanksNumbered = finalNames.map((f) => {
       if (f.name === "") {
         blankCounter += 1;
-        return { id: f.id, name: String(blankCounter) };
+        return { id: f.id, name: String(blankCounter).padStart(numberPadWidth, "0") };
       }
       return f;
     });
