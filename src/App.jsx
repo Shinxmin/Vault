@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.97";
+const APP_VERSION = "0.1.98";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -595,7 +595,16 @@ export default function Alloy() {
   // 버튼을 한 번 더 누르면 그때 실제로 삭제된다. 폴더/파일(이미지) 전부 공용.
   const [deleteArmedKey, setDeleteArmedKey] = useState(null); // `${type}-${id}`
   const galleryInputRef = useRef(null);
-  const folderUploadInputRef = useRef(null);
+  // 갤러리 카드의 실제 가로세로 비율(width/height) - 이미지가 로드되면 채워 넣어서
+  // 구글 포토처럼 빈틈없는 매이슨리(masonry) 배치를 계산하는 데 쓴다. 로드 전에는
+  // 정사각형(1)으로 가정한다.
+  const [imgAspect, setImgAspect] = useState({});
+  const handleImgAspectLoad = (id) => (e) => {
+    const { naturalWidth, naturalHeight } = e.target;
+    if (!naturalWidth || !naturalHeight) return;
+    const ratio = naturalWidth / naturalHeight;
+    setImgAspect((prev) => (prev[id] === ratio ? prev : { ...prev, [id]: ratio }));
+  };
 
 
   // 설정 화면 - 상단 우측 설정(⚙) 버튼을 누르면 전체화면으로 열린다. 그 안에서 휴지통은
@@ -775,8 +784,12 @@ export default function Alloy() {
     }, 200);
   };
 
+  // 삼점 메뉴를 연 3점 버튼 그 자체를 기억해 뒀다가, 열려 있는 동안 스크롤이 생기면
+  // 그 버튼의 현재 화면 위치를 다시 재서 메뉴가 계속 따라가게 한다.
+  const itemMenuAnchorElRef = useRef(null);
   const openItemMenu = (type, id, anchorEl) => {
     if (anchorEl) {
+      itemMenuAnchorElRef.current = anchorEl;
       const rect = anchorEl.getBoundingClientRect();
       setItemMenuAnchor({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
     }
@@ -792,6 +805,30 @@ export default function Alloy() {
     if (itemMenuOpen && itemMenuOpen.type === type && itemMenuOpen.id === id) closeItemMenu();
     else openItemMenu(type, id, anchorEl);
   };
+
+  // 삼점 메뉴가 열려 있는 동안 위아래로 스크롤하면(가상 스크롤링 목록 포함) 메뉴가
+  // 화면에 고정된 채 남아 원래 열었던 행에서 동떨어져 보이던 것을, 그 행을 계속
+  // 따라가도록 위치를 다시 잰다. 스크롤이 그 행이 화면 밖으로 완전히 사라지게(가상
+  // 목록에서 DOM째 제거되게) 만들면 더 이상 위치를 알 수 없으므로 메뉴를 닫는다.
+  useEffect(() => {
+    if (!itemMenuOpen) return;
+    const reposition = () => {
+      const el = itemMenuAnchorElRef.current;
+      if (!el || !el.isConnected) {
+        closeItemMenu();
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      setItemMenuAnchor({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    };
+    window.addEventListener("scroll", reposition, { passive: true, capture: true });
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, { capture: true });
+      window.removeEventListener("resize", reposition);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemMenuOpen]);
 
   const createFolder = () => {
     if (folderName.trim()) {
@@ -1708,8 +1745,7 @@ export default function Alloy() {
     });
 
   // 실제 업로드 실행 - entries: [{ file, kind, path }]. path는 이 파일이 놓일 폴더의
-  // 전체 경로로, "파일 업로드"는 항상 지금 보고 있는 위치(currentPath)를 쓰고 "폴더 업로드"는
-  // 선택한 폴더 안에서 그 파일이 원래 있던 하위 경로를 그대로 쓴다(handleFolderPicked 참고).
+  // 전체 경로로, 지금 보고 있는 위치(currentPath)를 쓴다.
   const uploadEntries = async (entries) => {
     if (!entries.length) return;
 
@@ -1785,65 +1821,18 @@ export default function Alloy() {
     await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, queueItems.length) }, runNext));
   };
 
-  // "파일 업로드" - 지금 보고 있는 위치에 파일 하나하나를 그대로 올린다.
+  // "파일 업로드" - 지금 보고 있는 위치에 파일 하나하나를 그대로 올린다. mp4 등 동영상은
+  // 아직 지원하지 않는 형식이라 걸러지는데, 예전엔 아무 안내 없이 조용히 사라져서
+  // "업로드했는데 왜 안 올라가지"로 오인하기 쉬웠다 - 하나라도 걸러지면 안내를 띄운다.
   const handleFilesPicked = async (e) => {
     const selected = Array.from(e.target.files || []);
     e.target.value = "";
     const entries = selected
       .map((file) => ({ file, kind: getKindFromName(file.name), path: currentPath }))
       .filter((x) => x.kind); // 미지원 형식은 건너뛴다
-    await uploadEntries(entries);
-  };
-
-  // "폴더 업로드" - 선택한 폴더(하위 폴더 포함)의 구조를 지금 보고 있는 위치 아래에 그대로
-  // 만들고, 그 안의 이미지들을 각자 원래 있던 자리에 올린다. 브라우저가 각 파일에 담아주는
-  // webkitRelativePath(예: "MyFolder/Sub/photo.jpg")로 원래 폴더 구조를 그대로 읽어낸다.
-  const handleFolderPicked = async (e) => {
-    const selected = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (!selected.length) return;
-
-    const now = Date.now();
-    const dirKeys = new Set();
-    const fileEntries = [];
-    selected.forEach((file) => {
-      const rel = file.webkitRelativePath || file.name;
-      const segs = rel.split("/");
-      segs.pop(); // 파일 이름 자체는 버리고 담고 있던 폴더 경로만 남긴다.
-      for (let i = 1; i <= segs.length; i++) dirKeys.add(segs.slice(0, i).join("/"));
-      const kind = getKindFromName(file.name);
-      if (!kind) return; // 미지원 형식(문서 등)은 건너뛴다 - 파일 업로드와 동일.
-      fileEntries.push({ file, kind, dirKey: segs.join("/") });
-    });
-
-    if (!fileEntries.length) {
-      showToast("업로드할 수 있는 파일이 없습니다");
-      return;
+    if (entries.length < selected.length) {
+      showToast("이미지·움짤 형식만 업로드할 수 있습니다");
     }
-
-    // 얕은 경로부터 순서대로 만들어야 부모 폴더가 먼저 존재한다. 이미 같은 자리에
-    // 같은 이름의 폴더가 있으면 새로 만들지 않고 그 폴더를 그대로 이어서 쓴다.
-    const sortedDirKeys = [...dirKeys].sort((a, b) => a.split("/").length - b.split("/").length);
-    const dirKeyToPath = {};
-    const newFolders = [];
-    let idOffset = 0;
-    const folderExists = (fullPath) =>
-      folders.some((f) => f.path.length === fullPath.length && f.path.every((p, i) => p === fullPath[i])) ||
-      newFolders.some((f) => f.path.length === fullPath.length && f.path.every((p, i) => p === fullPath[i]));
-    sortedDirKeys.forEach((key) => {
-      const segs = key.split("/");
-      const fullPath = [...currentPath, ...segs];
-      dirKeyToPath[key] = fullPath;
-      if (folderExists(fullPath)) return;
-      newFolders.push({ id: now + idOffset++, name: segs[segs.length - 1], path: fullPath, createdAt: now, updatedAt: now });
-    });
-    if (newFolders.length) setFolders((prev) => [...prev, ...newFolders]);
-
-    const entries = fileEntries.map(({ file, kind, dirKey }) => ({
-      file,
-      kind,
-      path: dirKey ? dirKeyToPath[dirKey] : currentPath,
-    }));
     await uploadEntries(entries);
   };
 
@@ -2878,69 +2867,112 @@ export default function Alloy() {
               }}
             >
               {/* 경로 표기 - "홈"은 검색 중이면 검색어만 지워서(위치는 그대로) 보고 있던
-                  화면으로 돌아가고, 검색 중이 아니면 평소처럼 홈으로 이동한다. */}
-              <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
-                <button
-                  onClick={() => {
-                    if (searchQuery) {
-                      setSearchQuery("");
-                      return;
-                    }
-                    setCurrentPath([]);
-                  }}
-                  onMouseDown={pressDown("scale(0.92)")}
-                  onMouseUp={pressUp("scale(1)")}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 15,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    padding: 0,
-                    outline: "none",
-                    opacity: currentPath.length === 0 ? 1 : 0.7,
-                    transition: "opacity 0.2s ease, transform 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.opacity = currentPath.length === 0 ? "1" : "0.7";
-                    e.currentTarget.style.transform = "scale(1)";
-                  }}
-                >
-                  홈
-                </button>
-                {currentPath.map((path, index) => (
-                  <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", fontSize: 15 }}>
-                      &gt;
-                    </span>
-                    <button
-                      onClick={() => navigateToBreadcrumb(index)}
-                      onMouseDown={pressDown("scale(0.92)")}
-                      onMouseUp={pressUp("scale(1)")}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: isLight ? "#14161A" : "#FFFFFF",
-                        fontSize: 15,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                        padding: 0,
-                        outline: "none",
-                        opacity: 0.7,
-                        transition: "opacity 0.2s ease, transform 0.15s ease",
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.opacity = "0.7";
-                        e.currentTarget.style.transform = "scale(1)";
-                      }}
-                    >
-                      {path}
-                    </button>
+                  화면으로 돌아가고, 검색 중이 아니면 평소처럼 홈으로 이동한다. 표기 항목이
+                  (홈 포함) 3개를 넘어가면 - 즉 홈>A>B>C처럼 깊어지면 - 첫 줄엔 홈,A,B까지만
+                  두고 C부터는 다음 줄로 내려서 표기한다(그 이상 깊어지면 flexWrap으로 계속
+                  줄바꿈). */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <button
+                    onClick={() => {
+                      if (searchQuery) {
+                        setSearchQuery("");
+                        return;
+                      }
+                      setCurrentPath([]);
+                    }}
+                    onMouseDown={pressDown("scale(0.92)")}
+                    onMouseUp={pressUp("scale(1)")}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: isLight ? "#14161A" : "#FFFFFF",
+                      fontSize: 15,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      padding: 0,
+                      outline: "none",
+                      opacity: currentPath.length === 0 ? 1 : 0.7,
+                      transition: "opacity 0.2s ease, transform 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.opacity = currentPath.length === 0 ? "1" : "0.7";
+                      e.currentTarget.style.transform = "scale(1)";
+                    }}
+                  >
+                    홈
+                  </button>
+                  {currentPath.slice(0, 2).map((path, index) => (
+                    <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", fontSize: 15 }}>
+                        &gt;
+                      </span>
+                      <button
+                        onClick={() => navigateToBreadcrumb(index)}
+                        onMouseDown={pressDown("scale(0.92)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          padding: 0,
+                          outline: "none",
+                          opacity: 0.7,
+                          transition: "opacity 0.2s ease, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.opacity = "0.7";
+                          e.currentTarget.style.transform = "scale(1)";
+                        }}
+                      >
+                        {path}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {currentPath.length > 2 && (
+                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
+                    {currentPath.slice(2).map((path, i) => {
+                      const index = i + 2;
+                      return (
+                        <div key={index} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", fontSize: 15 }}>
+                            &gt;
+                          </span>
+                          <button
+                            onClick={() => navigateToBreadcrumb(index)}
+                            onMouseDown={pressDown("scale(0.92)")}
+                            onMouseUp={pressUp("scale(1)")}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: isLight ? "#14161A" : "#FFFFFF",
+                              fontSize: 15,
+                              fontWeight: 500,
+                              cursor: "pointer",
+                              padding: 0,
+                              outline: "none",
+                              opacity: 0.7,
+                              transition: "opacity 0.2s ease, transform 0.15s ease",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.opacity = "0.7";
+                              e.currentTarget.style.transform = "scale(1)";
+                            }}
+                          >
+                            {path}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
+                )}
               </div>
 
               {/* 마법사 - 예전 ABC 정렬 버튼 자리. 누르면 "정렬"/"변환" 드롭다운이 뜬다 */}
@@ -3193,22 +3225,8 @@ export default function Alloy() {
                   style={{ display: "none" }}
                 />
 
-                {/* 숨겨진 폴더 입력 - "폴더 업로드": webkitdirectory로 폴더 자체를 고르게 한다.
-                    이미지로 accept를 좁히지 않아야(폴더 선택은 사진 앱이 못 하는 일이라)
-                    모바일에서 자연스럽게 파일 앱이 열리고, 데스크탑에서는 폴더를 고르는
-                    탐색창이 열린다. */}
-                <input
-                  ref={folderUploadInputRef}
-                  type="file"
-                  webkitdirectory=""
-                  directory=""
-                  multiple
-                  onChange={handleFolderPicked}
-                  style={{ display: "none" }}
-                />
-
                 {/* 신규 메뉴 - 홈을 포함해 어디서든 신규 버튼을 누르면 뜬다.
-                    새 폴더 / 파일 업로드 / 폴더 업로드 세 가지를 고를 수 있다. */}
+                    파일(업로드) / 폴더(새로 만들기) / 문서(새로 만들기) 세 가지를 고를 수 있다. */}
                 {uploadMenuOpen && createPortal(
                   <>
                     <div onClick={closeUploadMenu} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 19 }} />
@@ -3233,6 +3251,33 @@ export default function Alloy() {
                       }}
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {/* 파일 - 업로드 기능(이미지/움짤 파일 선택). */}
+                      <button
+                        onClick={() => {
+                          closeUploadMenu();
+                          galleryInputRef.current && galleryInputRef.current.click();
+                        }}
+                        onMouseDown={pressDown("scale(0.97)")}
+                        onMouseUp={pressUp("scale(1)")}
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          color: isLight ? "#14161A" : "#FFFFFF",
+                          fontSize: 15,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          outline: "none",
+                          textAlign: "left",
+                          transition: "background 0.2s, transform 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        파일
+                      </button>
+                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
                       <button
                         onClick={() => {
                           closeUploadMenu();
@@ -3256,10 +3301,10 @@ export default function Alloy() {
                         onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
                         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                       >
-                        새 폴더
+                        폴더
                       </button>
                       <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-                      {/* 새 문서 - 마크다운 문법을 쓸 수 있는 텍스트 문서(.md)를 지금 보고
+                      {/* 문서 - 마크다운 문법을 쓸 수 있는 텍스트 문서(.md)를 지금 보고
                           있는 위치에 만들고, 만들자마자 바로 편집 화면을 연다. */}
                       <button
                         onClick={() => {
@@ -3284,59 +3329,7 @@ export default function Alloy() {
                         onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
                         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
                       >
-                        새 문서
-                      </button>
-                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-                      <button
-                        onClick={() => {
-                          closeUploadMenu();
-                          galleryInputRef.current && galleryInputRef.current.click();
-                        }}
-                        onMouseDown={pressDown("scale(0.97)")}
-                        onMouseUp={pressUp("scale(1)")}
-                        style={{
-                          width: "100%",
-                          padding: "10px 12px",
-                          border: "none",
-                          background: "transparent",
-                          color: isLight ? "#14161A" : "#FFFFFF",
-                          fontSize: 15,
-                          fontWeight: 500,
-                          cursor: "pointer",
-                          outline: "none",
-                          textAlign: "left",
-                          transition: "background 0.2s, transform 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                      >
-                        파일 업로드
-                      </button>
-                      <div style={{ height: 1, background: isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)" }} />
-                      <button
-                        onClick={() => {
-                          closeUploadMenu();
-                          folderUploadInputRef.current && folderUploadInputRef.current.click();
-                        }}
-                        onMouseDown={pressDown("scale(0.97)")}
-                        onMouseUp={pressUp("scale(1)")}
-                        style={{
-                          width: "100%",
-                          padding: "10px 12px",
-                          border: "none",
-                          background: "transparent",
-                          color: isLight ? "#14161A" : "#FFFFFF",
-                          fontSize: 15,
-                          fontWeight: 500,
-                          cursor: "pointer",
-                          outline: "none",
-                          textAlign: "left",
-                          transition: "background 0.2s, transform 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
-                      >
-                        폴더 업로드
+                        문서
                       </button>
                     </div>
                   </>,
@@ -3827,6 +3820,7 @@ export default function Alloy() {
                       src={img.url}
                       alt={img.name}
                       draggable={false}
+                      onLoad={handleImgAspectLoad(img.id)}
                       style={{ width: "100%", display: "block" }}
                     />
                   ) : (
@@ -3855,31 +3849,53 @@ export default function Alloy() {
                 </div>
               );
 
-              // 이미지가 아주 많으면(수백~수천) 2열 그리드를 "한 줄(2칸)"씩 잘라 가상 스크롤링으로
-              // 그린다. 그리드는 원래도 줄 단위로 높이가 정해지므로(alignItems: start) 줄로 잘라도
-              // 보이는 결과는 똑같고, 화면 밖 줄은 DOM에 아예 만들지 않아 훨씬 가볍다.
+              // 구글 포토 식 매이슨리(masonry) 배치 - 세로폭이 제각각인 이미지를 2열 그리드에
+              // 그대로 넣으면(alignItems: start) 짧은 칸 아래에 빈 공간이 생긴다. 대신 각 이미지의
+              // 실제 가로세로 비율(imgAspect, 로드 전엔 정사각형으로 가정)로 예상 높이를 구해서,
+              // 매번 "지금까지 더 짧은 열"에 순서대로 채워 넣는 그리디(greedy) 방식으로 두 열의
+              // 높이를 맞춘다. 각 열은 독립된 세로 목록이라 빈틈이 생기지 않는다.
+              const splitImagesIntoColumns = (imagesArray) => {
+                const columns = [[], []];
+                const colHeights = [0, 0];
+                imagesArray.forEach((img) => {
+                  const ratio = imgAspect[img.id] || 1;
+                  const col = colHeights[0] <= colHeights[1] ? 0 : 1;
+                  columns[col].push(img);
+                  colHeights[col] += 1 / ratio + 0.35; // 0.35 ~= 제목/태그 열 몫(비율 단위)
+                });
+                return columns;
+              };
+
+              // 이미지가 아주 많으면(수백~수천) 각 열을 독립적으로 가상 스크롤링해서, 화면 밖
+              // 카드는 DOM에 아예 만들지 않는다.
               const renderImageGrid = (imagesArray, marginTop) => {
                 if (imagesArray.length === 0) return null;
-                const gridStyle = { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", alignItems: "start", gap: 8 };
+                const columns = splitImagesIntoColumns(imagesArray);
+                const wrapStyle = { display: "flex", alignItems: "flex-start", gap: 8, marginTop };
                 if (imagesArray.length <= VIRTUALIZE_THRESHOLD) {
                   return (
-                    <div style={{ ...gridStyle, marginTop }}>
-                      {imagesArray.map((img) => renderImageCard(img, imagesArray))}
+                    <div style={wrapStyle}>
+                      {columns.map((col, ci) => (
+                        <div key={ci} style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 0 }}>
+                          {col.map((img) => renderImageCard(img, imagesArray))}
+                        </div>
+                      ))}
                     </div>
                   );
                 }
-                const rows = chunkArray(imagesArray, 2);
                 return (
-                  <div style={{ marginTop }}>
-                    <WindowVirtualList
-                      count={rows.length}
-                      estimateSize={220}
-                      renderItem={(index) => (
-                        <div style={{ ...gridStyle, paddingBottom: 8 }}>
-                          {rows[index].map((img) => renderImageCard(img, imagesArray))}
-                        </div>
-                      )}
-                    />
+                  <div style={wrapStyle}>
+                    {columns.map((col, ci) => (
+                      <div key={ci} style={{ flex: 1, minWidth: 0 }}>
+                        <WindowVirtualList
+                          count={col.length}
+                          estimateSize={220}
+                          renderItem={(index) => (
+                            <div style={{ paddingBottom: 8 }}>{renderImageCard(col[index], imagesArray)}</div>
+                          )}
+                        />
+                      </div>
+                    ))}
                   </div>
                 );
               };
@@ -4074,17 +4090,8 @@ export default function Alloy() {
                 renderRow(
                   "file",
                   img,
-                  img.url ? (
-                    <img
-                      src={img.url}
-                      alt={img.name}
-                      draggable={false}
-                      style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", display: "block" }}
-                    />
-                  ) : (
-                    getFileIcon(img.mimeType)
-                  ),
-                  formatFileSize(img.size),
+                  getFileIcon(img.mimeType),
+                  null,
                   () => img.url && openViewer(imagesArray, imagesArray.findIndex((x) => x.id === img.id))
                 );
 
@@ -5484,7 +5491,13 @@ export default function Alloy() {
                 이 폴더에 이미지가 없습니다
               </div>
             ) : (
-              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, alignContent: "start" }}>
+              // 3열 그리드 - 예전엔 CSS Grid(gridTemplateColumns)를 썼는데, aspectRatio로
+              // 높이를 정하는 칸을 스크롤 가능한 grid 트랙 안에 넣으면 브라우저가 트랙
+              // 높이를 실제 정사각형 높이가 아니라 훨씬 작은 값으로 잘못 계산해서(트랙이
+              // auto 사이징을 정확히 못 잡음) 이미지가 다음 줄과 겹쳐 보이는 문제가 있었다.
+              // flex + flexWrap은 각 칸의 높이를 그 칸 자신의 aspectRatio로 바로 정하기
+              // 때문에 이런 트랙 계산 문제가 없다.
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexWrap: "wrap", alignContent: "flex-start", gap: 8 }}>
                 {coverPickerImages.map((img) => {
                   const isSelected = coverPickerFolder && coverPickerFolder.coverFileId === img.id;
                   return (
@@ -5495,7 +5508,10 @@ export default function Alloy() {
                       onMouseUp={pressUp("scale(1)")}
                       style={{
                         position: "relative",
+                        boxSizing: "border-box",
+                        width: "calc((100% - 16px) / 3)",
                         aspectRatio: "1 / 1",
+                        flexShrink: 0,
                         borderRadius: 8,
                         overflow: "hidden",
                         cursor: "pointer",
