@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.111";
+const APP_VERSION = "0.1.112";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -2407,6 +2407,31 @@ export default function Alloy() {
             {renderInlineMarkdown(m[1], `${key}-c`)}
           </a>
         ),
+      },
+      {
+        // @폴더이름 - 문서 안에서 폴더를 바로 가리키는 링크. 같은 이름의 폴더가 실제로
+        // 있을 때만 파란 글씨+밑줄로 스타일이 붙고 클릭하면 그 폴더로 이동한다(문서 화면은
+        // 닫는다). 없는 이름이면 그냥 평범한 텍스트로 남고 아무 반응도 없다 - 편집 중에는
+        // (contentEditable 쪽 makeMarkdownSink) 이 문법을 따로 처리하지 않으므로 읽기
+        // 화면에서만 링크로 보인다.
+        re: /@([^\s@]+)/,
+        render: (m, key) => {
+          const targetFolder = folders.find((f) => f.name === m[1]);
+          if (!targetFolder) return <span key={key}>@{m[1]}</span>;
+          return (
+            <span
+              key={key}
+              onClick={(e) => {
+                e.stopPropagation();
+                closeDocScreen();
+                setCurrentPath(targetFolder.path);
+              }}
+              style={{ color: "#3B82F6", textDecoration: "underline", cursor: "pointer" }}
+            >
+              @{m[1]}
+            </span>
+          );
+        },
       },
       { re: /\*\*([^*]+)\*\*/, render: (m, key) => <strong key={key}>{renderInlineMarkdown(m[1], `${key}-c`)}</strong> },
       { re: /~~([^~]+)~~/, render: (m, key) => <s key={key}>{renderInlineMarkdown(m[1], `${key}-c`)}</s> },
