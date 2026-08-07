@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.109";
+const APP_VERSION = "0.1.110";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -4460,7 +4460,9 @@ export default function Alloy() {
             {!trashScreenOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {/* 일반 카드 - 테마 카드 바로 위. 지금은 섬네일 블러 하나뿐이지만, 테마/보기 같은
-                구체적인 분류에 속하지 않는 전역 설정을 앞으로 여기 모은다. */}
+                구체적인 분류에 속하지 않는 전역 설정을 앞으로 여기 모은다. "업로드" 카드와
+                같은 패턴 - 카드 제목("일반")을 먼저 두고, 그 아래에 "테마" 카드의 "시스템
+                설정"처럼 작은 글씨 + 바로 옆 체크박스로 실제 설정 행을 둔다. */}
             <div
               style={{
                 borderRadius: 14,
@@ -4468,22 +4470,14 @@ export default function Alloy() {
                 backdropFilter: "blur(20px) saturate(180%)",
                 WebkitBackdropFilter: "blur(20px) saturate(180%)",
                 border: `1px solid ${isLight ? "rgba(20,22,26,0.18)" : "rgba(255,255,255,0.18)"}`,
-                overflow: "hidden",
+                padding: "14px 18px",
               }}
             >
-              {/* 섬네일 블러 - 켜면 폴더/이미지 갤러리 카드와 커버 선택 모달의 모든 썸네일에
-                  강한 블러가 걸린다(원본 파일은 그대로, 화면 표시만 가림). */}
-              <div
-                onClick={toggleBlurThumbnails}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "16px 18px",
-                  cursor: "pointer",
-                }}
-              >
-                <span style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF" }}>
+              <div style={{ fontSize: 15, fontWeight: 500, color: isLight ? "#14161A" : "#FFFFFF", marginBottom: 8 }}>
+                일반
+              </div>
+              <div onClick={toggleBlurThumbnails} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)" }}>
                   섬네일 블러
                 </span>
                 <button
