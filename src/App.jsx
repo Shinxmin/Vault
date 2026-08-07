@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.112";
+const APP_VERSION = "0.1.113";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -2274,6 +2274,19 @@ export default function Alloy() {
                 }}
               >
                 ({formatMB(item.loaded)}/{formatMB(item.size)})
+              </span>
+              {/* 퍼센트 - 제목(파일명) 열 오른쪽 끝에 작은 글씨로. 완료/실패는 100%/0%로
+                  고정하고, 진행 중일 때만 실제 로드 비율로 계산한다. */}
+              <span
+                style={{
+                  flexShrink: 0,
+                  width: 32,
+                  textAlign: "right",
+                  fontSize: 11.5,
+                  color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
+                }}
+              >
+                {item.status === "done" ? 100 : item.status === "error" ? 0 : item.size > 0 ? Math.min(100, Math.round((item.loaded / item.size) * 100)) : 0}%
               </span>
             </div>
           ))}
