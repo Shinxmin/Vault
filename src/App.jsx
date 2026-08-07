@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.104";
+const APP_VERSION = "0.1.105";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -78,31 +78,6 @@ const chunkArray = (arr, size) => {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
-};
-
-// ── 폴더 암호화(잠금) ────────────────────────────────────────────────────
-// 비밀번호 원문은 어디에도 저장하지 않는다 - PBKDF2(SHA-256)로 유도한 해시와, 그
-// 해시를 만들 때 쓴 무작위 salt만 folders 배열의 해당 폴더 항목에 같이 저장한다.
-const bufToBase64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
-const base64ToBuf = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-const PBKDF2_ITERATIONS = 150000;
-const derivePasswordHash = async (password, saltBytes) => {
-  const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: saltBytes, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
-    keyMaterial,
-    256
-  );
-  return bufToBase64(bits);
-};
-const hashNewPassword = async (password) => {
-  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
-  const lockHash = await derivePasswordHash(password, saltBytes);
-  return { lockSalt: bufToBase64(saltBytes), lockHash };
-};
-const verifyPassword = async (password, lockSalt, lockHash) => {
-  const hash = await derivePasswordHash(password, base64ToBuf(lockSalt));
-  return hash === lockHash;
 };
 
 // 마크다운 실시간 편집기(contentEditable) 커서 위치 저장/복원 - 문자 오프셋(전체
@@ -816,115 +791,6 @@ export default function Alloy() {
       setFolderModalOpen(false);
       setFolderName("");
     }, 200);
-  };
-
-  // 폴더 암호화(잠금) - 폴더 삼점 메뉴의 "암호화"에서 연다. 비밀번호는 해시(+salt)로만
-  // folders 배열의 그 폴더 항목에 저장한다. "실시간으로 저장"이 요구사항이라 다른
-  // 설정처럼 800ms 묶어 저장하는 걸 기다리지 않고, 설정/변경/삭제 즉시 별도로 한 번
-  // 더 Supabase에 직접 upsert한다(로컬 상태(folders)도 같이 갱신해 화면에 바로 반영).
-  const [encryptModalOpen, setEncryptModalOpen] = useState(false);
-  const [encryptModalVisible, setEncryptModalVisible] = useState(false);
-  const [encryptFolderId, setEncryptFolderId] = useState(null);
-  const [encryptOldPasswordDraft, setEncryptOldPasswordDraft] = useState("");
-  const [encryptNewPasswordDraft, setEncryptNewPasswordDraft] = useState("");
-  const [encryptError, setEncryptError] = useState("");
-  const [encryptBusy, setEncryptBusy] = useState(false);
-  const openEncryptModal = (folderId) => {
-    setEncryptFolderId(folderId);
-    setEncryptOldPasswordDraft("");
-    setEncryptNewPasswordDraft("");
-    setEncryptError("");
-    setEncryptBusy(false);
-    setEncryptModalOpen(true);
-    requestAnimationFrame(() => setEncryptModalVisible(true));
-  };
-  const closeEncryptModal = () => {
-    setEncryptModalVisible(false);
-    setTimeout(() => setEncryptModalOpen(false), 200);
-  };
-  const encryptFolder = encryptFolderId ? folders.find((f) => f.id === encryptFolderId) : null;
-  const encryptFolderHasPassword = !!(encryptFolder && encryptFolder.lockHash);
-  // folders를 바꾸는 것과 별개로, 비밀번호 관련 변경만큼은 그 자리에서 바로 저장한다.
-  const saveFoldersImmediately = async (nextFolders) => {
-    if (!authUser) return;
-    const filesToSave = files.map(({ url, ...rest }) => rest);
-    const { error } = await supabase.from("vaulty_state").upsert({
-      id: myRowId,
-      user_id: authUser.id,
-      vaults: [],
-      folders: nextFolders,
-      files: filesToSave,
-      custom_order_active: false,
-      storage_limit_gb: storageLimitGB,
-      upload_optimize_enabled: uploadOptimizeEnabled,
-      blur_thumbnails_enabled: blurThumbnailsEnabled,
-      gallery_view_paths: galleryViewPaths,
-      updated_at: new Date().toISOString(),
-    });
-    if (error) {
-      console.error("비밀번호 저장 실패:", error);
-      showToast("저장에 실패했습니다. 다시 시도해주세요");
-      setDbSyncOk(false);
-      return false;
-    }
-    setDbSyncOk(true);
-    return true;
-  };
-  const handleEncryptConfirm = async () => {
-    if (!encryptFolder) return;
-    if (encryptFolderHasPassword) {
-      if (!encryptOldPasswordDraft) {
-        setEncryptError("기존 암호를 입력해주세요");
-        return;
-      }
-      if (!encryptNewPasswordDraft) {
-        setEncryptError("새 암호를 입력해주세요");
-        return;
-      }
-      setEncryptBusy(true);
-      const ok = await verifyPassword(encryptOldPasswordDraft, encryptFolder.lockSalt, encryptFolder.lockHash);
-      if (!ok) {
-        setEncryptBusy(false);
-        setEncryptError("기존 암호가 일치하지 않습니다");
-        return;
-      }
-      const { lockSalt, lockHash } = await hashNewPassword(encryptNewPasswordDraft);
-      const nextFolders = folders.map((f) => (f.id === encryptFolder.id ? { ...f, lockSalt, lockHash, updatedAt: Date.now() } : f));
-      setFolders(nextFolders);
-      await saveFoldersImmediately(nextFolders);
-      setEncryptBusy(false);
-      closeEncryptModal();
-      showToast("암호를 변경했습니다");
-    } else {
-      if (!encryptNewPasswordDraft) {
-        setEncryptError("새 암호를 입력해주세요");
-        return;
-      }
-      setEncryptBusy(true);
-      const { lockSalt, lockHash } = await hashNewPassword(encryptNewPasswordDraft);
-      const nextFolders = folders.map((f) => (f.id === encryptFolder.id ? { ...f, lockSalt, lockHash, updatedAt: Date.now() } : f));
-      setFolders(nextFolders);
-      await saveFoldersImmediately(nextFolders);
-      setEncryptBusy(false);
-      closeEncryptModal();
-      showToast("암호화했습니다");
-    }
-  };
-  // 암호 삭제 - 휴지통의 삭제 버튼과 똑같은 자리/모양이며, 확인 절차 없이 누르면 바로
-  // 그 폴더의 lockSalt/lockHash를 지운다(폴더 자체나 그 안의 파일은 전혀 건드리지 않는다).
-  const handleEncryptRemovePassword = async () => {
-    if (!encryptFolder) return;
-    setEncryptBusy(true);
-    const nextFolders = folders.map((f) => {
-      if (f.id !== encryptFolder.id) return f;
-      const { lockSalt, lockHash, ...rest } = f;
-      return { ...rest, updatedAt: Date.now() };
-    });
-    setFolders(nextFolders);
-    await saveFoldersImmediately(nextFolders);
-    setEncryptBusy(false);
-    closeEncryptModal();
-    showToast("암호를 삭제했습니다");
   };
 
   // 삼점 메뉴를 연 3점 버튼 그 자체를 기억해 뒀다가, 열려 있는 동안 스크롤이 생기면
@@ -3640,34 +3506,6 @@ export default function Alloy() {
                           >
                             다운로드
                           </button>
-                          {/* 암호화 - 폴더에만 있다. 그 폴더에 비밀번호(해시만 저장)를 걸거나
-                              바꾸거나 지우는 모달을 연다. */}
-                          {type === "folder" && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                closeItemMenu();
-                                openEncryptModal(item.id);
-                              }}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                border: "none",
-                                background: "transparent",
-                                color: isLight ? "#14161A" : "#FFFFFF",
-                                fontSize: 15,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                outline: "none",
-                                textAlign: "left",
-                                transition: "background 0.2s",
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.06)"}
-                              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                            >
-                              암호화
-                            </button>
-                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -4009,6 +3847,8 @@ export default function Alloy() {
                       src={img.url}
                       alt={img.name}
                       draggable={false}
+                      loading="lazy"
+                      decoding="async"
                       onLoad={handleImgAspectLoad(img.id)}
                       style={{ width: "100%", display: "block", ...thumbnailBlurStyle }}
                     />
@@ -4137,6 +3977,8 @@ export default function Alloy() {
                           src={cover.url}
                           alt={folder.name}
                           draggable={false}
+                          loading="lazy"
+                          decoding="async"
                           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", ...thumbnailBlurStyle }}
                         />
                       ) : (
@@ -4756,8 +4598,8 @@ export default function Alloy() {
                 </button>
               </div>
 
-              {/* 블러 - "시스템 설정" 바로 아래. 켜면 폴더/이미지 갤러리 카드와 커버 선택
-                  모달의 모든 썸네일에 강한 블러가 걸린다(원본 파일은 그대로, 화면 표시만 가림). */}
+              {/* 섬네일 블러 - "시스템 설정" 바로 아래. 켜면 폴더/이미지 갤러리 카드와 커버
+                  선택 모달의 모든 썸네일에 강한 블러가 걸린다(원본 파일은 그대로, 화면 표시만 가림). */}
               <div
                 onClick={toggleBlurThumbnails}
                 style={{
@@ -4769,7 +4611,7 @@ export default function Alloy() {
                 }}
               >
                 <span style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)" }}>
-                  블러
+                  섬네일 블러
                 </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); toggleBlurThumbnails(); }}
@@ -5761,6 +5603,8 @@ export default function Alloy() {
                           src={img.url}
                           alt={img.name}
                           draggable={false}
+                          loading="lazy"
+                          decoding="async"
                           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", ...thumbnailBlurStyle }}
                         />
                       )}
@@ -5885,210 +5729,6 @@ export default function Alloy() {
                   cursor: "pointer",
                   outline: "none",
                   transition: "transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
-                onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
-              >
-                확인
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* 암호화(폴더 잠금) 모달 - 폴더 삼점 메뉴의 "암호화"에서 연다. 이미 암호가 걸려
-          있으면 기존/새 암호 두 칸 + 제목 오른쪽에 암호 삭제 버튼이, 처음 거는 거면
-          새 암호 한 칸 + 분실 경고 문구가 보인다. */}
-      {encryptModalOpen && (
-        <>
-          <div
-            onClick={closeEncryptModal}
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "rgba(0,0,0,0.4)",
-              zIndex: 39,
-              opacity: encryptModalVisible ? 1 : 0,
-              transition: "opacity 0.2s ease",
-            }}
-          />
-          <div
-            style={{
-              position: "fixed",
-              top: "50%",
-              left: "50%",
-              transform: encryptModalVisible ? "translate(-50%, -50%) scale(1)" : "translate(-50%, -50%) scale(0.92)",
-              opacity: encryptModalVisible ? 1 : 0,
-              background: isLight ? "#FFFFFF" : "#1a1918",
-              borderRadius: 16,
-              border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-              padding: "24px 30px",
-              width: "84vw",
-              boxSizing: "border-box",
-              zIndex: 40,
-              boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
-              transition: "opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>
-                암호화
-              </h2>
-              {/* 암호 삭제 - 휴지통 화면의 삭제 버튼과 동일한 레이아웃/스타일. 확인 절차 없이
-                  누르면 바로 지워진다. 암호가 이미 걸려 있을 때만 보인다. */}
-              {encryptFolderHasPassword && (
-                <button
-                  onClick={handleEncryptRemovePassword}
-                  disabled={encryptBusy}
-                  style={{
-                    padding: "6px 14px",
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    borderRadius: 8,
-                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                    color: "#EF4444",
-                    fontSize: 13,
-                    fontWeight: 500,
-                    cursor: encryptBusy ? "default" : "pointer",
-                    outline: "none",
-                    opacity: encryptBusy ? 0.5 : 1,
-                    transition: "opacity 0.2s ease",
-                  }}
-                >
-                  삭제
-                </button>
-              )}
-            </div>
-
-            {encryptFolderHasPassword ? (
-              <>
-                <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", marginBottom: 6 }}>
-                  기존 암호
-                </div>
-                <input
-                  type="password"
-                  value={encryptOldPasswordDraft}
-                  onChange={(e) => { setEncryptOldPasswordDraft(e.target.value); setEncryptError(""); }}
-                  autoFocus
-                  style={{
-                    width: "100%",
-                    padding: 12,
-                    marginBottom: 16,
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    borderRadius: 8,
-                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 15,
-                    outline: "none",
-                    boxSizing: "border-box",
-                    transition: "border-color 0.2s ease",
-                  }}
-                />
-                <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", marginBottom: 6 }}>
-                  새 암호
-                </div>
-                <input
-                  type="password"
-                  value={encryptNewPasswordDraft}
-                  onChange={(e) => { setEncryptNewPasswordDraft(e.target.value); setEncryptError(""); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleEncryptConfirm(); if (e.key === "Escape") closeEncryptModal(); }}
-                  style={{
-                    width: "100%",
-                    padding: 12,
-                    marginBottom: 12,
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    borderRadius: 8,
-                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 15,
-                    outline: "none",
-                    boxSizing: "border-box",
-                    transition: "border-color 0.2s ease",
-                  }}
-                />
-              </>
-            ) : (
-              <>
-                <div style={{ fontSize: 12, color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)", marginBottom: 6 }}>
-                  새 암호
-                </div>
-                <input
-                  type="password"
-                  value={encryptNewPasswordDraft}
-                  onChange={(e) => { setEncryptNewPasswordDraft(e.target.value); setEncryptError(""); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleEncryptConfirm(); if (e.key === "Escape") closeEncryptModal(); }}
-                  autoFocus
-                  style={{
-                    width: "100%",
-                    padding: 12,
-                    marginBottom: 10,
-                    border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                    borderRadius: 8,
-                    background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                    color: isLight ? "#14161A" : "#FFFFFF",
-                    fontSize: 15,
-                    outline: "none",
-                    boxSizing: "border-box",
-                    transition: "border-color 0.2s ease",
-                  }}
-                />
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#EF4444", marginBottom: 12 }}>
-                  암호를 분실 시 데이터를 복구할 수 없습니다
-                </div>
-              </>
-            )}
-
-            {encryptError && (
-              <div style={{ fontSize: 12, color: "#EF4444", marginBottom: 12 }}>{encryptError}</div>
-            )}
-
-            <div style={{ display: "flex", gap: 12 }}>
-              <button
-                onClick={closeEncryptModal}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  flex: 1,
-                  padding: 10,
-                  border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                  borderRadius: 8,
-                  background: isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)",
-                  color: isLight ? "#14161A" : "#FFFFFF",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  outline: "none",
-                  transition: "background 0.2s ease, transform 0.15s ease",
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.1)"}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isLight ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.06)";
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-              >
-                취소
-              </button>
-              <button
-                onClick={handleEncryptConfirm}
-                disabled={encryptBusy}
-                onMouseDown={pressDown("scale(0.95)")}
-                onMouseUp={pressUp("scale(1)")}
-                style={{
-                  flex: 1,
-                  padding: 10,
-                  border: "none",
-                  borderRadius: 8,
-                  background: isLight ? "#14161A" : "#FFFFFF",
-                  color: isLight ? "#FFFFFF" : "#14161A",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: encryptBusy ? "default" : "pointer",
-                  outline: "none",
-                  opacity: encryptBusy ? 0.6 : 1,
-                  transition: "transform 0.15s ease, opacity 0.2s ease",
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-1px)"}
                 onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
