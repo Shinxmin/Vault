@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.98";
+const APP_VERSION = "0.1.99";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -1264,16 +1264,24 @@ export default function Alloy() {
   const [convertInput, setConvertInput] = useState("");
 
   const convertTargets = useMemo(() => {
-    const items = [
-      ...folders
-        .filter((f) => f.path.length === currentPath.length + 1 && f.path.slice(0, currentPath.length).every((p, i) => p === currentPath[i]))
-        .map((f) => ({ id: f.id, name: f.name, type: "folder" })),
-      ...files
-        .filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]))
-        .map((f) => ({ id: f.id, name: f.name, type: "file" })),
-    ];
-    // 변환/태그 모달의 대상 목록은 항상 ㄱㄴㄷ(가나다)순으로 보여준다.
-    return items.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    // 변환/태그 모달의 대상 목록은 항상 폴더 → 문서 → 이미지/움짤 순으로, 각 구간
+    // 안에서는 ㄱㄴㄷ(가나다)순으로 보여준다. 예전엔 폴더/파일을 한 배열로 합친 뒤
+    // 한 번에 이름으로만 정렬해서 폴더와 파일이 이름 순서대로 뒤섞여 보이는 문제가 있었다.
+    const byName = (a, b) => a.name.localeCompare(b.name, "ko");
+    const folderItems = folders
+      .filter((f) => f.path.length === currentPath.length + 1 && f.path.slice(0, currentPath.length).every((p, i) => p === currentPath[i]))
+      .map((f) => ({ id: f.id, name: f.name, type: "folder" }))
+      .sort(byName);
+    const filesHere = files.filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i]));
+    const docItems = filesHere
+      .filter((f) => f.kind !== "image")
+      .map((f) => ({ id: f.id, name: f.name, type: "file" }))
+      .sort(byName);
+    const imageItems = filesHere
+      .filter((f) => f.kind === "image")
+      .map((f) => ({ id: f.id, name: f.name, type: "file" }))
+      .sort(byName);
+    return [...folderItems, ...docItems, ...imageItems];
   }, [currentPath, folders, files]);
 
   // 꾹 눌러 선택해 둔 항목이 있으면 그 항목들을 모달 목록에서 미리 체크한 채로 연다.
@@ -4085,12 +4093,14 @@ export default function Alloy() {
               };
 
               // 이미지 리스트 행 - 리스트형 보기일 때 이미지도 폴더/문서와 똑같은 행 모양으로
-              // 보여준다(왼쪽에 정사각형으로 크롭한 작은 썸네일). renderRow를 그대로 쓴다.
+              // 보여준다. 아이콘도 문서와 똑같은 일반 파일 아이콘을 쓴다 - getFileIcon에
+              // img.mimeType("image/...")을 그대로 넘기면 이미지 전용 아이콘이 나오므로,
+              // null을 넘겨서 일부러 그 분기를 건너뛴다.
               const renderImageRow = (img, imagesArray) =>
                 renderRow(
                   "file",
                   img,
-                  getFileIcon(img.mimeType),
+                  getFileIcon(null),
                   null,
                   () => img.url && openViewer(imagesArray, imagesArray.findIndex((x) => x.id === img.id))
                 );
