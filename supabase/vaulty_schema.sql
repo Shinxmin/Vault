@@ -72,3 +72,12 @@ alter table public.vaulty_state add column if not exists upload_optimize_enabled
 -- 보기(리스트/갤러리) - 마법사 메뉴의 "보기"로 위치별 폴더 리스트/갤러리 상태를 저장한다.
 -- { "홈/하위폴더경로": true } 형태의 JSON. 새로고침/로그아웃 후에도 유지되도록 저장한다.
 alter table public.vaulty_state add column if not exists gallery_view_paths jsonb not null default '{}'::jsonb;
+
+-- 블러 - 설정 탭의 "테마" 카드, "시스템 설정" 바로 아래 체크박스. 켜면 폴더/이미지
+-- 갤러리 카드와 커버 선택 모달의 모든 썸네일에 강한 블러를 걸어 표시만 가린다(원본은 그대로).
+alter table public.vaulty_state add column if not exists blur_thumbnails_enabled boolean not null default false;
+
+-- 폴더 암호화(잠금) - 폴더의 삼점 메뉴 "암호화"에서 비밀번호를 걸면, 그 폴더의 folders
+-- 배열 항목(JSONB)에 lockSalt/lockHash 필드가 함께 저장된다(비밀번호 원문은 저장하지
+-- 않음, PBKDF2-SHA256 해시만 저장). 별도 컬럼이 필요 없다 - 기존 folders jsonb 컬럼에
+-- 이미 자유 필드로 얹혀 저장된다.
