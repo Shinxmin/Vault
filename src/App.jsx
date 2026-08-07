@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.100";
+const APP_VERSION = "0.1.101";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -1267,7 +1267,9 @@ export default function Alloy() {
     // 변환/태그 모달의 대상 목록은 항상 폴더 → 문서 → 이미지/움짤 순으로, 각 구간
     // 안에서는 ㄱㄴㄷ(가나다)순으로 보여준다. 예전엔 폴더/파일을 한 배열로 합친 뒤
     // 한 번에 이름으로만 정렬해서 폴더와 파일이 이름 순서대로 뒤섞여 보이는 문제가 있었다.
-    const byName = (a, b) => a.name.localeCompare(b.name, "ko");
+    // numeric: true를 안 주면 문자열 비교라 "10"이 "2"보다 앞에 온다(1,10,11..19,2,20..)
+    // - 숫자로 된 이름이 1,2,3...처럼 자연스러운 순서로 보이게 numeric 옵션을 켠다.
+    const byName = (a, b) => a.name.localeCompare(b.name, "ko", { numeric: true });
     const folderItems = folders
       .filter((f) => f.path.length === currentPath.length + 1 && f.path.slice(0, currentPath.length).every((p, i) => p === currentPath[i]))
       .map((f) => ({ id: f.id, name: f.name, type: "folder" }))
