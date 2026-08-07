@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.102";
+const APP_VERSION = "0.1.103";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -6918,7 +6918,10 @@ export default function Alloy() {
             aria-label="닫기"
             style={{
               position: "fixed",
-              top: 20,
+              // 이 버튼은 화면 전체를 덮는 어두운 오버레이 위에 fixed로 떠 있어서(뷰어 자체엔
+              // 다른 화면들처럼 안전 영역 여백이 적용된 헤더가 없다) 아이폰에서 PWA로 실행하면
+              // 상태 표시줄과 겹친다 - 다른 전체화면 헤더들과 같은 패턴으로 안전 영역만큼 밀어낸다.
+              top: "max(20px, env(safe-area-inset-top))",
               right: 20,
               zIndex: 50,
               width: 44,
