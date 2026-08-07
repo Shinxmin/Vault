@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.110";
+const APP_VERSION = "0.1.111";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -1188,6 +1188,40 @@ export default function Alloy() {
     });
   };
   const clearSelection = () => setSelectedKeys({});
+  // 지금 화면에 실제로 보이는 폴더/파일 목록 - 검색 중이면 검색 결과, "분류" 화면이면
+  // 그 태그가 달린 항목들, 평소엔 지금 위치의 폴더/파일. "전체 선택"이 정확히 화면에
+  // 보이는 것만 선택하도록(안 보이는 다른 폴더까지 선택되는 일이 없도록) 매번 이 기준으로 계산한다.
+  const getCurrentViewTargets = () => {
+    const trimmedQuery = searchQuery.trim().toLowerCase();
+    if (trimmedQuery) {
+      const tokens = trimmedQuery.split(/\s+/).filter(Boolean);
+      const tagTokens = tokens.filter((t) => t.startsWith("#") && t.length > 1);
+      const textQuery = tokens.filter((t) => !t.startsWith("#")).join(" ");
+      const searchMatches = (item) => {
+        const itemTags = (item.tags || []).map((t) => t.toLowerCase());
+        if (tagTokens.length && !itemTags.some((t) => tagTokens.includes(t))) return false;
+        if (!textQuery) return true;
+        return item.name.toLowerCase().includes(textQuery) || itemTags.some((t) => t.includes(textQuery));
+      };
+      return { folders: folders.filter(searchMatches), files: files.filter(searchMatches) };
+    }
+    if (tagScreenTags.length) return { folders: taggedFolders, files: taggedFiles };
+    return {
+      folders: folders.filter((f) => f.path.length === currentPath.length + 1 && f.path.slice(0, currentPath.length).every((p, i) => p === currentPath[i])),
+      files: files.filter((f) => f.path.length === currentPath.length && f.path.every((p, i) => p === currentPath[i])),
+    };
+  };
+  // 전체 선택 - 지금 화면에 보이는 항목을 전부 선택 상태로 만든다. 이미 전부 선택돼
+  // 있으면(버튼이 "전체 선택 해제"로 바뀐 상태) 눌렀을 때 clearSelection으로 대신 처리한다.
+  const selectAllInView = () => {
+    const { folders: viewFolders, files: viewFiles } = getCurrentViewTargets();
+    setSelectedKeys(
+      Object.fromEntries([
+        ...viewFolders.map((f) => [`folder-${f.id}`, true]),
+        ...viewFiles.map((f) => [`file-${f.id}`, true]),
+      ])
+    );
+  };
   // 선택된 항목들을 실제 폴더/파일 객체로 되돌린다(다운로드/변환/태그에서 함께 쓴다).
   const selectedFolders = useMemo(
     () => folders.filter((f) => selectedKeys[`folder-${f.id}`]),
@@ -3010,30 +3044,39 @@ export default function Alloy() {
 
               {/* 마법사 - 예전 ABC 정렬 버튼 자리. 누르면 "정렬"/"변환" 드롭다운이 뜬다 */}
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {/* 선택 중일 때만 - 몇 개를 선택했는지와 한 번에 전부 해제하는 버튼 */}
-                {selectionMode && (
-                  <button
-                    onClick={clearSelection}
-                    onMouseDown={pressDown("scale(0.95)")}
-                    onMouseUp={pressUp("scale(1)")}
-                    style={{
-                      height: 30,
-                      padding: "0 10px",
-                      borderRadius: 8,
-                      border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
-                      background: "transparent",
-                      color: isLight ? "rgba(20,22,26,0.6)" : "rgba(255,255,255,0.65)",
-                      fontSize: 12,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      outline: "none",
-                      whiteSpace: "nowrap",
-                      transition: "background 0.2s ease, transform 0.15s ease",
-                    }}
-                  >
-                    {selectionCount}개 선택 해제
-                  </button>
-                )}
+                {/* 선택 중일 때만 - 변환/태그 모달의 "전체 선택"과 똑같은 토글. 지금 화면에
+                    보이는 항목이 전부 선택돼 있지 않으면 "전체 선택"(누르면 화면에 보이는
+                    전부를 선택), 이미 전부 선택돼 있으면 "전체 선택 해제"(누르면 선택 해제). */}
+                {selectionMode && (() => {
+                  const { folders: viewFolders, files: viewFiles } = getCurrentViewTargets();
+                  const allSelected =
+                    viewFolders.length + viewFiles.length > 0 &&
+                    viewFolders.every((f) => isSelected("folder", f.id)) &&
+                    viewFiles.every((f) => isSelected("file", f.id));
+                  return (
+                    <button
+                      onClick={allSelected ? clearSelection : selectAllInView}
+                      onMouseDown={pressDown("scale(0.95)")}
+                      onMouseUp={pressUp("scale(1)")}
+                      style={{
+                        height: 30,
+                        padding: "0 10px",
+                        borderRadius: 8,
+                        border: `1px solid ${isLight ? "rgba(20,22,26,0.20)" : "rgba(255,255,255,0.20)"}`,
+                        background: "transparent",
+                        color: isLight ? "rgba(20,22,26,0.6)" : "rgba(255,255,255,0.65)",
+                        fontSize: 12,
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        outline: "none",
+                        whiteSpace: "nowrap",
+                        transition: "background 0.2s ease, transform 0.15s ease",
+                      }}
+                    >
+                      {allSelected ? "전체 선택 해제" : "전체 선택"}
+                    </button>
+                  );
+                })()}
                 <button
                   ref={wizardButtonRef}
                   onClick={toggleWizardMenu}
