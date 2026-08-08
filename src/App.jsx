@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.117";
+const APP_VERSION = "0.1.118";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -350,23 +350,11 @@ export default function Alloy() {
     setUploadOptimizeEnabled(row.upload_optimize_enabled === true);
     setBlurThumbnailsEnabled(row.blur_thumbnails_enabled === true);
     setGalleryViewPaths(row.gallery_view_paths && typeof row.gallery_view_paths === "object" ? row.gallery_view_paths : {});
-    const trashImageKeys = loadedTrash.flatMap((t) => t.files || []).filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key);
-    const imageKeys = [...loadedFiles.filter((f) => f.kind === "image" && f.r2Key).map((f) => f.r2Key), ...trashImageKeys];
-    if (imageKeys.length) {
-      try {
-        const { urls } = await r2Presign({ action: "get-batch", keys: imageKeys });
-        const withUrl = (f) => (f.kind === "image" && f.r2Key ? { ...f, url: urls[f.r2Key] || null } : f);
-        setFiles(loadedFiles.map(withUrl));
-        setTrash(loadedTrash.map((t) => ({ ...t, files: (t.files || []).map(withUrl) })));
-      } catch (e) {
-        console.error("이미지 URL 발급 실패:", e);
-        setFiles(loadedFiles);
-        setTrash(loadedTrash);
-      }
-    } else {
-      setFiles(loadedFiles);
-      setTrash(loadedTrash);
-    }
+    // 이미지 표시용 url은 여기서 한꺼번에 발급하지 않는다 - 폴더가 아무리 많아도
+    // 지금 화면에 보이는 만큼만 나중에 별도 이펙트(지금 화면 이미지 url 발급)가
+    // 발급한다. 휴지통은 실제 썸네일을 안 보여주고(getFileIcon만 씀) url이 필요 없다.
+    setFiles(loadedFiles);
+    setTrash(loadedTrash);
   };
 
   // 로그인 세션을 실제 앱 상태로 반영한다 - 이 계정의 vaulty_state 행을 찾아
@@ -1532,6 +1520,38 @@ export default function Alloy() {
   // 조용히 목록에서 누락되는 일이 없도록 - 변환/태그 모달의 대상 목록과 항상 일치해야 한다).
   const taggedDocs = taggedFiles.filter((f) => f.kind !== "image");
   const closeTagScreen = () => setTagScreenTags([]);
+
+  // 지금 화면(경로/검색/분류)에 보이는 이미지만 url을 지연 발급한다 - 폴더가 아무리
+  // 많아도 화면에 없는 이미지까지 한꺼번에 발급하지 않아 로그인/화면 이동이 가볍다.
+  // 폴더 갤러리 카드의 "커버" 이미지는 그 폴더 하위 경로에 있어 지금 화면의 files
+  // 목록엔 안 잡히므로 따로 챙겨서 함께 발급한다. url이 아직 없는 것만 골라 요청하므로
+  // 같은 화면을 다시 봐도 이미 발급된 이미지는 다시 요청하지 않는다.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const { folders: viewFolders, files: viewFiles } = getCurrentViewTargets();
+    const coverFiles = viewFolders
+      .map((f) => f.coverFileId && files.find((file) => file.id === f.coverFileId))
+      .filter((f) => f && f.kind === "image");
+    const targets = [...viewFiles.filter((f) => f.kind === "image"), ...coverFiles].filter((f) => f.r2Key && !f.url);
+    if (!targets.length) return;
+    const keys = [...new Set(targets.map((f) => f.r2Key))];
+    let cancelled = false;
+    (async () => {
+      try {
+        const { urls } = await r2Presign({ action: "get-batch", keys });
+        if (cancelled) return;
+        setFiles((prev) =>
+          prev.map((f) => (f.kind === "image" && f.r2Key && !f.url && keys.includes(f.r2Key) ? { ...f, url: urls[f.r2Key] || null } : f))
+        );
+      } catch (e) {
+        console.error("이미지 URL 발급 실패:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPath, searchQuery, tagScreenTags, folders, files, dataLoaded]);
 
   // 태그 텍스트를 누르면 검색/팔레트를 거치지 않고 곧바로 그 태그의 "분류" 화면을 연다.
   const openTagScreen = (tag) => {
