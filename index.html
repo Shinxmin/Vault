@@ -12,6 +12,11 @@
     <!-- 파비콘 -->
     <link rel="icon" type="image/x-icon" href="/1.ico" />
     <link rel="apple-touch-icon" href="/1.ico" />
+    <!-- 매니페스트 - 홈 화면에 설치했을 때 앱 이름/아이콘/시작 화면뿐 아니라,
+         구글 포토 등에서 "공유"를 누르면 Vaulty가 공유 대상 목록에 뜨게 하는
+         share_target도 여기 정의돼 있다(안드로이드 Chrome에서 설치된 PWA일 때만
+         동작 - iOS Safari는 share_target을 지원하지 않는다). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>Vaulty</title>
     <style>
       /* 웹사이트 내 모든 스크롤바를 시각적으로 숨김(스크롤 동작 자체는 유지) */

@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.115";
+const APP_VERSION = "0.1.116";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -1863,6 +1863,46 @@ export default function Alloy() {
 
     await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, queueItems.length) }, runNext));
   };
+
+  // 구글 포토 등에서 "공유"로 Vaulty를 골라 넘어온 이미지 처리 - 서비스워커(public/sw.js)가
+  // 실제 파일을 캐시(Cache API)에 담아 두고 이 쿼리스트링(?share-target=1)과 함께 앱을
+  // 새로 연다. 로그인 전이면(웹드라이브는 로그인 전용) 로그인/초기 로드가 끝날 때까지
+  // 기다렸다가 그 즉시 처리하고, 홈(현재 위치)에 올린다. 안드로이드 Chrome에 설치된
+  // PWA에서만 동작한다(iOS Safari는 공유 대상 자체를 지원하지 않는다).
+  const shareTargetProcessedRef = useRef(false);
+  useEffect(() => {
+    if (shareTargetProcessedRef.current) return;
+    if (!window.location.search.includes("share-target=1")) return;
+    if (!dataLoaded || !authUser) return;
+    shareTargetProcessedRef.current = true;
+    (async () => {
+      try {
+        if (!("caches" in window)) return;
+        const cache = await caches.open("vaulty-share-target-v1");
+        const metaRes = await cache.match("/__share-meta");
+        const { count } = metaRes ? await metaRes.json() : { count: 0 };
+        const entries = [];
+        for (let i = 0; i < count; i++) {
+          const key = `/__share-file-${i}`;
+          const res = await cache.match(key);
+          if (!res) continue;
+          const blob = await res.blob();
+          const name = decodeURIComponent(res.headers.get("x-file-name") || `shared-${i}`);
+          await cache.delete(key);
+          const kind = getKindFromName(name);
+          if (!kind) continue;
+          const file = new File([blob], name, { type: blob.type || res.headers.get("content-type") || "" });
+          entries.push({ file, kind, path: currentPath });
+        }
+        await cache.delete("/__share-meta");
+        window.history.replaceState({}, "", window.location.pathname);
+        if (entries.length) await uploadEntries(entries);
+        else showToast("공유된 이미지를 찾을 수 없습니다");
+      } catch (err) {
+        console.error("공유 업로드 실패:", err);
+      }
+    })();
+  }, [dataLoaded, authUser, currentPath]);
 
   // "파일 업로드" - 지금 보고 있는 위치에 파일 하나하나를 그대로 올린다. mp4 등 동영상은
   // 아직 지원하지 않는 형식이라 걸러지는데, 예전엔 아무 안내 없이 조용히 사라져서
