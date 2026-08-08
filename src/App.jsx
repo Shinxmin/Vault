@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.113";
+const APP_VERSION = "0.1.114";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -436,7 +436,7 @@ export default function Alloy() {
     return () => authListener.subscription.unsubscribe();
   }, []);
 
-  // 동기화 상태 - 홈/폴더 화면 하단 중앙에 작게 "☁ 동기화"로 보여준다. 폴더 생성/이미지
+  // 동기화 상태 - 홈/폴더 화면 하단 중앙에 작게 ☁ 아이콘으로 보여준다. 폴더 생성/이미지
   // 업로드 등으로 바뀐 내용이 실제로 DB(아래 저장 이펙트)에 정상 반영되는 동안은 계속
   // 표기하고, 저장이 실패하거나(네트워크 오류 등) 아예 인터넷이 끊기면 숨긴다 - 사용자가
   // "지금 내 변경사항이 안전하게 저장되고 있는지"를 감으로 알 수 있게 하는 용도다.
@@ -6385,7 +6385,7 @@ export default function Alloy() {
         </>
       )}
 
-      {/* 동기화 표시 - 홈/폴더 화면 하단 중앙에 작게 "☁ 동기화"를 계속 띄워둔다. 방금
+      {/* 동기화 표시 - 홈/폴더 화면 하단 중앙에 작게 ☁ 아이콘만 계속 띄워둔다. 방금
           바뀐 내용(폴더 생성/이미지 업로드 등)이 DB에 정상 저장되고 있는 동안만 보이고,
           저장이 실패하거나 인터넷이 끊기면 조용히 사라진다(별도 경고 없이 - 저장 실패
           자체는 위 저장 이펙트가 서브 액션바로 따로 알린다). 설정 화면에서는 숨긴다. */}
@@ -6399,16 +6399,12 @@ export default function Alloy() {
             zIndex: 3,
             display: "flex",
             alignItems: "center",
-            gap: 5,
             pointerEvents: "none",
           }}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.4)"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M17.5 19H6.5A4.5 4.5 0 0 1 6 10.03 5.5 5.5 0 0 1 16.9 8.5 4.5 4.5 0 0 1 17.5 19z" />
           </svg>
-          <span style={{ fontSize: 11, fontWeight: 500, color: isLight ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.4)" }}>
-            동기화
-          </span>
         </div>
       )}
 
