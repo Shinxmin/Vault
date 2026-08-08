@@ -4,7 +4,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "./supabaseClient";
 
 // 앱 버전 표기 - v0.1.N, N은 현재까지 main에 병합된 PR(변경 라운드) 번호.
-const APP_VERSION = "0.1.116";
+const APP_VERSION = "0.1.117";
 
 // 한 폴더 안의 항목이 이 개수를 넘으면 가상 스크롤링으로 그린다. 그 아래에서는
 // 예전처럼 전부 그대로 그린다 - DOM이 적을 때는 가상화 오버헤드가 더 손해다.
@@ -2192,6 +2192,12 @@ export default function Alloy() {
   // 마크업을 한 곳에 두고 제목과 목록만 갈아끼운다.
   const renderTransferPanel = (title, queue, closed, onClose) => {
     if (!queue.length || closed) return null;
+    // 전체 진행률 - 개별 항목마다가 아니라, 지금 이 패널(업로드/다운로드) 전체의 진행
+    // 상황을 하나의 퍼센트로 합쳐서 제목 줄 오른쪽에 보여준다. 완료된 항목은 loaded가
+    // 이미 size와 같게 채워져 있으므로(runNext/runDownload 참고) 그냥 다 더해서 나누면 된다.
+    const totalSize = queue.reduce((s, it) => s + (it.size || 0), 0);
+    const totalLoaded = queue.reduce((s, it) => s + (it.loaded || 0), 0);
+    const overallPct = totalSize > 0 ? Math.min(100, Math.round((totalLoaded / totalSize) * 100)) : 0;
     return (
       <div
         style={{
@@ -2219,31 +2225,36 @@ export default function Alloy() {
           }}
         >
           <span style={{ fontSize: 14, fontWeight: 700, color: isLight ? "#14161A" : "#FFFFFF" }}>{title}</span>
-          <button
-            onClick={onClose}
-            aria-label="닫기"
-            style={{
-              width: 22,
-              height: 22,
-              flexShrink: 0,
-              border: "none",
-              background: "transparent",
-              color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
-              cursor: "pointer",
-              outline: "none",
-              borderRadius: 6,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
-            onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="6" y1="6" x2="18" y2="18" />
-              <line x1="18" y1="6" x2="6" y2="18" />
-            </svg>
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, color: isLight ? "rgba(20,22,26,0.5)" : "rgba(255,255,255,0.55)" }}>
+              {overallPct}%
+            </span>
+            <button
+              onClick={onClose}
+              aria-label="닫기"
+              style={{
+                width: 22,
+                height: 22,
+                flexShrink: 0,
+                border: "none",
+                background: "transparent",
+                color: isLight ? "rgba(20,22,26,0.55)" : "rgba(255,255,255,0.55)",
+                cursor: "pointer",
+                outline: "none",
+                borderRadius: 6,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = isLight ? "rgba(20,22,26,0.06)" : "rgba(255,255,255,0.08)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="6" y1="6" x2="18" y2="18" />
+                <line x1="18" y1="6" x2="6" y2="18" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div style={{ overflowY: "auto", maxHeight: 260, padding: "4px 0" }}>
           {queue.map((item) => (
@@ -2294,19 +2305,6 @@ export default function Alloy() {
                 }}
               >
                 ({formatMB(item.loaded)}/{formatMB(item.size)})
-              </span>
-              {/* 퍼센트 - 제목(파일명) 열 오른쪽 끝에 작은 글씨로. 완료/실패는 100%/0%로
-                  고정하고, 진행 중일 때만 실제 로드 비율로 계산한다. */}
-              <span
-                style={{
-                  flexShrink: 0,
-                  width: 32,
-                  textAlign: "right",
-                  fontSize: 11.5,
-                  color: isLight ? "rgba(20,22,26,0.45)" : "rgba(255,255,255,0.55)",
-                }}
-              >
-                {item.status === "done" ? 100 : item.status === "error" ? 0 : item.size > 0 ? Math.min(100, Math.round((item.loaded / item.size) * 100)) : 0}%
               </span>
             </div>
           ))}
